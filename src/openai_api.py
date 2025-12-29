@@ -24,14 +24,14 @@ class OpenAIAPI:
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4.1-mini",
+        model: str = "deepseek-chat",
         api_base: str = "https://api.openai.com/v1",
     ):
         self.api_key = api_key
         self.model = model
         self.api_base = api_base
         try:
-            self.client = openai.OpenAI(
+            self.client = openai.AsyncOpenAI(
                 api_key=self.api_key, base_url=self.api_base, timeout=API_TIMEOUT
             )
             self._initialized = False
@@ -82,8 +82,7 @@ class OpenAIAPI:
         temperature: Optional[float],
     ):
         return await asyncio.wait_for(
-            asyncio.to_thread(
-                self.client.chat.completions.create,
+            self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 max_tokens=max_tokens,
@@ -110,7 +109,7 @@ class OpenAIAPI:
 
     async def close(self):
         if getattr(self, "client", None):
-            self.client.close()
+            await self.client.close()
             logger.debug("OpenAI API 客户端已关闭")
 
     def _build_messages(

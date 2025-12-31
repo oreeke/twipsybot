@@ -16,7 +16,6 @@ from .exceptions import APIConnectionError, AuthenticationError, ConfigurationEr
 class BotRunner:
     def __init__(self):
         self.bot: Optional[MisskeyBot] = None
-        self.tasks: list[asyncio.Task] = []
         self.shutdown_event: Optional[asyncio.Event] = None
         self._shutdown_called = False
 
@@ -77,17 +76,37 @@ class BotRunner:
             return
         self._shutdown_called = True
         logger.info("关闭机器人...")
-        for task in self.tasks:
-            if not task.done():
-                task.cancel()
-        if self.tasks:
-            await asyncio.gather(*self.tasks, return_exceptions=True)
-        self.tasks.clear()
         if self.bot:
             await self.bot.stop()
         logger.info("机器人已关闭")
 
 
-if __name__ == "__main__":
+def main() -> None:
     runner = BotRunner()
-    asyncio.run(runner.run())
+    try:
+        asyncio.run(runner.run())
+    except KeyboardInterrupt:
+        try:
+            asyncio.run(runner.shutdown())
+        except (OSError, ValueError, TypeError) as e:
+            print(f"关闭时出错: {e}")
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        RuntimeError,
+        ImportError,
+        ConfigurationError,
+        APIConnectionError,
+        AuthenticationError,
+    ) as e:
+        print(f"启动时出错: {e}")
+        try:
+            asyncio.run(runner.shutdown())
+        except (OSError, ValueError, TypeError) as shutdown_error:
+            print(f"关闭时出错: {shutdown_error}")
+
+
+if __name__ == "__main__":
+    main()

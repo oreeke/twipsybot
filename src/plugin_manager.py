@@ -96,14 +96,26 @@ class PluginManager:
         return module
 
     def _find_plugin_class(self, module, plugin_name):
-        for attr in (getattr(module, name) for name in dir(module)):
-            if (
-                isinstance(attr, type)
-                and issubclass(attr, PluginBase)
-                and attr is not PluginBase
-            ):
-                return attr
-        logger.warning(f"插件 {plugin_name.capitalize()} 中未找到有效的插件类")
+        candidates = [
+            attr
+            for attr in (getattr(module, name) for name in dir(module))
+            if isinstance(attr, type)
+            and issubclass(attr, PluginBase)
+            and attr is not PluginBase
+        ]
+        if not candidates:
+            logger.warning(f"插件 {plugin_name.capitalize()} 中未找到有效的插件类")
+            return None
+        expected = f"{plugin_name.capitalize()}Plugin"
+        for cls in candidates:
+            if cls.__name__ == expected:
+                return cls
+        if len(candidates) == 1:
+            return candidates[0]
+        names = sorted(cls.__name__ for cls in candidates)
+        logger.warning(
+            f"插件 {plugin_name.capitalize()} 存在多个插件类 {names}，期望 {expected}"
+        )
         return None
 
     def _create_plugin_instance(self, plugin_class, plugin_name, plugin_config):

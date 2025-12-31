@@ -14,7 +14,6 @@ class TopicsPlugin(PluginBase):
         self.prefix_template = self.config.get("prefix_template", "以{topic}为主题，")
         self.start_line = self.config.get("start_line", 1)
         self.topics = []
-        self.enabled = self.config.get("enabled", True)
 
     async def initialize(self) -> bool:
         try:

@@ -13,7 +13,6 @@ class TCPClient:
     def __init__(self) -> None:
         self.__session: Optional[aiohttp.ClientSession] = None
         self.__connector: Optional[aiohttp.TCPConnector] = None
-        self.token: Optional[str] = None
         self.user_agent = "MisskeyBot/1.0 "
         self._default_headers = {
             "Content-Type": "application/json",
@@ -65,9 +64,6 @@ class TCPClient:
         except aiohttp.ClientConnectorError as e:
             logger.error(f"TCP 客户端连接失败: {e}")
             raise ClientConnectorError()
-
-    def set_token(self, token: str) -> None:
-        self.token = token
 
 
 ClientSession: TCPClient = TCPClient()

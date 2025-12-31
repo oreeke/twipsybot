@@ -29,7 +29,6 @@ class MisskeyAPI:
         self.instance_url = instance_url.rstrip("/")
         self.access_token = access_token
         self.transport = ClientSession
-        self.transport.set_token(access_token)
 
     async def __aenter__(self):
         return self

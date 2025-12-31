@@ -4,7 +4,7 @@ from typing import Any, Optional
 import aiohttp
 from loguru import logger
 
-from src import PluginBase
+from src.plugin_base import PluginBase
 
 
 class WeatherPlugin(PluginBase):

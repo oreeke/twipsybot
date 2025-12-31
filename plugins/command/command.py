@@ -3,7 +3,7 @@ from typing import Any, Optional
 import aiosqlite
 from loguru import logger
 
-from src import PluginBase
+from src.plugin_base import PluginBase
 from src.utils import get_memory_usage, get_system_info, health_check
 
 

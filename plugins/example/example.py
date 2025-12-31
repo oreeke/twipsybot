@@ -2,7 +2,7 @@ from typing import Any, Optional
 
 from loguru import logger
 
-from src import PluginBase
+from src.plugin_base import PluginBase
 
 
 class ExamplePlugin(PluginBase):

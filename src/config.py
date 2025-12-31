@@ -195,7 +195,7 @@ class Config:
         temperature = require_type(
             ConfigKeys.OPENAI_TEMPERATURE, (int, float), "温度参数"
         )
-        if temperature is not None and not (0 <= float(temperature) <= 2):
+        if temperature is not None and not 0 <= float(temperature) <= 2:
             raise ConfigurationError("温度参数必须在 0~2 之间")
         interval = require_type(
             ConfigKeys.BOT_AUTO_POST_INTERVAL, (int,), "发帖间隔（分钟）"

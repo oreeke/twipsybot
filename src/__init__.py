@@ -41,22 +41,17 @@ _EXPORTS: dict[str, tuple[str, str]] = {
 }
 
 if TYPE_CHECKING:
-    from .bot import MisskeyBot as MisskeyBot
-    from .config import Config as Config
-    from .constants import ConfigKeys as ConfigKeys
-    from .main import BotRunner as BotRunner
-    from .misskey_api import MisskeyAPI as MisskeyAPI
-    from .openai_api import OpenAIAPI as OpenAIAPI
-    from .persistence import ConnectionPool as ConnectionPool
-    from .persistence import PersistenceManager as PersistenceManager
-    from .plugin import PluginBase as PluginBase
-    from .plugin import PluginContext as PluginContext
-    from .plugin import PluginManager as PluginManager
-    from .runtime import BotRuntime as BotRuntime
-    from .streaming import ChannelType as ChannelType
-    from .streaming import StreamingClient as StreamingClient
-    from .transport import ClientSession as ClientSession
-    from .transport import TCPClient as TCPClient
+    from .bot import MisskeyBot
+    from .config import Config
+    from .constants import ConfigKeys
+    from .main import BotRunner
+    from .misskey_api import MisskeyAPI
+    from .openai_api import OpenAIAPI
+    from .persistence import ConnectionPool, PersistenceManager
+    from .plugin import PluginBase, PluginContext, PluginManager
+    from .runtime import BotRuntime
+    from .streaming import ChannelType, StreamingClient
+    from .transport import ClientSession, TCPClient
 
 
 def __getattr__(name: str) -> Any:

@@ -97,7 +97,6 @@ class WeatherPlugin(PluginBase):
             session = self.session
             if session is None or session.closed:
                 return None
-            assert not session.closed
             coordinates = await self._get_coordinates(city)
             if not coordinates:
                 return f"抱歉，找不到城市 '{city}' 的位置信息。"
@@ -109,12 +108,15 @@ class WeatherPlugin(PluginBase):
                 "units": "metric",
                 "lang": "zh_cn",
             }
-            async with session.get(self.base_url, params=params) as response:
+            response = await session.get(self.base_url, params=params)
+            try:
                 if response.status == 200:
                     data = await response.json()
                     return self._format_weather_info_v25(data, display_name)
                 logger.warning(f"Weather API 2.5 请求失败，状态码: {response.status}")
                 return "抱歉，天气服务暂时不可用。"
+            finally:
+                response.release()
         except (aiohttp.ClientError, OSError, ValueError, KeyError) as e:
             logger.error(f"获取天气信息失败: {e}")
             return "抱歉，获取天气信息时出现错误。"
@@ -124,9 +126,9 @@ class WeatherPlugin(PluginBase):
             session = self.session
             if session is None or session.closed:
                 return None
-            assert not session.closed
             params = {"q": city, "limit": 1, "appid": self.api_key}
-            async with session.get(self.geocoding_url, params=params) as response:
+            response = await session.get(self.geocoding_url, params=params)
+            try:
                 if response.status != 200:
                     logger.warning(f"Geocoding API 请求失败，状态码: {response.status}")
                     return None
@@ -138,6 +140,8 @@ class WeatherPlugin(PluginBase):
                 if "country" in location:
                     display_name += f", {location['country']}"
                 return location["lat"], location["lon"], display_name
+            finally:
+                response.release()
         except (aiohttp.ClientError, OSError, ValueError, KeyError) as e:
             logger.error(f"获取城市坐标失败: {e}")
             return None

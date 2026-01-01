@@ -4,6 +4,7 @@ from typing import Any
 import aiosqlite
 from loguru import logger
 
+from src.constants import ConfigKeys
 from src.plugin import PluginBase
 from src.utils import get_memory_usage, get_system_info, health_check
 
@@ -25,6 +26,10 @@ class CmdPlugin(PluginBase):
                 "sysinfo": {"description": "系统信息", "aliases": ["系统"]},
                 "memory": {"description": "内存使用情况", "aliases": ["内存"]},
                 "plugins": {"description": "插件列表", "aliases": ["插件"]},
+                "model": {
+                    "description": "查看/切换模型 (用法: model [模型名]|reset)",
+                    "aliases": ["模型"],
+                },
                 "enable": {
                     "description": "启用插件 (用法: enable <插件名>)",
                     "aliases": ["启用"],
@@ -43,6 +48,20 @@ class CmdPlugin(PluginBase):
     async def initialize(self) -> bool:
         self._log_plugin_action("初始化完成", f"支持 {len(self.commands)} 个命令")
         return True
+
+    async def on_startup(self) -> None:
+        if not getattr(self, "persistence_manager", None) or not getattr(
+            self, "openai", None
+        ):
+            return
+        model = await self.persistence_manager.get_plugin_data(
+            self.name, ConfigKeys.OPENAI_MODEL
+        )
+        if not model:
+            return
+        self.openai.model = model
+        self._set_global_config_value(ConfigKeys.OPENAI_MODEL, model)
+        self._log_plugin_action("应用模型覆盖", model)
 
     def _is_authorized(self, user_id: str, username: str) -> bool:
         return user_id in self.allowed_users or username in self.allowed_users
@@ -65,6 +84,7 @@ class CmdPlugin(PluginBase):
             "sysinfo": self._get_system_info,
             "memory": self._get_memory_usage,
             "plugins": self._get_plugins_info,
+            "model": lambda: self._handle_model(args),
             "enable": lambda: self._enable_plugin(args),
             "disable": lambda: self._disable_plugin(args),
             "dbstats": self._get_db_stats,
@@ -171,6 +191,45 @@ class CmdPlugin(PluginBase):
             )
         except aiosqlite.Error as e:
             return f"删除数据失败: {str(e)}"
+
+    def _set_global_config_value(self, path: str, value: Any) -> None:
+        keys = path.split(".")
+        config = self.global_config.config
+        for key in keys[:-1]:
+            if not isinstance(config.get(key), dict):
+                config[key] = {}
+            config = config[key]
+        config[keys[-1]] = value
+
+    async def _handle_model(self, args: str) -> str:
+        arg = args.strip()
+        if not getattr(self, "openai", None):
+            return "OpenAI 客户端未初始化"
+        if not arg:
+            saved = await self.persistence_manager.get_plugin_data(
+                self.name, ConfigKeys.OPENAI_MODEL
+            )
+            return (
+                f"当前模型: {self.openai.model}"
+                if not saved
+                else f"当前模型: {self.openai.model}\n已保存覆盖: {saved}"
+            )
+        if arg.lower() in {"reset", "default"}:
+            await self.persistence_manager.delete_plugin_data(
+                self.name, ConfigKeys.OPENAI_MODEL
+            )
+            await self.global_config.load()
+            model = self.global_config.get(ConfigKeys.OPENAI_MODEL)
+            self.openai.model = model
+            self._set_global_config_value(ConfigKeys.OPENAI_MODEL, model)
+            return f"已恢复默认模型: {model}"
+        model = arg
+        self.openai.model = model
+        self._set_global_config_value(ConfigKeys.OPENAI_MODEL, model)
+        await self.persistence_manager.set_plugin_data(
+            self.name, ConfigKeys.OPENAI_MODEL, model
+        )
+        return f"已切换模型: {model}"
 
     def _create_response(self, response_text: str) -> dict[str, Any] | None:
         try:

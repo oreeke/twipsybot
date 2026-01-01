@@ -7,4 +7,3 @@ allowed_users:                    # 允许使用命令的用户列表
   - "user1"                       # 用户 ID 或用户名
   - "user2"
   - "admin"
-

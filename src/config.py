@@ -1,7 +1,7 @@
 import os
 from functools import reduce
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 from loguru import logger
@@ -11,9 +11,11 @@ from .exceptions import ConfigurationError
 
 __all__ = ("Config",)
 
+_MISSING = object()
+
 
 class Config:
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: str | None = None):
         self.config_path = config_path or os.environ.get("CONFIG_PATH", "config.yaml")
         self.config: dict[str, Any] = {}
 
@@ -82,7 +84,7 @@ class Config:
             value_type, lambda v: self._process_string_value(v, path)
         )(value)
 
-    def _process_string_value(self, value: Any, config_path: str) -> str:
+    def _process_string_value(self, value: Any, config_path: str) -> Any:
         if not isinstance(value, str):
             return value
         if value.startswith("file://"):
@@ -111,11 +113,11 @@ class Config:
         prompt_configs = [ConfigKeys.BOT_SYSTEM_PROMPT, ConfigKeys.BOT_AUTO_POST_PROMPT]
         return config_path in prompt_configs
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: str, default: Any = _MISSING) -> Any:
         try:
             return reduce(lambda d, k: d[k], key.split("."), self.config)
         except (KeyError, TypeError) as e:
-            if default is not None:
+            if default is not _MISSING:
                 return default
             builtin_default = self._get_builtin_default(key)
             if builtin_default is not None:
@@ -123,7 +125,7 @@ class Config:
             logger.error(f"配置文件格式错误: {e}")
             return None
 
-    def get_required(self, key: str, desc: Optional[str] = None) -> Any:
+    def get_required(self, key: str, desc: str | None = None) -> Any:
         value = self.get(key)
         if value is None:
             raise ConfigurationError(f"缺少必要配置项: {desc or key}")

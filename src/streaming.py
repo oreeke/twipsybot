@@ -2,7 +2,8 @@ import asyncio
 import json
 import uuid
 from enum import Enum
-from typing import Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import aiohttp
 from cachetools import TTLCache
@@ -23,7 +24,7 @@ class StreamingClient:
     def __init__(self, instance_url: str, access_token: str):
         self.instance_url = instance_url.rstrip("/")
         self.access_token = access_token
-        self.ws_connection: Optional[aiohttp.ClientWebSocketResponse] = None
+        self.ws_connection: aiohttp.ClientWebSocketResponse | None = None
         self.transport = ClientSession
         self.channels: dict[str, dict[str, Any]] = {}
         self.event_handlers: dict[str, list[Callable]] = {}
@@ -62,7 +63,7 @@ class StreamingClient:
         self.event_handlers.setdefault(event_type, []).append(handler)
 
     async def connect(
-        self, channels: Optional[list[str]] = None, *, reconnect: bool = True
+        self, channels: list[str] | None = None, *, reconnect: bool = True
     ) -> None:
         self.should_reconnect = reconnect
         retry_count = 0
@@ -98,7 +99,7 @@ class StreamingClient:
         return self.ws_connection and not self.ws_connection.closed
 
     async def connect_channel(
-        self, channel_type: ChannelType, params: Optional[dict[str, Any]] = None
+        self, channel_type: ChannelType, params: dict[str, Any] | None = None
     ) -> str:
         existing_channels = [
             ch_id
@@ -140,7 +141,7 @@ class StreamingClient:
             del self.channels[channel_id]
         logger.debug(f"已断开频道连接: {channel_type.value}")
 
-    async def connect_once(self, channels: Optional[list[str]] = None) -> None:
+    async def connect_once(self, channels: list[str] | None = None) -> None:
         if self.running:
             return
         self.running = True
@@ -223,7 +224,7 @@ class StreamingClient:
         self.channels.clear()
 
     async def _process_message(
-        self, data: dict[str, Any], raw_message: Optional[str] = None
+        self, data: dict[str, Any], raw_message: str | None = None
     ) -> None:
         if not data or not isinstance(data, dict):
             logger.debug(f"收到无效消息格式，跳过处理: {raw_message}")
@@ -327,9 +328,7 @@ class StreamingClient:
             except Exception as e:
                 logger.exception(f"事件处理器执行失败 ({event_type}): {e}")
 
-    def _is_duplicate_event(
-        self, event_id: Optional[str], event_type: Optional[str]
-    ) -> bool:
+    def _is_duplicate_event(self, event_id: str | None, event_type: str | None) -> bool:
         if event_id and event_id in self.processed_events:
             logger.debug(
                 f"检测到重复事件，跳过处理 - {event_type}, 事件 ID: {event_id}"
@@ -337,6 +336,6 @@ class StreamingClient:
             return True
         return False
 
-    def _track_event(self, event_id: Optional[str]) -> None:
+    def _track_event(self, event_id: str | None) -> None:
         if event_id:
             self.processed_events[event_id] = True

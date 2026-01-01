@@ -1,6 +1,6 @@
 import os
 import platform
-from typing import Any, Optional
+from typing import Any
 
 import psutil
 from loguru import logger
@@ -50,7 +50,7 @@ def get_memory_usage() -> dict[str, Any]:
     }
 
 
-def extract_user_id(message: dict[str, Any]) -> Optional[str]:
+def extract_user_id(message: dict[str, Any]) -> str | None:
     user_info = message.get("fromUser") or message.get("user")
     if isinstance(user_info, dict):
         return user_info.get("id")

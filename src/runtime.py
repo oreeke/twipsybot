@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Callable, Optional
+from collections.abc import Coroutine
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -16,17 +17,23 @@ class BotRuntime:
     def __init__(
         self,
         bot: MisskeyBot,
-        loop: Optional[asyncio.AbstractEventLoop] = None,
+        loop: asyncio.AbstractEventLoop | None = None,
     ):
         self.bot = bot
-        self.loop = loop or asyncio.get_event_loop()
+        if loop is not None:
+            self.loop = loop
+        else:
+            try:
+                self.loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.loop = asyncio.get_event_loop()
         self.startup_time = datetime.now(timezone.utc)
         self.running = False
-        self.tasks: dict[str, asyncio.Task] = {}
+        self.tasks: dict[str, asyncio.Task[Any]] = {}
         self.posts_today = 0
         self.last_auto_post_time = self.startup_time
 
-    def add_task(self, name: str, coro: Callable) -> asyncio.Task:
+    def add_task(self, name: str, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         if name in self.tasks and not self.tasks[name].done():
             self.tasks[name].cancel()
         task = self.loop.create_task(coro)

@@ -1,4 +1,5 @@
-from typing import Any, Optional
+import asyncio
+from typing import Any
 
 import aiosqlite
 from loguru import logger
@@ -46,7 +47,7 @@ class CmdPlugin(PluginBase):
     def _is_authorized(self, user_id: str, username: str) -> bool:
         return user_id in self.allowed_users or username in self.allowed_users
 
-    def _find_command(self, cmd: str) -> Optional[str]:
+    def _find_command(self, cmd: str) -> str | None:
         cmd_lower = cmd.lower()
         if cmd_lower in self.commands:
             return cmd_lower
@@ -72,11 +73,7 @@ class CmdPlugin(PluginBase):
         if command in commands:
             try:
                 result = commands[command]()
-                return (
-                    await result
-                    if callable(getattr(result, "__await__", None))
-                    else result
-                )
+                return await result if asyncio.iscoroutine(result) else result
             except (OSError, ValueError, RuntimeError) as e:
                 logger.error(f"执行命令 {command} 时出错: {e}")
                 return f"命令执行失败: {str(e)}"
@@ -175,7 +172,7 @@ class CmdPlugin(PluginBase):
         except aiosqlite.Error as e:
             return f"删除数据失败: {str(e)}"
 
-    def _create_response(self, response_text: str) -> Optional[dict[str, Any]]:
+    def _create_response(self, response_text: str) -> dict[str, Any] | None:
         try:
             response = {
                 "handled": True,
@@ -187,9 +184,7 @@ class CmdPlugin(PluginBase):
             logger.error(f"创建响应时出错: {e}")
             return None
 
-    async def on_message(
-        self, message_data: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
         try:
             text = message_data.get("text", "").strip()
             if not text.startswith("^"):

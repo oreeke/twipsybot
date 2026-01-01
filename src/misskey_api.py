@@ -1,7 +1,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 import aiohttp
 from loguru import logger
@@ -33,47 +33,47 @@ class DriveIO(Protocol):
         self,
         *,
         limit: int = 10,
-        since_id: Optional[str] = None,
-        until_id: Optional[str] = None,
-        since_date: Optional[int] = None,
-        until_date: Optional[int] = None,
-        folder_id: Optional[str] = None,
-        file_type: Optional[str] = None,
-        sort: Optional[str] = None,
+        since_id: str | None = None,
+        until_id: str | None = None,
+        since_date: int | None = None,
+        until_date: int | None = None,
+        folder_id: str | None = None,
+        file_type: str | None = None,
+        sort: str | None = None,
     ) -> list[dict[str, Any]]: ...
     async def show_file(self, file_id: str) -> dict[str, Any]: ...
     async def find_files(
-        self, name: str, *, folder_id: Optional[str] = None
+        self, name: str, *, folder_id: str | None = None
     ) -> list[dict[str, Any]]: ...
     async def upload_bytes(
         self,
         data: bytes,
         *,
-        name: Optional[str] = None,
-        folder_id: Optional[str] = None,
-        comment: Optional[str] = None,
+        name: str | None = None,
+        folder_id: str | None = None,
+        comment: str | None = None,
         is_sensitive: bool = False,
         force: bool = False,
-        content_type: Optional[str] = None,
+        content_type: str | None = None,
     ) -> dict[str, Any]: ...
     async def upload_path(
         self,
         path: str | Path,
         *,
-        name: Optional[str] = None,
-        folder_id: Optional[str] = None,
-        comment: Optional[str] = None,
+        name: str | None = None,
+        folder_id: str | None = None,
+        comment: str | None = None,
         is_sensitive: bool = False,
         force: bool = False,
-        content_type: Optional[str] = None,
+        content_type: str | None = None,
     ) -> dict[str, Any]: ...
     async def upload_from_url(
         self,
         url: str,
         *,
-        folder_id: Optional[str] = None,
-        name: Optional[str] = None,
-        comment: Optional[str] = None,
+        folder_id: str | None = None,
+        name: str | None = None,
+        comment: str | None = None,
         is_sensitive: bool = False,
         force: bool = False,
     ) -> dict[str, Any]: ...
@@ -82,13 +82,13 @@ class DriveIO(Protocol):
         self,
         file_id: str,
         *,
-        name: Optional[str] = None,
-        folder_id: Optional[str] = None,
-        comment: Optional[str] = None,
-        is_sensitive: Optional[bool] = None,
+        name: str | None = None,
+        folder_id: str | None = None,
+        comment: str | None = None,
+        is_sensitive: bool | None = None,
     ) -> dict[str, Any]: ...
     async def download_bytes(
-        self, file_id: str, *, thumbnail: bool = False, max_bytes: Optional[int] = None
+        self, file_id: str, *, thumbnail: bool = False, max_bytes: int | None = None
     ) -> bytes: ...
     async def download_to_path(
         self,
@@ -102,25 +102,25 @@ class DriveIO(Protocol):
         self,
         *,
         limit: int = 10,
-        since_id: Optional[str] = None,
-        until_id: Optional[str] = None,
-        since_date: Optional[int] = None,
-        until_date: Optional[int] = None,
-        folder_id: Optional[str] = None,
+        since_id: str | None = None,
+        until_id: str | None = None,
+        since_date: int | None = None,
+        until_date: int | None = None,
+        folder_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
     async def create_folder(
-        self, name: str, *, parent_id: Optional[str] = None
+        self, name: str, *, parent_id: str | None = None
     ) -> dict[str, Any]: ...
     async def find_folders(
-        self, name: str, *, parent_id: Optional[str] = None
+        self, name: str, *, parent_id: str | None = None
     ) -> list[dict[str, Any]]: ...
     async def show_folder(self, folder_id: str) -> dict[str, Any]: ...
     async def update_folder(
         self,
         folder_id: str,
         *,
-        name: Optional[str] = None,
-        parent_id: Optional[str] = None,
+        name: str | None = None,
+        parent_id: str | None = None,
     ) -> dict[str, Any]: ...
     async def delete_folder(self, folder_id: str) -> dict[str, Any]: ...
 
@@ -186,7 +186,7 @@ class MisskeyAPI:
         retryable_exceptions=(APIConnectionError, APIRateLimitError),
     )
     async def make_request(
-        self, endpoint: str, data: Optional[dict[str, Any]] = None
+        self, endpoint: str, data: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         url = f"{self.instance_url}/api/{endpoint}"
         payload = {"i": self.access_token}
@@ -232,7 +232,7 @@ class MisskeyAPI:
                     pass
 
     def _determine_reply_visibility(
-        self, original_visibility: str, visibility: Optional[str]
+        self, original_visibility: str, visibility: str | None
     ) -> str:
         if visibility is None:
             return original_visibility
@@ -252,7 +252,7 @@ class MisskeyAPI:
         return visibility
 
     async def _get_visibility_for_reply(
-        self, reply_id: str, visibility: Optional[str]
+        self, reply_id: str, visibility: str | None
     ) -> str:
         try:
             original_note = await self.get_note(reply_id)
@@ -270,8 +270,8 @@ class MisskeyAPI:
     async def create_note(
         self,
         text: str,
-        visibility: Optional[str] = None,
-        reply_id: Optional[str] = None,
+        visibility: str | None = None,
+        reply_id: str | None = None,
         validate_reply: bool = True,
     ) -> dict[str, Any]:
         if reply_id and validate_reply and not await self.note_exists(reply_id):
@@ -316,7 +316,7 @@ class MisskeyAPI:
         return result
 
     async def get_messages(
-        self, user_id: str, limit: int = 10, since_id: Optional[str] = None
+        self, user_id: str, limit: int = 10, since_id: str | None = None
     ) -> list[dict[str, Any]]:
         data = {"userId": user_id, "limit": limit}
         if since_id:
@@ -335,13 +335,13 @@ class MisskeyDrive:
         self,
         *,
         limit: int = 10,
-        since_id: Optional[str] = None,
-        until_id: Optional[str] = None,
-        since_date: Optional[int] = None,
-        until_date: Optional[int] = None,
-        folder_id: Optional[str] = None,
-        file_type: Optional[str] = None,
-        sort: Optional[str] = None,
+        since_id: str | None = None,
+        until_id: str | None = None,
+        since_date: int | None = None,
+        until_date: int | None = None,
+        folder_id: str | None = None,
+        file_type: str | None = None,
+        sort: str | None = None,
     ) -> list[dict[str, Any]]:
         data: dict[str, Any] = {"limit": limit}
         if since_id:
@@ -364,7 +364,7 @@ class MisskeyDrive:
         return await self._api.make_request("drive/files/show", {"fileId": file_id})
 
     async def find_files(
-        self, name: str, *, folder_id: Optional[str] = None
+        self, name: str, *, folder_id: str | None = None
     ) -> list[dict[str, Any]]:
         data: dict[str, Any] = {"name": name}
         if folder_id is not None:
@@ -378,10 +378,10 @@ class MisskeyDrive:
         self,
         file_id: str,
         *,
-        name: Optional[str] = None,
-        folder_id: Optional[str] = None,
-        comment: Optional[str] = None,
-        is_sensitive: Optional[bool] = None,
+        name: str | None = None,
+        folder_id: str | None = None,
+        comment: str | None = None,
+        is_sensitive: bool | None = None,
     ) -> dict[str, Any]:
         data: dict[str, Any] = {"fileId": file_id}
         if name is not None:
@@ -398,9 +398,9 @@ class MisskeyDrive:
         self,
         url: str,
         *,
-        folder_id: Optional[str] = None,
-        name: Optional[str] = None,
-        comment: Optional[str] = None,
+        folder_id: str | None = None,
+        name: str | None = None,
+        comment: str | None = None,
         is_sensitive: bool = False,
         force: bool = False,
     ) -> dict[str, Any]:
@@ -421,12 +421,12 @@ class MisskeyDrive:
         self,
         data: bytes,
         *,
-        name: Optional[str] = None,
-        folder_id: Optional[str] = None,
-        comment: Optional[str] = None,
+        name: str | None = None,
+        folder_id: str | None = None,
+        comment: str | None = None,
         is_sensitive: bool = False,
         force: bool = False,
-        content_type: Optional[str] = None,
+        content_type: str | None = None,
     ) -> dict[str, Any]:
         filename = name or "file"
 
@@ -457,12 +457,12 @@ class MisskeyDrive:
         self,
         path: str | Path,
         *,
-        name: Optional[str] = None,
-        folder_id: Optional[str] = None,
-        comment: Optional[str] = None,
+        name: str | None = None,
+        folder_id: str | None = None,
+        comment: str | None = None,
         is_sensitive: bool = False,
         force: bool = False,
-        content_type: Optional[str] = None,
+        content_type: str | None = None,
     ) -> dict[str, Any]:
         file_path = Path(path)
         if not file_path.is_file():
@@ -493,7 +493,7 @@ class MisskeyDrive:
 
         return await self._api.make_multipart_request("drive/files/create", build)
 
-    async def fetch_bytes(self, url: str, *, max_bytes: Optional[int] = None) -> bytes:
+    async def fetch_bytes(self, url: str, *, max_bytes: int | None = None) -> bytes:
         try:
             session: aiohttp.ClientSession = self._api.session
             async with session.get(url) as response:
@@ -514,7 +514,7 @@ class MisskeyDrive:
             raise APIConnectionError() from e
 
     async def download_bytes(
-        self, file_id: str, *, thumbnail: bool = False, max_bytes: Optional[int] = None
+        self, file_id: str, *, thumbnail: bool = False, max_bytes: int | None = None
     ) -> bytes:
         info = await self.show_file(file_id)
         url = info.get("thumbnailUrl") if thumbnail else info.get("url")
@@ -554,11 +554,11 @@ class MisskeyDrive:
         self,
         *,
         limit: int = 10,
-        since_id: Optional[str] = None,
-        until_id: Optional[str] = None,
-        since_date: Optional[int] = None,
-        until_date: Optional[int] = None,
-        folder_id: Optional[str] = None,
+        since_id: str | None = None,
+        until_id: str | None = None,
+        since_date: int | None = None,
+        until_date: int | None = None,
+        folder_id: str | None = None,
     ) -> list[dict[str, Any]]:
         data: dict[str, Any] = {"limit": limit}
         if since_id:
@@ -574,7 +574,7 @@ class MisskeyDrive:
         return await self._api.make_request("drive/folders", data)
 
     async def create_folder(
-        self, name: str, *, parent_id: Optional[str] = None
+        self, name: str, *, parent_id: str | None = None
     ) -> dict[str, Any]:
         data: dict[str, Any] = {"name": name}
         if parent_id is not None:
@@ -582,7 +582,7 @@ class MisskeyDrive:
         return await self._api.make_request("drive/folders/create", data)
 
     async def find_folders(
-        self, name: str, *, parent_id: Optional[str] = None
+        self, name: str, *, parent_id: str | None = None
     ) -> list[dict[str, Any]]:
         data: dict[str, Any] = {"name": name}
         if parent_id is not None:
@@ -598,8 +598,8 @@ class MisskeyDrive:
         self,
         folder_id: str,
         *,
-        name: Optional[str] = None,
-        parent_id: Optional[str] = None,
+        name: str | None = None,
+        parent_id: str | None = None,
     ) -> dict[str, Any]:
         data: dict[str, Any] = {"folderId": folder_id}
         if name is not None:

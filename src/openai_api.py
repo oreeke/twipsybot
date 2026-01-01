@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Optional
+from typing import Any
 
 import openai
 from loguru import logger
@@ -58,8 +58,8 @@ class OpenAIAPI:
     async def _call_api_common(
         self,
         messages: list[dict[str, Any]],
-        max_tokens: Optional[int],
-        temperature: Optional[float],
+        max_tokens: int | None,
+        temperature: float | None,
         call_type: str,
     ) -> str:
         try:
@@ -78,8 +78,8 @@ class OpenAIAPI:
     async def _make_api_request(
         self,
         messages: list[dict[str, Any]],
-        max_tokens: Optional[int],
-        temperature: Optional[float],
+        max_tokens: int | None,
+        temperature: float | None,
     ):
         return await asyncio.wait_for(
             self.client.chat.completions.create(
@@ -113,7 +113,7 @@ class OpenAIAPI:
             logger.debug("OpenAI API 客户端已关闭")
 
     def _build_messages(
-        self, prompt: str, system_prompt: Optional[str] = None
+        self, prompt: str, system_prompt: str | None = None
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
         if system_prompt:
@@ -124,9 +124,9 @@ class OpenAIAPI:
     async def generate_text(
         self,
         prompt: str,
-        system_prompt: Optional[str] = None,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
+        system_prompt: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> str:
         messages = self._build_messages(prompt, system_prompt)
         return await self._call_api_common(
@@ -136,8 +136,8 @@ class OpenAIAPI:
     async def generate_chat(
         self,
         messages: list[dict[str, Any]],
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> str:
         return await self._call_api_common(
             messages, max_tokens, temperature, "多轮对话"

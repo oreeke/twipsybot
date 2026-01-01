@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import aiosqlite
 from loguru import logger
@@ -58,7 +58,7 @@ class ConnectionPool:
 
 
 class PersistenceManager:
-    def __init__(self, db_path: Optional[str] = None, max_connections: int = 10):
+    def __init__(self, db_path: str | None = None, max_connections: int = 10):
         self.config = Config()
         if db_path is None:
             db_path = self.config._get_builtin_default(ConfigKeys.DB_PATH)
@@ -138,7 +138,7 @@ class PersistenceManager:
         finally:
             await self._pool.return_connection(conn)
 
-    async def get_plugin_data(self, plugin_name: str, key: str) -> Optional[str]:
+    async def get_plugin_data(self, plugin_name: str, key: str) -> str | None:
         result = await self._execute(
             "SELECT value FROM plugin_data WHERE plugin_name = ? AND key = ?",
             (plugin_name, key),
@@ -152,7 +152,7 @@ class PersistenceManager:
             "update",
         )
 
-    async def delete_plugin_data(self, plugin_name: str, key: str = None) -> int:
+    async def delete_plugin_data(self, plugin_name: str, key: str | None = None) -> int:
         if key:
             query = "DELETE FROM plugin_data WHERE plugin_name = ? AND key = ?"
             params = (plugin_name, key)

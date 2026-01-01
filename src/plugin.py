@@ -2,7 +2,8 @@ import asyncio
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import yaml
 from loguru import logger
@@ -24,7 +25,7 @@ class PluginContext:
 
 class PluginBase:
     def __init__(
-        self, config_or_context, utils_provider: Optional[dict[str, Callable]] = None
+        self, config_or_context, utils_provider: dict[str, Callable] | None = None
     ):
         if isinstance(config_or_context, PluginContext):
             context = config_or_context
@@ -72,25 +73,21 @@ class PluginBase:
     async def on_startup(self) -> None:
         pass
 
-    async def on_mention(
-        self, _mention_data: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    async def on_mention(self, _mention_data: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
-    async def on_message(
-        self, _message_data: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    async def on_message(self, _message_data: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     async def on_reaction(
         self, _reaction_data: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         return None
 
-    async def on_follow(self, _follow_data: dict[str, Any]) -> Optional[dict[str, Any]]:
+    async def on_follow(self, _follow_data: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
-    async def on_auto_post(self) -> Optional[dict[str, Any]]:
+    async def on_auto_post(self) -> dict[str, Any] | None:
         return None
 
     async def on_shutdown(self) -> None:
@@ -111,7 +108,7 @@ class PluginBase:
     def _extract_username(self, data: dict[str, Any]) -> str:
         return extract_username(data)
 
-    def _extract_user_id(self, data: dict[str, Any]) -> Optional[str]:
+    def _extract_user_id(self, data: dict[str, Any]) -> str | None:
         return extract_user_id(data)
 
     def _log_plugin_action(self, action: str, details: str = "") -> None:
@@ -150,7 +147,7 @@ class PluginManager:
         config: Config,
         plugins_dir: str = "plugins",
         persistence=None,
-        context_objects: Optional[dict[str, Any]] = None,
+        context_objects: dict[str, Any] | None = None,
     ):
         self.config = config
         self.plugins_dir = Path(plugins_dir)
@@ -349,10 +346,10 @@ class PluginManager:
     def get_plugin_info(self) -> list[dict[str, Any]]:
         return [plugin.get_info() for plugin in self.plugins.values()]
 
-    def get_plugin(self, name: str) -> Optional[PluginBase]:
+    def get_plugin(self, name: str) -> PluginBase | None:
         return self.plugins.get(name)
 
-    def _find_plugin_by_name(self, name: str) -> Optional[PluginBase]:
+    def _find_plugin_by_name(self, name: str) -> PluginBase | None:
         return self.plugins.get(name) or next(
             (p for n, p in self.plugins.items() if n.lower() == name.lower()), None
         )

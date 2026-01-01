@@ -1,5 +1,5 @@
 import re
-from typing import Any, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -73,7 +73,7 @@ class ExamplePlugin(PluginBase):
 
     def _create_response(
         self, response_text: str, *, handled: bool = True
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         response = {
             "handled": handled,
             "plugin_name": self.name,
@@ -81,9 +81,7 @@ class ExamplePlugin(PluginBase):
         }
         return response if self._validate_plugin_response(response) else None
 
-    async def on_mention(
-        self, mention_data: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    async def on_mention(self, mention_data: dict[str, Any]) -> dict[str, Any] | None:
         if not self.greeting_enabled:
             return None
         try:
@@ -102,9 +100,7 @@ class ExamplePlugin(PluginBase):
             logger.exception(f"Example 插件处理提及时发生异常: {e}")
         return None
 
-    async def on_message(
-        self, message_data: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
         try:
             text = self._get_cleaned_text(message_data, kind="chat")
             has_media = self._has_media(message_data, kind="chat")
@@ -124,7 +120,7 @@ class ExamplePlugin(PluginBase):
             logger.exception(f"Example 插件处理消息时发生异常: {e}")
         return None
 
-    async def on_auto_post(self) -> Optional[dict[str, Any]]:
+    async def on_auto_post(self) -> dict[str, Any] | None:
         if not self.auto_post_enabled:
             return None
         try:

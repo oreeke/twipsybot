@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -33,7 +33,7 @@ class TopicsPlugin(PluginBase):
     async def cleanup(self) -> None:
         await super().cleanup()
 
-    async def on_auto_post(self) -> Optional[dict[str, Any]]:
+    async def on_auto_post(self) -> dict[str, Any] | None:
         try:
             topic = await self._get_next_topic()
             return {

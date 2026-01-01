@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import aiohttp
 from loguru import logger
@@ -11,8 +11,8 @@ __all__ = ("TCPClient", "ClientSession")
 
 class TCPClient:
     def __init__(self) -> None:
-        self.__session: Optional[aiohttp.ClientSession] = None
-        self.__connector: Optional[aiohttp.TCPConnector] = None
+        self.__session: aiohttp.ClientSession | None = None
+        self.__connector: aiohttp.TCPConnector | None = None
         self.user_agent = "MisskeyBot/1.0"
         self._default_headers = {
             "User-Agent": self.user_agent,

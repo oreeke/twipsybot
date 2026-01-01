@@ -1,5 +1,5 @@
 import re
-from typing import Any, Optional
+from typing import Any, cast
 
 import aiohttp
 from loguru import logger
@@ -35,7 +35,7 @@ class WeatherPlugin(PluginBase):
     async def cleanup(self) -> None:
         await super().cleanup()
 
-    async def on_mention(self, data: dict[str, Any]) -> Optional[dict[str, Any]]:
+    async def on_mention(self, data: dict[str, Any]) -> dict[str, Any] | None:
         try:
             note_data = (
                 data.get("note", data) if "note" in data and "type" in data else data
@@ -45,9 +45,7 @@ class WeatherPlugin(PluginBase):
             logger.error(f"Weather 插件处理提及时出错: {e}")
             return None
 
-    async def on_message(
-        self, message_data: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
         try:
             return await self._process_weather_message(message_data)
         except (ValueError, KeyError) as e:
@@ -56,7 +54,7 @@ class WeatherPlugin(PluginBase):
 
     async def _process_weather_message(
         self, data: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         text = data.get("text") or ""
         if "天气" not in text and "weather" not in text:
             return None
@@ -67,7 +65,7 @@ class WeatherPlugin(PluginBase):
 
     async def _handle_weather_request(
         self, username: str, location_match
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         location = (
             (location_match.group(1) or location_match.group(2) or "").strip()
             if location_match
@@ -86,17 +84,17 @@ class WeatherPlugin(PluginBase):
             "plugin_name": self.name,
             "response": weather_info or f"抱歉，无法获取 {location} 的天气信息。",
         }
-        return (
-            response
-            if self._validate_plugin_response(response)
-            else (logger.error("Weather 插件响应验证失败") or None)
-        )
+        if self._validate_plugin_response(response):
+            return response
+        logger.error("Weather 插件响应验证失败")
+        return None
 
-    async def _get_weather(self, city: str) -> Optional[str]:
+    async def _get_weather(self, city: str) -> str | None:
         try:
             session = self.session
             if session is None or session.closed:
                 return None
+            session = cast(aiohttp.ClientSession, session)
             coordinates = await self._get_coordinates(city)
             if not coordinates:
                 return f"抱歉，找不到城市 '{city}' 的位置信息。"
@@ -108,27 +106,24 @@ class WeatherPlugin(PluginBase):
                 "units": "metric",
                 "lang": "zh_cn",
             }
-            response = await session.get(self.base_url, params=params)
-            try:
+            async with session.get(self.base_url, params=params) as response:
                 if response.status == 200:
                     data = await response.json()
                     return self._format_weather_info_v25(data, display_name)
                 logger.warning(f"Weather API 2.5 请求失败，状态码: {response.status}")
                 return "抱歉，天气服务暂时不可用。"
-            finally:
-                response.release()
         except (aiohttp.ClientError, OSError, ValueError, KeyError) as e:
             logger.error(f"获取天气信息失败: {e}")
             return "抱歉，获取天气信息时出现错误。"
 
-    async def _get_coordinates(self, city: str) -> Optional[tuple]:
+    async def _get_coordinates(self, city: str) -> tuple[float, float, str] | None:
         try:
             session = self.session
             if session is None or session.closed:
                 return None
+            session = cast(aiohttp.ClientSession, session)
             params = {"q": city, "limit": 1, "appid": self.api_key}
-            response = await session.get(self.geocoding_url, params=params)
-            try:
+            async with session.get(self.geocoding_url, params=params) as response:
                 if response.status != 200:
                     logger.warning(f"Geocoding API 请求失败，状态码: {response.status}")
                     return None
@@ -139,9 +134,7 @@ class WeatherPlugin(PluginBase):
                 display_name = location["name"]
                 if "country" in location:
                     display_name += f", {location['country']}"
-                return location["lat"], location["lon"], display_name
-            finally:
-                response.release()
+                return float(location["lat"]), float(location["lon"]), display_name
         except (aiohttp.ClientError, OSError, ValueError, KeyError) as e:
             logger.error(f"获取城市坐标失败: {e}")
             return None

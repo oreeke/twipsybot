@@ -1,6 +1,6 @@
 import base64
 import re
-from typing import Any, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -11,7 +11,7 @@ from src.plugin import PluginBase
 class VisionPlugin(PluginBase):
     description = "视觉插件，识别提及（@）或聊天中的图片并回复"
 
-    def _normalize_url(self, value: Any) -> Optional[str]:
+    def _normalize_url(self, value: Any) -> str | None:
         if not isinstance(value, str):
             return None
         url = value.strip().replace("`", "").strip()
@@ -56,23 +56,19 @@ class VisionPlugin(PluginBase):
         self._log_plugin_action("初始化完成")
         return True
 
-    async def on_mention(
-        self, mention_data: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    async def on_mention(self, mention_data: dict[str, Any]) -> dict[str, Any] | None:
         if not (parts := await self._build_user_content(mention_data, kind="mention")):
             return None
         reply = await self._call_vision(parts, call_type="提及图片")
         return self._create_response(reply)
 
-    async def on_message(
-        self, message_data: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
         if not (parts := await self._build_user_content(message_data, kind="chat")):
             return None
         reply = await self._call_vision(parts, call_type="聊天图片")
         return self._create_response(reply)
 
-    def _create_response(self, response_text: str) -> Optional[dict[str, Any]]:
+    def _create_response(self, response_text: str) -> dict[str, Any] | None:
         response = {
             "handled": True,
             "plugin_name": self.name,
@@ -135,9 +131,7 @@ class VisionPlugin(PluginBase):
         prompt = text or self.default_prompt
         return [{"type": "text", "text": prompt}, *images]
 
-    async def _to_image_part(
-        self, file_like: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    async def _to_image_part(self, file_like: dict[str, Any]) -> dict[str, Any] | None:
         fid = file_like.get("id")
         if not isinstance(fid, str):
             return None

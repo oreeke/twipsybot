@@ -2,7 +2,6 @@ import asyncio
 import signal
 import sys
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -15,8 +14,8 @@ from .exceptions import APIConnectionError, AuthenticationError, ConfigurationEr
 
 class BotRunner:
     def __init__(self):
-        self.bot: Optional[MisskeyBot] = None
-        self.shutdown_event: Optional[asyncio.Event] = None
+        self.bot: MisskeyBot | None = None
+        self.shutdown_event: asyncio.Event | None = None
         self._shutdown_called = False
 
     async def run(self) -> None:

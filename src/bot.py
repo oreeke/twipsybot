@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
@@ -33,11 +33,11 @@ __all__ = ("MisskeyBot",)
 
 @dataclass(slots=True)
 class MentionContext:
-    mention_id: Optional[str]
-    reply_target_id: Optional[str]
+    mention_id: str | None
+    reply_target_id: str | None
     text: str
-    user_id: Optional[str]
-    username: Optional[str]
+    user_id: str | None
+    username: str | None
 
 
 class ErrorResponder:
@@ -48,8 +48,8 @@ class ErrorResponder:
         self,
         error: Exception,
         *,
-        mention: Optional[MentionContext] = None,
-        message: Optional[dict[str, Any]] = None,
+        mention: MentionContext | None = None,
+        message: dict[str, Any] | None = None,
     ) -> None:
         error_message = ERROR_MESSAGES.get(type(error).__name__, DEFAULT_ERROR_MESSAGE)
         try:
@@ -241,7 +241,7 @@ class ChatHandler:
         history.append({"role": "assistant", "content": reply})
 
     async def _get_chat_history(
-        self, user_id: str, limit: Optional[int] = None
+        self, user_id: str, limit: int | None = None
     ) -> list[dict[str, str]]:
         try:
             limit = limit or self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
@@ -360,7 +360,7 @@ class AutoPostService:
         system_prompt: str,
         prompt: str,
         plugin_prompt: str,
-        timestamp_override: Optional[int] = None,
+        timestamp_override: int | None = None,
     ) -> str:
         if not prompt:
             raise ValueError("缺少提示词")

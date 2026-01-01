@@ -17,7 +17,7 @@ _MISSING = object()
 class Config:
     def __init__(self, config_path: str | None = None):
         self.config_path = config_path or os.environ.get("CONFIG_PATH", "config.yaml")
-        self.config: dict[str, Any] = {}
+        self.data: dict[str, Any] = {}
 
     async def load(self) -> None:
         config_path = Path(self.config_path)
@@ -25,8 +25,8 @@ class Config:
             raise ConfigurationError()
         try:
             with open(config_path, "r", encoding="utf-8") as f:
-                self.config = yaml.safe_load(f) or {}
-            if not isinstance(self.config, dict):
+                self.data = yaml.safe_load(f) or {}
+            if not isinstance(self.data, dict):
                 raise ConfigurationError("配置文件根节点必须为对象")
             logger.debug(f"已加载配置文件: {config_path}")
             self._override_from_env()
@@ -72,7 +72,7 @@ class Config:
 
     def _set_config_value(self, path: str, value: str, value_type: type) -> None:
         keys = path.split(".")
-        config = self.config
+        config = self.data
         for key in keys[:-1]:
             config = config.setdefault(key, {})
         converters = {
@@ -115,7 +115,7 @@ class Config:
 
     def get(self, key: str, default: Any = _MISSING) -> Any:
         try:
-            return reduce(lambda d, k: d[k], key.split("."), self.config)
+            return reduce(lambda d, k: d[k], key.split("."), self.data)
         except (KeyError, TypeError) as e:
             if default is not _MISSING:
                 return default

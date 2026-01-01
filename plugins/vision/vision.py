@@ -11,6 +11,60 @@ from src.plugin import PluginBase
 class VisionPlugin(PluginBase):
     description = "视觉插件，识别提及（@）或聊天中的图片并回复"
 
+    def __init__(self, context):
+        super().__init__(context)
+        self.max_images = int(self.config.get("max_images", 3))
+        self.max_bytes = self._parse_size(self.config.get("max_bytes"), 6 * 1024 * 1024)
+        self.use_thumbnail = bool(self.config.get("use_thumbnail", True))
+        self.default_prompt = str(
+            self.config.get("default_prompt", "请描述图片内容并回答用户的问题。")
+        )
+
+    def _normalize_image_mime(self, value: Any) -> str | None:
+        return value if isinstance(value, str) and value.startswith("image/") else None
+
+    def _select_direct_url(self, file_like: dict[str, Any]) -> str | None:
+        a, b = (
+            ("thumbnailUrl", "url") if self.use_thumbnail else ("url", "thumbnailUrl")
+        )
+        return self._normalize_url(file_like.get(a)) or self._normalize_url(
+            file_like.get(b)
+        )
+
+    async def _try_fetch_bytes_by_url(self, direct_url: str | None) -> bytes | None:
+        if not direct_url or not hasattr(self, "misskey"):
+            return None
+        try:
+            return await self.misskey.drive.fetch_bytes(
+                direct_url, max_bytes=self.max_bytes
+            )
+        except Exception as e:
+            logger.error(f"Vision 下载图片失败: {repr(e)}")
+            return None
+
+    async def _ensure_image_mime(self, fid: str, mime: str | None) -> str | None:
+        if mime:
+            return mime
+        try:
+            info = await self.drive.show_file(fid)
+        except Exception as e:
+            logger.error(f"Vision 读取文件信息失败: {repr(e)}")
+            return None
+        return self._normalize_image_mime(info.get("type"))
+
+    async def _try_download_bytes_by_id(self, fid: str) -> bytes | None:
+        try:
+            return await self.drive.download_bytes(
+                fid, thumbnail=self.use_thumbnail, max_bytes=self.max_bytes
+            )
+        except Exception as e:
+            logger.error(f"Vision 下载图片失败: {repr(e)}")
+            return None
+
+    def _make_image_part(self, mime: str, data: bytes) -> dict[str, Any]:
+        b64 = base64.b64encode(data).decode("ascii")
+        return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+
     def _normalize_url(self, value: Any) -> str | None:
         if not isinstance(value, str):
             return None
@@ -47,12 +101,6 @@ class VisionPlugin(PluginBase):
         return max(0, int(n * mul))
 
     async def initialize(self) -> bool:
-        self.max_images = int(self.config.get("max_images", 3))
-        self.max_bytes = self._parse_size(self.config.get("max_bytes"), 6 * 1024 * 1024)
-        self.use_thumbnail = bool(self.config.get("use_thumbnail", True))
-        self.default_prompt = str(
-            self.config.get("default_prompt", "请描述图片内容并回答用户的问题。")
-        )
         self._log_plugin_action("初始化完成")
         return True
 
@@ -135,48 +183,20 @@ class VisionPlugin(PluginBase):
         fid = file_like.get("id")
         if not isinstance(fid, str):
             return None
-        mime = file_like.get("type")
-        if not isinstance(mime, str) or not mime.startswith("image/"):
-            mime = None
-        direct_url = None
-        if self.use_thumbnail:
-            direct_url = self._normalize_url(
-                file_like.get("thumbnailUrl")
-            ) or self._normalize_url(file_like.get("url"))
-        else:
-            direct_url = self._normalize_url(
-                file_like.get("url")
-            ) or self._normalize_url(file_like.get("thumbnailUrl"))
-
-        data = None
-        if direct_url and hasattr(self, "misskey"):
-            try:
-                data = await self.misskey.drive.fetch_bytes(
-                    direct_url, max_bytes=self.max_bytes
-                )
-            except Exception as e:
-                logger.error(f"Vision 下载图片失败: {repr(e)}")
-                data = None
-        if data is None:
-            if mime is None:
-                try:
-                    info = await self.drive.show_file(fid)
-                except Exception as e:
-                    logger.error(f"Vision 读取文件信息失败: {repr(e)}")
-                    return None
-                mime = info.get("type")
-                if not isinstance(mime, str) or not mime.startswith("image/"):
-                    return None
-            try:
-                data = await self.drive.download_bytes(
-                    fid, thumbnail=self.use_thumbnail, max_bytes=self.max_bytes
-                )
-            except Exception as e:
-                logger.error(f"Vision 下载图片失败: {repr(e)}")
+        mime = self._normalize_image_mime(file_like.get("type"))
+        data = await self._try_fetch_bytes_by_url(self._select_direct_url(file_like))
+        if data is not None and not mime:
+            mime = await self._ensure_image_mime(fid, mime)
+        if data is None or not mime:
+            mime = await self._ensure_image_mime(fid, mime)
+            if not mime:
                 return None
-        b64 = base64.b64encode(data).decode("ascii")
-        url = f"data:{mime};base64,{b64}"
-        return {"type": "image_url", "image_url": {"url": url}}
+            data = await self._try_download_bytes_by_id(fid)
+            if data is None:
+                return None
+        if not mime or data is None:
+            return None
+        return self._make_image_part(mime, data)
 
     async def _call_vision(
         self, user_content: list[dict[str, Any]], *, call_type: str

@@ -194,7 +194,7 @@ class CmdPlugin(PluginBase):
 
     def _set_global_config_value(self, path: str, value: Any) -> None:
         keys = path.split(".")
-        config = self.global_config.config
+        config = self.global_config.data
         for key in keys[:-1]:
             if not isinstance(config.get(key), dict):
                 config[key] = {}

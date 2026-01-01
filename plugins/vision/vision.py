@@ -9,7 +9,7 @@ from src.plugin import PluginBase
 
 
 class VisionPlugin(PluginBase):
-    description = "视觉插件，识别提及或聊天中的图片并回复"
+    description = "视觉插件，识别提及（@）或聊天中的图片并回复"
 
     def _normalize_url(self, value: Any) -> Optional[str]:
         if not isinstance(value, str):

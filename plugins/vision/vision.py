@@ -157,7 +157,7 @@ class VisionPlugin(PluginBase):
         data = None
         if direct_url and hasattr(self, "misskey"):
             try:
-                data = await self.misskey.drive._fetch_bytes(
+                data = await self.misskey.drive.fetch_bytes(
                     direct_url, max_bytes=self.max_bytes
                 )
             except Exception as e:

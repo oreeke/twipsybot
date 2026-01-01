@@ -38,7 +38,7 @@ class DriveIO(Protocol):
         since_date: Optional[int] = None,
         until_date: Optional[int] = None,
         folder_id: Optional[str] = None,
-        type: Optional[str] = None,
+        file_type: Optional[str] = None,
         sort: Optional[str] = None,
     ) -> list[dict[str, Any]]: ...
     async def show_file(self, file_id: str) -> dict[str, Any]: ...
@@ -147,7 +147,7 @@ class MisskeyAPI:
     def session(self) -> aiohttp.ClientSession:
         return self.transport.session
 
-    def _handle_response_status(self, response, endpoint: str):
+    def handle_response_status(self, response, endpoint: str):
         status = response.status
         if status == HTTP_BAD_REQUEST:
             logger.error(f"API 请求错误: {endpoint}")
@@ -176,7 +176,7 @@ class MisskeyAPI:
                     logger.debug(f"Misskey API 请求成功: {endpoint}")
                     return {}
                 raise APIConnectionError()
-        self._handle_response_status(response, endpoint)
+        self.handle_response_status(response, endpoint)
         error_text = await response.text()
         logger.error(f"API 请求失败: {response.status} - {error_text}")
         raise APIConnectionError()
@@ -185,7 +185,7 @@ class MisskeyAPI:
         max_retries=API_MAX_RETRIES,
         retryable_exceptions=(APIConnectionError, APIRateLimitError),
     )
-    async def _make_request(
+    async def make_request(
         self, endpoint: str, data: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         url = f"{self.instance_url}/api/{endpoint}"
@@ -193,7 +193,7 @@ class MisskeyAPI:
         if data:
             payload.update(data)
         try:
-            session = self.session
+            session: aiohttp.ClientSession = self.session
             async with session.post(url, json=payload) as response:
                 return await self._process_response(response, endpoint)
         except (
@@ -207,7 +207,7 @@ class MisskeyAPI:
         max_retries=API_MAX_RETRIES,
         retryable_exceptions=(APIConnectionError, APIRateLimitError),
     )
-    async def _make_multipart_request(
+    async def make_multipart_request(
         self,
         endpoint: str,
         build_form: Callable[[], tuple[aiohttp.FormData, list[Any]]],
@@ -216,7 +216,8 @@ class MisskeyAPI:
         resources: list[Any] = []
         try:
             form, resources = build_form()
-            async with self.session.post(url, data=form) as response:
+            session: aiohttp.ClientSession = self.session
+            async with session.post(url, data=form) as response:
                 return await self._process_response(response, endpoint)
         except (aiohttp.ClientError, json.JSONDecodeError) as e:
             logger.error(f"HTTP 请求错误: {e}")
@@ -283,14 +284,14 @@ class MisskeyAPI:
         data = {"text": text, "visibility": visibility}
         if reply_id:
             data["replyId"] = reply_id
-        result = await self._make_request("notes/create", data)
+        result = await self.make_request("notes/create", data)
         logger.debug(
             f"Misskey 发帖成功，note_id: {result.get('createdNote', {}).get('id', 'unknown')}"
         )
         return result
 
     async def get_note(self, note_id: str) -> dict[str, Any]:
-        return await self._make_request("notes/show", {"noteId": note_id})
+        return await self.make_request("notes/show", {"noteId": note_id})
 
     async def note_exists(self, note_id: str) -> bool:
         try:
@@ -305,10 +306,10 @@ class MisskeyAPI:
             return False
 
     async def get_current_user(self) -> dict[str, Any]:
-        return await self._make_request("i", {})
+        return await self.make_request("i", {})
 
     async def send_message(self, user_id: str, text: str) -> dict[str, Any]:
-        result = await self._make_request(
+        result = await self.make_request(
             "chat/messages/create-to-user", {"toUserId": user_id, "text": text}
         )
         logger.debug(f"Misskey 聊天发送成功，message_id: {result.get('id', 'unknown')}")
@@ -320,7 +321,7 @@ class MisskeyAPI:
         data = {"userId": user_id, "limit": limit}
         if since_id:
             data["sinceId"] = since_id
-        return await self._make_request("chat/messages/user-timeline", data)
+        return await self.make_request("chat/messages/user-timeline", data)
 
 
 class MisskeyDrive:
@@ -328,7 +329,7 @@ class MisskeyDrive:
         self._api = api
 
     async def usage(self) -> dict[str, Any]:
-        return await self._api._make_request("drive")
+        return await self._api.make_request("drive")
 
     async def list_files(
         self,
@@ -339,7 +340,7 @@ class MisskeyDrive:
         since_date: Optional[int] = None,
         until_date: Optional[int] = None,
         folder_id: Optional[str] = None,
-        type: Optional[str] = None,
+        file_type: Optional[str] = None,
         sort: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         data: dict[str, Any] = {"limit": limit}
@@ -353,14 +354,14 @@ class MisskeyDrive:
             data["untilDate"] = until_date
         if folder_id is not None:
             data["folderId"] = folder_id
-        if type is not None:
-            data["type"] = type
+        if file_type is not None:
+            data["type"] = file_type
         if sort is not None:
             data["sort"] = sort
-        return await self._api._make_request("drive/files", data)
+        return await self._api.make_request("drive/files", data)
 
     async def show_file(self, file_id: str) -> dict[str, Any]:
-        return await self._api._make_request("drive/files/show", {"fileId": file_id})
+        return await self._api.make_request("drive/files/show", {"fileId": file_id})
 
     async def find_files(
         self, name: str, *, folder_id: Optional[str] = None
@@ -368,10 +369,10 @@ class MisskeyDrive:
         data: dict[str, Any] = {"name": name}
         if folder_id is not None:
             data["folderId"] = folder_id
-        return await self._api._make_request("drive/files/find", data)
+        return await self._api.make_request("drive/files/find", data)
 
     async def delete_file(self, file_id: str) -> dict[str, Any]:
-        return await self._api._make_request("drive/files/delete", {"fileId": file_id})
+        return await self._api.make_request("drive/files/delete", {"fileId": file_id})
 
     async def update_file(
         self,
@@ -391,7 +392,7 @@ class MisskeyDrive:
             data["comment"] = comment
         if is_sensitive is not None:
             data["isSensitive"] = is_sensitive
-        return await self._api._make_request("drive/files/update", data)
+        return await self._api.make_request("drive/files/update", data)
 
     async def upload_from_url(
         self,
@@ -414,7 +415,7 @@ class MisskeyDrive:
             data["isSensitive"] = True
         if force:
             data["force"] = True
-        return await self._api._make_request("drive/files/upload-from-url", data)
+        return await self._api.make_request("drive/files/upload-from-url", data)
 
     async def upload_bytes(
         self,
@@ -450,7 +451,7 @@ class MisskeyDrive:
             )
             return form, []
 
-        return await self._api._make_multipart_request("drive/files/create", build)
+        return await self._api.make_multipart_request("drive/files/create", build)
 
     async def upload_path(
         self,
@@ -490,13 +491,14 @@ class MisskeyDrive:
             )
             return form, [f]
 
-        return await self._api._make_multipart_request("drive/files/create", build)
+        return await self._api.make_multipart_request("drive/files/create", build)
 
-    async def _fetch_bytes(self, url: str, *, max_bytes: Optional[int] = None) -> bytes:
+    async def fetch_bytes(self, url: str, *, max_bytes: Optional[int] = None) -> bytes:
         try:
-            async with self._api.session.get(url) as response:
+            session: aiohttp.ClientSession = self._api.session
+            async with session.get(url) as response:
                 if response.status != HTTP_OK:
-                    self._api._handle_response_status(response, "drive/files/download")
+                    self._api.handle_response_status(response, "drive/files/download")
                     raise APIConnectionError()
                 if max_bytes is None:
                     return await response.read()
@@ -518,7 +520,7 @@ class MisskeyDrive:
         url = info.get("thumbnailUrl") if thumbnail else info.get("url")
         if not url:
             raise APIConnectionError()
-        return await self._fetch_bytes(url, max_bytes=max_bytes)
+        return await self.fetch_bytes(url, max_bytes=max_bytes)
 
     async def download_to_path(
         self,
@@ -536,9 +538,10 @@ class MisskeyDrive:
         if dest.parent and not dest.parent.exists():
             dest.parent.mkdir(parents=True, exist_ok=True)
         try:
-            async with self._api.session.get(url) as response:
+            session: aiohttp.ClientSession = self._api.session
+            async with session.get(url) as response:
                 if response.status != HTTP_OK:
-                    self._api._handle_response_status(response, "drive/files/download")
+                    self._api.handle_response_status(response, "drive/files/download")
                     raise APIConnectionError()
                 with dest.open("wb") as f:
                     async for chunk in response.content.iter_chunked(chunk_size):
@@ -568,7 +571,7 @@ class MisskeyDrive:
             data["untilDate"] = until_date
         if folder_id is not None:
             data["folderId"] = folder_id
-        return await self._api._make_request("drive/folders", data)
+        return await self._api.make_request("drive/folders", data)
 
     async def create_folder(
         self, name: str, *, parent_id: Optional[str] = None
@@ -576,7 +579,7 @@ class MisskeyDrive:
         data: dict[str, Any] = {"name": name}
         if parent_id is not None:
             data["parentId"] = parent_id
-        return await self._api._make_request("drive/folders/create", data)
+        return await self._api.make_request("drive/folders/create", data)
 
     async def find_folders(
         self, name: str, *, parent_id: Optional[str] = None
@@ -584,10 +587,10 @@ class MisskeyDrive:
         data: dict[str, Any] = {"name": name}
         if parent_id is not None:
             data["parentId"] = parent_id
-        return await self._api._make_request("drive/folders/find", data)
+        return await self._api.make_request("drive/folders/find", data)
 
     async def show_folder(self, folder_id: str) -> dict[str, Any]:
-        return await self._api._make_request(
+        return await self._api.make_request(
             "drive/folders/show", {"folderId": folder_id}
         )
 
@@ -603,9 +606,9 @@ class MisskeyDrive:
             data["name"] = name
         if parent_id is not None:
             data["parentId"] = parent_id
-        return await self._api._make_request("drive/folders/update", data)
+        return await self._api.make_request("drive/folders/update", data)
 
     async def delete_folder(self, folder_id: str) -> dict[str, Any]:
-        return await self._api._make_request(
+        return await self._api.make_request(
             "drive/folders/delete", {"folderId": folder_id}
         )

@@ -32,6 +32,16 @@ class ChannelType(str, Enum):
     GLOBAL_TIMELINE = "globalTimeline"
 
 
+TIMELINE_CHANNELS = frozenset(
+    {
+        ChannelType.HOME_TIMELINE.value,
+        ChannelType.LOCAL_TIMELINE.value,
+        ChannelType.HYBRID_TIMELINE.value,
+        ChannelType.GLOBAL_TIMELINE.value,
+    }
+)
+
+
 class StreamingClient:
     def __init__(self, instance_url: str, access_token: str):
         self.instance_url = instance_url.rstrip("/")
@@ -287,36 +297,8 @@ class StreamingClient:
         channel_info = self.channels[channel_id]
         channel_name = channel_info.get("name", "unknown")
         event_data = body.get("body") or {}
-        event_type = event_data.get("type")
-        if (
-            not event_type
-            and channel_name
-            in {
-                ChannelType.HOME_TIMELINE.value,
-                ChannelType.LOCAL_TIMELINE.value,
-                ChannelType.HYBRID_TIMELINE.value,
-                ChannelType.GLOBAL_TIMELINE.value,
-            }
-            and self._looks_like_note(event_data)
-        ):
-            event_type = "note"
-            event_data = {"type": "note", "body": event_data}
-        event_id = event_data.get("id")
-        if not event_id and event_type == "note":
-            inner_id = (event_data.get("body") or {}).get("id")
-            if isinstance(inner_id, str):
-                event_id = inner_id
-        if not event_type and (
-            event_data.get("fromUserId")
-            and event_data.get("toUserId")
-            and (
-                event_data.get("text") is not None
-                or event_data.get("fileId") is not None
-                or event_data.get("file") is not None
-            )
-        ):
-            event_type = "chat"
-            event_data["type"] = event_type
+        event_type, event_data = self._normalize_channel_event(channel_name, event_data)
+        event_id = self._extract_event_id(event_data, event_type)
         if self._is_duplicate_event(event_id, event_type):
             return
         self._track_event(event_id)
@@ -325,6 +307,39 @@ class StreamingClient:
                 f"收到 {channel_name} 频道事件: {event_type} (频道 ID: {channel_id}, 事件 ID: {event_id})"
             )
         await self._enqueue_event(channel_name, event_data)
+
+    @staticmethod
+    def _is_chat_payload(event_data: dict[str, Any]) -> bool:
+        has_users = bool(event_data.get("fromUserId") and event_data.get("toUserId"))
+        has_content = (
+            event_data.get("text") is not None
+            or event_data.get("fileId") is not None
+            or event_data.get("file") is not None
+        )
+        return has_users and has_content
+
+    def _normalize_channel_event(
+        self, channel_name: str, event_data: dict[str, Any]
+    ) -> tuple[str | None, dict[str, Any]]:
+        event_type = event_data.get("type")
+        if not event_type and channel_name in TIMELINE_CHANNELS:
+            if self._looks_like_note(event_data):
+                wrapped = {"type": "note", "body": event_data}
+                return "note", wrapped
+        if not event_type and self._is_chat_payload(event_data):
+            event_data["type"] = "chat"
+            return "chat", event_data
+        return event_type, event_data
+
+    @staticmethod
+    def _extract_event_id(
+        event_data: dict[str, Any], event_type: str | None
+    ) -> str | None:
+        event_id = event_data.get("id")
+        if event_id or event_type != "note":
+            return event_id
+        inner_id = (event_data.get("body") or {}).get("id")
+        return inner_id if isinstance(inner_id, str) else None
 
     def _ensure_workers_started(self) -> None:
         if self._workers:
@@ -402,12 +417,7 @@ class StreamingClient:
         if channel_name == ChannelType.MAIN.value:
             await self._handle_main_channel_event(event_type, event_data)
             return
-        if channel_name in {
-            ChannelType.HOME_TIMELINE.value,
-            ChannelType.LOCAL_TIMELINE.value,
-            ChannelType.HYBRID_TIMELINE.value,
-            ChannelType.GLOBAL_TIMELINE.value,
-        }:
+        if channel_name in TIMELINE_CHANNELS:
             await self._handle_timeline_channel_event(
                 channel_name, event_type, event_data
             )

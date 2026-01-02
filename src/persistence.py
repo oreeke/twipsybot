@@ -93,7 +93,8 @@ class PersistenceManager:
         finally:
             await self._pool.return_connection(conn)
 
-    async def _execute_schema(self, conn: aiosqlite.Connection) -> None:
+    @staticmethod
+    async def _execute_schema(conn: aiosqlite.Connection) -> None:
         schema_statements = [
             """
             CREATE TABLE IF NOT EXISTS plugin_data (

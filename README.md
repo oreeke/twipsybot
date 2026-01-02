@@ -177,4 +177,4 @@ docker compose up -d
 >
 > - 自动发帖会尽量绕过 [Prompt caching](https://platform.openai.com/docs/guides/prompt-caching)，想让帖子更多样化请配置并启用 [Topics](./plugins/topics) 插件<br>
 > - 切换模型仅需修改 `api_key` `model` `api_base`，相同 `api_base` 的模型可通过 [Cmd](./plugins/cmd) 实时切换<br>
-> - 如果实例已有大量联合或中继，订阅 `globalTimeline` 会让日志量显著增加，非必要请勿将日志级别设置为 `DEBUG`
+> - 如果实例已有大量联合或中继，订阅 `globalTimeline` 时，非必要请勿将日志级别设置为 `DEBUG`

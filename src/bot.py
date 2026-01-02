@@ -479,7 +479,8 @@ class MisskeyBot:
         self.timeline_channels = self._load_timeline_channels()
         logger.info("机器人初始化完成")
 
-    def _actor_key(self, user_id: str | None, username: str | None) -> str | None:
+    @staticmethod
+    def _actor_key(user_id: str | None, username: str | None) -> str | None:
         if user_id:
             return f"id:{user_id}"
         if username:
@@ -498,6 +499,9 @@ class MisskeyBot:
 
     def lock_actor(self, user_id: str | None, username: str | None):
         return self._get_actor_lock(user_id, username)
+
+    def load_timeline_channels(self) -> set[str]:
+        return self._load_timeline_channels()
 
     def _load_timeline_channels(self) -> set[str]:
         if not self.config.get(ConfigKeys.BOT_TIMELINE_ENABLED):

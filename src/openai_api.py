@@ -98,7 +98,8 @@ class OpenAIAPI:
                 timeout=REQUEST_TIMEOUT,
             )
 
-    def _process_api_response(self, response, call_type: str) -> str:
+    @staticmethod
+    def _process_api_response(response, call_type: str) -> str:
         generated_text = response.choices[0].message.content
         if not generated_text:
             raise APIConnectionError()
@@ -119,8 +120,9 @@ class OpenAIAPI:
             await self.client.close()
             logger.debug("OpenAI API 客户端已关闭")
 
+    @staticmethod
     def _build_messages(
-        self, prompt: str, system_prompt: str | None = None
+        prompt: str, system_prompt: str | None = None
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
         if system_prompt:

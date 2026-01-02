@@ -110,16 +110,19 @@ class PluginBase:
         self.enabled = enabled
         logger.info(f"插件 {self.name} {'启用' if enabled else '禁用'}")
 
-    def _extract_username(self, data: dict[str, Any]) -> str:
+    @staticmethod
+    def _extract_username(data: dict[str, Any]) -> str:
         return extract_username(data)
 
-    def _extract_user_id(self, data: dict[str, Any]) -> str | None:
+    @staticmethod
+    def _extract_user_id(data: dict[str, Any]) -> str | None:
         return extract_user_id(data)
 
     def _log_plugin_action(self, action: str, details: str = "") -> None:
         logger.info(f"{self.name} 插件{action}{': ' + details if details else ''}")
 
-    def _validate_plugin_response(self, response: Any) -> bool:
+    @staticmethod
+    def _validate_plugin_response(response: Any) -> bool:
         if not isinstance(response, dict):
             return False
         required_types = {"handled": bool, "plugin_name": str, "response": str}
@@ -184,7 +187,8 @@ class PluginManager:
         enabled_count = sum(plugin.enabled for plugin in self.plugins.values())
         logger.info(f"已发现 {len(self.plugins)} 个插件，{enabled_count} 个已启用")
 
-    def _load_plugin_config(self, plugin_dir: Path) -> dict[str, Any]:
+    @staticmethod
+    def _load_plugin_config(plugin_dir: Path) -> dict[str, Any]:
         config_file = plugin_dir / "config.yaml"
         if not config_file.exists():
             return {"enabled": False}
@@ -218,7 +222,8 @@ class PluginManager:
         except (ImportError, AttributeError, OSError) as e:
             logger.error(f"加载插件 {plugin_dir.name} 失败: {e}")
 
-    def _load_plugin_module(self, plugin_dir: Path, plugin_file: Path):
+    @staticmethod
+    def _load_plugin_module(plugin_dir: Path, plugin_file: Path):
         spec = importlib.util.spec_from_file_location(
             f"plugins.{plugin_dir.name}.plugin", plugin_file
         )
@@ -230,7 +235,8 @@ class PluginManager:
         spec.loader.exec_module(module)
         return module
 
-    def _find_plugin_class(self, module, plugin_name):
+    @staticmethod
+    def _find_plugin_class(module, plugin_name):
         candidates = [
             attr
             for attr in (getattr(module, name) for name in dir(module))

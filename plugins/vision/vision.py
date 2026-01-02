@@ -20,7 +20,8 @@ class VisionPlugin(PluginBase):
             self.config.get("default_prompt", "请描述图片内容并回答用户的问题。")
         )
 
-    def _normalize_image_mime(self, value: Any) -> str | None:
+    @staticmethod
+    def _normalize_image_mime(value: Any) -> str | None:
         return value if isinstance(value, str) and value.startswith("image/") else None
 
     def _select_direct_url(self, file_like: dict[str, Any]) -> str | None:
@@ -61,22 +62,26 @@ class VisionPlugin(PluginBase):
             logger.error(f"Vision 下载图片失败: {repr(e)}")
             return None
 
-    def _make_image_part(self, mime: str, data: bytes) -> dict[str, Any]:
+    @staticmethod
+    def _make_image_part(mime: str, data: bytes) -> dict[str, Any]:
         b64 = base64.b64encode(data).decode("ascii")
         return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
 
-    def _normalize_url(self, value: Any) -> str | None:
+    @staticmethod
+    def _normalize_url(value: Any) -> str | None:
         if not isinstance(value, str):
             return None
         url = value.strip().replace("`", "").strip()
         return url or None
 
-    def _normalize_payload(self, data: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    @staticmethod
+    def _normalize_payload(data: dict[str, Any], *, kind: str) -> dict[str, Any]:
         if kind != "chat" and isinstance(data.get("note"), dict):
             return data["note"]
         return data
 
-    def _parse_size(self, value: Any, default: int) -> int:
+    @staticmethod
+    def _parse_size(value: Any, default: int) -> int:
         if value is None:
             return default
         if isinstance(value, bool):
@@ -124,34 +129,35 @@ class VisionPlugin(PluginBase):
         }
         return response if self._validate_plugin_response(response) else None
 
-    def _extract_text(self, data: dict[str, Any], *, kind: str) -> str:
-        data = self._normalize_payload(data, kind=kind)
+    @staticmethod
+    def _extract_text(data: dict[str, Any], *, kind: str) -> str:
+        data = VisionPlugin._normalize_payload(data, kind=kind)
         if kind == "chat":
             return (
                 data.get("text") or data.get("content") or data.get("body") or ""
             ).strip()
         return (data.get("text") or data.get("body") or "").strip()
 
-    def _extract_files(
-        self, data: dict[str, Any], *, kind: str
-    ) -> list[dict[str, Any]]:
-        data = self._normalize_payload(data, kind=kind)
+    @staticmethod
+    def _extract_files(data: dict[str, Any], *, kind: str) -> list[dict[str, Any]]:
+        data = VisionPlugin._normalize_payload(data, kind=kind)
         files: list[dict[str, Any]] = []
         if kind == "chat":
             if isinstance(data.get("file"), dict):
                 files.append(data["file"])
             if fid := data.get("fileId"):
                 files.append({"id": fid})
-            return self._dedupe_files(files)
+            return VisionPlugin._dedupe_files(files)
         if isinstance(data.get("files"), list):
             files.extend([f for f in data["files"] if isinstance(f, dict)])
         if isinstance(data.get("fileIds"), list):
             files.extend(
                 [{"id": fid} for fid in data["fileIds"] if isinstance(fid, str)]
             )
-        return self._dedupe_files(files)
+        return VisionPlugin._dedupe_files(files)
 
-    def _dedupe_files(self, files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    @staticmethod
+    def _dedupe_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen: set[str] = set()
         out: list[dict[str, Any]] = []
         for f in files:

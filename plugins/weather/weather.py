@@ -139,7 +139,8 @@ class WeatherPlugin(PluginBase):
             logger.error(f"获取城市坐标失败: {e}")
             return None
 
-    def _format_weather_info_v25(self, data: dict[str, Any], display_name: str) -> str:
+    @staticmethod
+    def _format_weather_info_v25(data: dict[str, Any], display_name: str) -> str:
         try:
             main = data["main"]
             temp = round(main["temp"])

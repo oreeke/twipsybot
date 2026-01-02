@@ -237,7 +237,8 @@ class CmdPlugin(PluginBase):
         )
         return f"已切换模型: {model}"
 
-    def _timeline_name_map(self) -> dict[str, str]:
+    @staticmethod
+    def _timeline_name_map() -> dict[str, str]:
         mapped = {
             "home": ChannelType.HOME_TIMELINE.value,
             "local": ChannelType.LOCAL_TIMELINE.value,
@@ -278,7 +279,7 @@ class CmdPlugin(PluginBase):
         action = tokens[0].lower()
         name_map = self._timeline_name_map()
         if action in {"reset", "default"}:
-            bot.timeline_channels = bot._load_timeline_channels()
+            bot.timeline_channels = bot.load_timeline_channels()
             await bot.restart_streaming()
             return "已按配置重置时间线订阅\n" + self._format_timeline_status()
         if action in {"clear", "off"}:

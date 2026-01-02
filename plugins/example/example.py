@@ -38,7 +38,8 @@ class ExamplePlugin(PluginBase):
     async def cleanup(self) -> None:
         await super().cleanup()
 
-    def _normalize_payload(self, data: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    @staticmethod
+    def _normalize_payload(data: dict[str, Any], *, kind: str) -> dict[str, Any]:
         if kind == "mention" and isinstance(data.get("note"), dict):
             return data["note"]
         return data
@@ -54,8 +55,9 @@ class ExamplePlugin(PluginBase):
             text = self.MENTION_PATTERN.sub("", text)
         return text.strip().lower()
 
-    def _has_media(self, data: dict[str, Any], *, kind: str) -> bool:
-        data = self._normalize_payload(data, kind=kind)
+    @staticmethod
+    def _has_media(data: dict[str, Any], *, kind: str) -> bool:
+        data = ExamplePlugin._normalize_payload(data, kind=kind)
         if kind == "chat":
             return bool(data.get("fileId") or data.get("file"))
         return bool(data.get("fileIds") or data.get("files"))

@@ -71,17 +71,17 @@ class RadarPlugin(PluginBase):
         self._log_plugin_action("初始化完成")
         return True
 
-    def _normalize_str(self, value: Any) -> str | None:
-        if value is None:
-            return None
-        if isinstance(value, bool):
+    @staticmethod
+    def _normalize_str(value: Any) -> str | None:
+        if value is None or isinstance(value, bool):
             return None
         if not isinstance(value, str):
             value = str(value)
         s = value.strip()
         return s or None
 
-    def _parse_bool(self, value: Any, default: bool) -> bool:
+    @staticmethod
+    def _parse_bool(value: Any, default: bool) -> bool:
         if value is None:
             return default
         if isinstance(value, bool):
@@ -98,7 +98,8 @@ class RadarPlugin(PluginBase):
                 return False
         return default
 
-    def _parse_int(self, value: Any, default: int) -> int:
+    @staticmethod
+    def _parse_int(value: Any, default: int) -> int:
         if value is None or isinstance(value, bool):
             return default
         if isinstance(value, int):
@@ -111,7 +112,8 @@ class RadarPlugin(PluginBase):
                 return int(s)
         return default
 
-    def _parse_str_set(self, value: Any) -> set[str]:
+    @staticmethod
+    def _parse_str_set(value: Any) -> set[str]:
         if value is None or isinstance(value, bool):
             return set()
         items: list[str] = []
@@ -155,7 +157,8 @@ class RadarPlugin(PluginBase):
             return v
         return None
 
-    def _extract_user_variants(self, note: dict[str, Any]) -> set[str]:
+    @staticmethod
+    def _extract_user_variants(note: dict[str, Any]) -> set[str]:
         user = note.get("user")
         if not isinstance(user, dict):
             return set()
@@ -181,9 +184,11 @@ class RadarPlugin(PluginBase):
         return self._parse_bool(value, False)
 
     def _has_attachments(self, note: dict[str, Any]) -> bool:
-        if isinstance(note.get("files"), list) and note["files"]:
-            return True
-        if isinstance(note.get("fileIds"), list) and note["fileIds"]:
+        files = note.get("files")
+        file_ids = note.get("fileIds")
+        has_files = isinstance(files, list) and bool(files)
+        has_file_ids = isinstance(file_ids, list) and bool(file_ids)
+        if has_files or has_file_ids:
             return True
         renote = note.get("renote")
         if isinstance(renote, dict):
@@ -210,17 +215,16 @@ class RadarPlugin(PluginBase):
     def _should_process(self, note: dict[str, Any]) -> bool:
         if not self.has_any_filter:
             return False
+        variants = self._extract_user_variants(note)
         if self.skip_self and hasattr(self, "bot"):
             bot_id = getattr(self.bot, "bot_user_id", None)
             if bot_id and note.get("userId") == bot_id:
                 return False
             bot_name = getattr(self.bot, "bot_username", None)
-            if isinstance(bot_name, str) and bot_name:
-                if bot_name.lower() in self._extract_user_variants(note):
-                    return False
+            if isinstance(bot_name, str) and bot_name and bot_name.lower() in variants:
+                return False
         if not self.include_bot_users and self._is_bot_user(note):
             return False
-        variants = self._extract_user_variants(note)
         if self.include_users and not (variants & self.include_users):
             return False
         if self.exclude_users and (variants & self.exclude_users):
@@ -234,7 +238,8 @@ class RadarPlugin(PluginBase):
             return False
         return True
 
-    def _format_reply_text(self, template: str, note: dict[str, Any]) -> str:
+    @staticmethod
+    def _format_reply_text(template: str, note: dict[str, Any]) -> str:
         if "{username}" not in template:
             return template
         user = note.get("user")
@@ -245,10 +250,7 @@ class RadarPlugin(PluginBase):
         return template.replace("{username}", username)
 
     async def _generate_ai_reply(self, note: dict[str, Any]) -> str | None:
-        if not hasattr(self, "openai"):
-            return None
-        content = self._effective_text(note)
-        if not content:
+        if not hasattr(self, "openai") or not (content := self._effective_text(note)):
             return None
         prompt = (self.reply_ai_prompt or self.DEFAULT_REPLY_AI_PROMPT).format(
             content=content
@@ -265,10 +267,7 @@ class RadarPlugin(PluginBase):
         return reply.strip() or None
 
     async def _generate_ai_quote(self, note: dict[str, Any]) -> str | None:
-        if not hasattr(self, "openai"):
-            return None
-        content = self._effective_text(note)
-        if not content:
+        if not hasattr(self, "openai") or not (content := self._effective_text(note)):
             return None
         prompt = (self.quote_ai_prompt or self.DEFAULT_QUOTE_AI_PROMPT).format(
             content=content
@@ -290,11 +289,13 @@ class RadarPlugin(PluginBase):
         if not hasattr(self, "misskey"):
             return None
         note_id = note_data.get("id")
-        if not isinstance(note_id, str) or not note_id:
-            return None
-        if note_id in self.dedupe_cache:
-            return None
-        if not self._should_process(note_data):
+        should_skip = (
+            not isinstance(note_id, str)
+            or not note_id
+            or note_id in self.dedupe_cache
+            or not self._should_process(note_data)
+        )
+        if should_skip:
             return None
         self.dedupe_cache[note_id] = True
         username = (
@@ -315,58 +316,89 @@ class RadarPlugin(PluginBase):
             logger.error(f"Radar 互动失败: {repr(e)}")
         return None
 
+    async def _maybe_react(
+        self, note_data: dict[str, Any], note_id: str, channel: str
+    ) -> None:
+        if not self.reaction or note_data.get("myReaction"):
+            return
+        try:
+            await self.misskey.create_reaction(note_id, self.reaction)
+            self._log_plugin_action("反应", f"{note_id} {self.reaction} [{channel}]")
+        except Exception as e:
+            logger.error(f"Radar 反应失败: {repr(e)}")
+
+    async def _build_reply_text(self, note_data: dict[str, Any]) -> str | None:
+        if self.reply_text:
+            text = self._format_reply_text(self.reply_text, note_data).strip()
+            if text:
+                return text
+        if not self.reply_ai:
+            return None
+        try:
+            return await self._generate_ai_reply(note_data)
+        except Exception as e:
+            logger.error(f"Radar AI 回复失败: {repr(e)}")
+            return None
+
+    async def _maybe_reply(
+        self, note_data: dict[str, Any], note_id: str, channel: str
+    ) -> None:
+        if not self.reply_enabled:
+            return
+        if not (text := await self._build_reply_text(note_data)):
+            return
+        try:
+            await self.misskey.create_note(text=text, reply_id=note_id)
+            self._log_plugin_action("回复", f"{note_id} [{channel}]")
+        except Exception as e:
+            logger.error(f"Radar 回复失败: {repr(e)}")
+
+    async def _build_quote_text(self, note_data: dict[str, Any]) -> str | None:
+        if self.quote_text:
+            text = self._format_reply_text(self.quote_text, note_data).strip()
+            if text:
+                return text
+        if not self.quote_ai:
+            return None
+        try:
+            return await self._generate_ai_quote(note_data)
+        except Exception as e:
+            logger.error(f"Radar AI 引用失败: {repr(e)}")
+            return None
+
+    async def _maybe_quote(
+        self, note_data: dict[str, Any], note_id: str, channel: str
+    ) -> bool:
+        if not self.quote_enabled:
+            return False
+        if not (text := await self._build_quote_text(note_data)):
+            return False
+        try:
+            await self.misskey.create_renote(
+                note_id, visibility=self.quote_visibility, text=text
+            )
+            self._log_plugin_action(
+                "引用", f"{note_id} {self.quote_visibility or ''} [{channel}]"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Radar 引用失败: {repr(e)}")
+            return False
+
+    async def _maybe_renote(self, note_id: str, channel: str) -> None:
+        if not self.renote_enabled:
+            return
+        try:
+            await self.misskey.create_renote(note_id, visibility=self.renote_visibility)
+            self._log_plugin_action(
+                "转贴", f"{note_id} {self.renote_visibility or ''} [{channel}]"
+            )
+        except Exception as e:
+            logger.error(f"Radar 转贴失败: {repr(e)}")
+
     async def _act(self, note_data: dict[str, Any], note_id: str, channel: str) -> None:
-        if self.reaction and not note_data.get("myReaction"):
-            try:
-                await self.misskey.create_reaction(note_id, self.reaction)
-                self._log_plugin_action(
-                    "反应", f"{note_id} {self.reaction} [{channel}]"
-                )
-            except Exception as e:
-                logger.error(f"Radar 反应失败: {repr(e)}")
-        if self.reply_enabled:
-            text = None
-            if self.reply_text:
-                text = self._format_reply_text(self.reply_text, note_data).strip()
-            if not text and self.reply_ai:
-                try:
-                    text = await self._generate_ai_reply(note_data)
-                except Exception as e:
-                    logger.error(f"Radar AI 回复失败: {repr(e)}")
-            if text:
-                try:
-                    await self.misskey.create_note(text=text, reply_id=note_id)
-                    self._log_plugin_action("回复", f"{note_id} [{channel}]")
-                except Exception as e:
-                    logger.error(f"Radar 回复失败: {repr(e)}")
-        did_quote = False
-        if self.quote_enabled:
-            text = None
-            if self.quote_text:
-                text = self._format_reply_text(self.quote_text, note_data).strip()
-            if not text and self.quote_ai:
-                try:
-                    text = await self._generate_ai_quote(note_data)
-                except Exception as e:
-                    logger.error(f"Radar AI 引用失败: {repr(e)}")
-            if text:
-                try:
-                    await self.misskey.create_renote(
-                        note_id, visibility=self.quote_visibility, text=text
-                    )
-                    self._log_plugin_action(
-                        "引用", f"{note_id} {self.quote_visibility or ''} [{channel}]"
-                    )
-                    did_quote = True
-                except Exception as e:
-                    logger.error(f"Radar 引用失败: {repr(e)}")
-        if self.renote_enabled and not did_quote:
-            try:
-                await self.misskey.create_renote(
-                    note_id, visibility=self.renote_visibility
-                )
-                self._log_plugin_action(
-                    "转贴", f"{note_id} {self.renote_visibility or ''} [{channel}]"
-                )
-            except Exception as e:
-                logger.error(f"Radar 转贴失败: {repr(e)}")
+        await self._maybe_react(note_data, note_id, channel)
+        await self._maybe_reply(note_data, note_id, channel)
+        did_quote = await self._maybe_quote(note_data, note_id, channel)
+        if not did_quote:
+            await self._maybe_renote(note_id, channel)

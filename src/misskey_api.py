@@ -254,8 +254,9 @@ class MisskeyAPI:
                 except (OSError, AttributeError):
                     pass
 
+    @staticmethod
     def _determine_reply_visibility(
-        self, original_visibility: str, visibility: str | None
+        original_visibility: str, visibility: str | None
     ) -> str:
         if visibility is None:
             return original_visibility

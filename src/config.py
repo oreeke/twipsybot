@@ -111,10 +111,12 @@ class Config:
             logger.debug(f"无法从文件加载配置 {file_path}，使用原始值: {e}")
             return file_path
 
-    def _looks_like_file_path(self, value: str) -> bool:
+    @staticmethod
+    def _looks_like_file_path(value: str) -> bool:
         return len(value) <= 200 and (value.endswith(".txt") or "prompts" in value)
 
-    def _is_prompt_config(self, config_path: str) -> bool:
+    @staticmethod
+    def _is_prompt_config(config_path: str) -> bool:
         prompt_configs = [ConfigKeys.BOT_SYSTEM_PROMPT, ConfigKeys.BOT_AUTO_POST_PROMPT]
         return config_path in prompt_configs
 

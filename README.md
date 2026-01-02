@@ -72,6 +72,13 @@ bot:
     你是一个可爱的AI助手，运行在Misskey平台上。
     请用简短、友好的方式发帖和回答问题。
 
+  timeline:
+    enabled: false                                  # 是否订阅时间线
+    home: false                                     # homeTimeline
+    local: false                                    # localTimeline
+    hybrid: false                                   # hybridTimeline
+    global: false                                   # globalTimeline
+
   auto_post:
     enabled: true                                   # 是否启用自动发帖
     interval_minutes: 180                           # 发帖间隔（分钟）
@@ -150,6 +157,11 @@ BOT_AUTO_POST_PROMPT=生成一篇有趣、有见解的社交媒体帖子。     
 BOT_RESPONSE_MENTION_ENABLED=true                          # 是否响应提及（@）
 BOT_RESPONSE_CHAT_ENABLED=true                             # 是否响应聊天
 BOT_RESPONSE_CHAT_MEMORY=10                                # 聊天上下文记忆长度（条）
+BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线
+BOT_TIMELINE_HOME=false                                    # homeTimeline
+BOT_TIMELINE_LOCAL=false                                   # localTimeline
+BOT_TIMELINE_HYBRID=false                                  # hybridTimeline
+BOT_TIMELINE_GLOBAL=false                                  # globalTimeline
 LOG_LEVEL=INFO                                             # 日志级别 (DEBUG/INFO/WARNING/ERROR)
 ```
 </details>

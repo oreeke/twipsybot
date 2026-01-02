@@ -30,7 +30,7 @@ from .openai_api import OpenAIAPI
 from .persistence import PersistenceManager
 from .plugin import PluginManager
 from .runtime import BotRuntime
-from .streaming import StreamingClient
+from .streaming import ChannelType, StreamingClient
 from .transport import ClientSession
 from .utils import extract_user_id, extract_username, get_memory_usage
 
@@ -408,6 +408,7 @@ class AutoPostService:
 
 class BotHandlers:
     def __init__(self, bot: "MisskeyBot"):
+        self.bot = bot
         self.errors = ErrorResponder(bot)
         self.mention = MentionHandler(bot, self.errors)
         self.chat = ChatHandler(bot, self.errors)
@@ -426,6 +427,9 @@ class BotHandlers:
 
     async def on_follow(self, follow: dict[str, Any]) -> None:
         await self.follow.handle(follow)
+
+    async def on_timeline_note(self, note: dict[str, Any]) -> None:
+        await self.bot.plugin_manager.on_timeline_note(note)
 
     async def on_auto_post(self) -> None:
         await self.auto_post.run()
@@ -449,6 +453,7 @@ class MisskeyBot:
             logger.error(f"初始化失败: {e}")
             raise ConfigurationError() from e
         self.persistence = PersistenceManager(config.get(ConfigKeys.DB_PATH))
+        self.runtime = BotRuntime(self)
         self.plugin_manager = PluginManager(
             config,
             persistence=self.persistence,
@@ -456,9 +461,11 @@ class MisskeyBot:
                 "misskey": self.misskey,
                 "drive": self.misskey.drive,
                 "openai": self.openai,
+                "streaming": self.streaming,
+                "runtime": self.runtime,
+                "bot": self,
             },
         )
-        self.runtime = BotRuntime(self)
         self.system_prompt = config.get(ConfigKeys.BOT_SYSTEM_PROMPT, "")
         self.bot_user_id = None
         self.bot_username = None
@@ -469,6 +476,7 @@ class MisskeyBot:
             maxsize=CHAT_CACHE_MAX_USERS, ttl=CHAT_CACHE_TTL
         )
         self.handlers = BotHandlers(self)
+        self.timeline_channels = self._load_timeline_channels()
         logger.info("机器人初始化完成")
 
     def _actor_key(self, user_id: str | None, username: str | None) -> str | None:
@@ -490,6 +498,40 @@ class MisskeyBot:
 
     def lock_actor(self, user_id: str | None, username: str | None):
         return self._get_actor_lock(user_id, username)
+
+    def _load_timeline_channels(self) -> set[str]:
+        if not self.config.get(ConfigKeys.BOT_TIMELINE_ENABLED):
+            return set()
+        enabled: set[str] = set()
+        if self.config.get(ConfigKeys.BOT_TIMELINE_HOME):
+            enabled.add(ChannelType.HOME_TIMELINE.value)
+        if self.config.get(ConfigKeys.BOT_TIMELINE_LOCAL):
+            enabled.add(ChannelType.LOCAL_TIMELINE.value)
+        if self.config.get(ConfigKeys.BOT_TIMELINE_HYBRID):
+            enabled.add(ChannelType.HYBRID_TIMELINE.value)
+        if self.config.get(ConfigKeys.BOT_TIMELINE_GLOBAL):
+            enabled.add(ChannelType.GLOBAL_TIMELINE.value)
+        return enabled
+
+    def get_streaming_channels(self) -> list[str]:
+        active = {ChannelType.MAIN.value, *self.timeline_channels}
+        ordered = [
+            ChannelType.MAIN.value,
+            ChannelType.HOME_TIMELINE.value,
+            ChannelType.LOCAL_TIMELINE.value,
+            ChannelType.HYBRID_TIMELINE.value,
+            ChannelType.GLOBAL_TIMELINE.value,
+        ]
+        return [c for c in ordered if c in active]
+
+    async def restart_streaming(self) -> None:
+        if (task := self.runtime.tasks.get("streaming")) and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await self.streaming.disconnect()
+        channels = self.get_streaming_channels()
+        await self.streaming.connect_once(channels)
+        self.runtime.add_task("streaming", self.streaming.connect(channels))
 
     async def get_or_load_chat_history(
         self, user_id: str, *, limit: int | None
@@ -578,8 +620,10 @@ class MisskeyBot:
             self.streaming.on_message(self.handlers.on_message)
             self.streaming.on_reaction(self.handlers.on_reaction)
             self.streaming.on_follow(self.handlers.on_follow)
-            await self.streaming.connect_once()
-            self.runtime.add_task("streaming", self.streaming.connect())
+            self.streaming.on_note(self.handlers.on_timeline_note)
+            channels = self.get_streaming_channels()
+            await self.streaming.connect_once(channels)
+            self.runtime.add_task("streaming", self.streaming.connect(channels))
         except (ValueError, OSError) as e:
             logger.error(f"设置 Streaming 连接失败: {e}")
             raise

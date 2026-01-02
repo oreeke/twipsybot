@@ -24,8 +24,12 @@ from .transport import ClientSession
 __all__ = ("ChannelType", "StreamingClient")
 
 
-class ChannelType(Enum):
+class ChannelType(str, Enum):
     MAIN = "main"
+    HOME_TIMELINE = "homeTimeline"
+    LOCAL_TIMELINE = "localTimeline"
+    HYBRID_TIMELINE = "hybridTimeline"
+    GLOBAL_TIMELINE = "globalTimeline"
 
 
 class StreamingClient:
@@ -39,7 +43,7 @@ class StreamingClient:
         self.processed_events = TTLCache(
             maxsize=STREAM_DEDUP_CACHE_MAX, ttl=STREAM_DEDUP_CACHE_TTL
         )
-        self._event_queue: asyncio.Queue[tuple[ChannelType, dict[str, Any]] | None] = (
+        self._event_queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = (
             asyncio.Queue(maxsize=STREAM_QUEUE_MAX)
         )
         self._worker_count = STREAM_WORKERS
@@ -76,8 +80,22 @@ class StreamingClient:
     def on_follow(self, handler: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
         self._add_event_handler("follow", handler)
 
+    def on_note(self, handler: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+        self._add_event_handler("note", handler)
+
     def _add_event_handler(self, event_type: str, handler: Callable) -> None:
         self.event_handlers.setdefault(event_type, []).append(handler)
+
+    @staticmethod
+    def _looks_like_note(data: Any) -> bool:
+        if not isinstance(data, dict):
+            return False
+        return (
+            isinstance(data.get("id"), str)
+            and isinstance(data.get("createdAt"), str)
+            and isinstance(data.get("userId"), str)
+            and isinstance(data.get("user"), dict)
+        )
 
     async def connect(
         self, channels: list[str] | None = None, *, reconnect: bool = True
@@ -116,47 +134,55 @@ class StreamingClient:
         return self.ws_connection and not self.ws_connection.closed
 
     async def connect_channel(
-        self, channel_type: ChannelType, params: dict[str, Any] | None = None
+        self, channel: ChannelType | str, params: dict[str, Any] | None = None
     ) -> str:
+        channel_name = (
+            channel.value if isinstance(channel, ChannelType) else str(channel)
+        )
+        if not channel_name:
+            raise ValueError("频道名称不能为空")
         existing_channels = [
             ch_id
             for ch_id, ch_info in self.channels.items()
-            if ch_info["type"] == channel_type
+            if ch_info.get("name") == channel_name
         ]
         if existing_channels:
-            logger.warning(
-                f"频道类型 {channel_type.value} 已存在连接: {existing_channels}"
-            )
+            logger.warning(f"频道类型 {channel_name} 已存在连接: {existing_channels}")
             return existing_channels[0]
         channel_id = str(uuid.uuid4())
         message = {
             "type": "connect",
             "body": {
-                "channel": channel_type.value,
+                "channel": channel_name,
                 "id": channel_id,
                 "params": params or {},
             },
         }
         if not self._ws_available:
-            logger.error(f"WebSocket 连接不可用，无法连接频道: {channel_type.value}")
+            logger.error(f"WebSocket 连接不可用，无法连接频道: {channel_name}")
             raise WebSocketConnectionError()
         await self.ws_connection.send_json(message)
-        self.channels[channel_id] = {"type": channel_type, "params": params or {}}
-        logger.debug(f"已连接频道: {channel_type.value} (ID: {channel_id})")
+        self.channels[channel_id] = {"name": channel_name, "params": params or {}}
+        logger.debug(f"已连接频道: {channel_name} (ID: {channel_id})")
         return channel_id
 
-    async def disconnect_channel(self, channel_type: ChannelType) -> None:
+    async def disconnect_channel(self, channel: ChannelType | str) -> None:
+        channel_name = (
+            channel.value if isinstance(channel, ChannelType) else str(channel)
+        )
+        if not channel_name:
+            raise ValueError("频道名称不能为空")
         channels_to_remove = [
             ch_id
             for ch_id, ch_info in self.channels.items()
-            if ch_info["type"] == channel_type
+            if ch_info.get("name") == channel_name
         ]
         for channel_id in channels_to_remove:
             if self._ws_available:
                 message = {"type": "disconnect", "body": {"id": channel_id}}
                 await self.ws_connection.send_json(message)
             del self.channels[channel_id]
-        logger.debug(f"已断开频道连接: {channel_type.value}")
+        logger.debug(f"已断开频道连接: {channel_name}")
 
     async def connect_once(self, channels: list[str] | None = None) -> None:
         if self.running:
@@ -164,15 +190,14 @@ class StreamingClient:
         self.running = True
         self._ensure_workers_started()
         await self._connect_websocket()
-        if channels:
-            for channel in channels:
-                try:
-                    channel_type = ChannelType(channel)
-                    await self.connect_channel(channel_type)
-                except ValueError as e:
-                    logger.warning(f"未知的频道类型 {channel}: {e}")
-        else:
-            await self.connect_channel(ChannelType.MAIN)
+        requested = [c for c in (channels or []) if c]
+        if ChannelType.MAIN.value not in requested:
+            requested.insert(0, ChannelType.MAIN.value)
+        for channel in requested:
+            try:
+                await self.connect_channel(ChannelType(channel))
+            except ValueError:
+                await self.connect_channel(channel)
         if self._first_connection:
             logger.info("Streaming 客户端已启动")
             self._first_connection = False
@@ -260,10 +285,27 @@ class StreamingClient:
             logger.debug(f"收到未知频道的消息: {channel_id}")
             return
         channel_info = self.channels[channel_id]
-        channel_type = channel_info["type"]
+        channel_name = channel_info.get("name", "unknown")
         event_data = body.get("body") or {}
         event_type = event_data.get("type")
+        if (
+            not event_type
+            and channel_name
+            in {
+                ChannelType.HOME_TIMELINE.value,
+                ChannelType.LOCAL_TIMELINE.value,
+                ChannelType.HYBRID_TIMELINE.value,
+                ChannelType.GLOBAL_TIMELINE.value,
+            }
+            and self._looks_like_note(event_data)
+        ):
+            event_type = "note"
+            event_data = {"type": "note", "body": event_data}
         event_id = event_data.get("id")
+        if not event_id and event_type == "note":
+            inner_id = (event_data.get("body") or {}).get("id")
+            if isinstance(inner_id, str):
+                event_id = inner_id
         if not event_type and (
             event_data.get("fromUserId")
             and event_data.get("toUserId")
@@ -280,9 +322,9 @@ class StreamingClient:
         self._track_event(event_id)
         if event_type:
             logger.debug(
-                f"收到 {channel_type.value} 频道事件: {event_type} (频道 ID: {channel_id}, 事件 ID: {event_id})"
+                f"收到 {channel_name} 频道事件: {event_type} (频道 ID: {channel_id}, 事件 ID: {event_id})"
             )
-        await self._enqueue_event(channel_type, event_data)
+        await self._enqueue_event(channel_name, event_data)
 
     def _ensure_workers_started(self) -> None:
         if self._workers:
@@ -305,12 +347,10 @@ class StreamingClient:
         await asyncio.gather(*self._workers, return_exceptions=True)
         self._workers.clear()
 
-    async def _enqueue_event(
-        self, channel_type: ChannelType, event_data: dict[str, Any]
-    ):
+    async def _enqueue_event(self, channel_name: str, event_data: dict[str, Any]):
         try:
             await asyncio.wait_for(
-                self._event_queue.put((channel_type, event_data)),
+                self._event_queue.put((channel_name, event_data)),
                 timeout=self._queue_put_timeout,
             )
         except asyncio.TimeoutError:
@@ -323,29 +363,29 @@ class StreamingClient:
             item = await self._event_queue.get()
             if item is None:
                 return
-            channel_type, event_data = item
+            channel_name, event_data = item
             try:
-                await self._dispatch_event(channel_type, event_data)
+                await self._dispatch_event(channel_name, event_data)
             except (ValueError, TypeError, AttributeError, KeyError) as e:
                 logger.error(f"处理事件失败: {e}")
             except Exception as e:
                 logger.exception(f"处理事件失败: {e}")
 
     async def _dispatch_event(
-        self, channel_type: ChannelType, event_data: dict[str, Any]
+        self, channel_name: str, event_data: dict[str, Any]
     ) -> None:
         event_type = event_data.get("type")
         if not event_type:
-            await self._handle_no_event_type(channel_type, event_data)
+            await self._handle_no_event_type(channel_name, event_data)
         else:
-            await self._handle_typed_event(channel_type, event_type, event_data)
+            await self._handle_typed_event(channel_name, event_type, event_data)
 
     async def _handle_no_event_type(
-        self, channel_type: ChannelType, event_data: dict[str, Any]
+        self, channel_name: str, event_data: dict[str, Any]
     ) -> None:
         event_id = event_data.get("id", "unknown")
         logger.debug(
-            f"收到无事件类型的数据 - 频道: {channel_type.value}, 事件 ID: {event_id}"
+            f"收到无事件类型的数据 - 频道: {channel_name}, 事件 ID: {event_id}"
         )
         logger.debug(f"数据结构: {list(event_data.keys())}")
         logger.opt(lazy=True).debug(
@@ -355,12 +395,22 @@ class StreamingClient:
 
     async def _handle_typed_event(
         self,
-        channel_type: ChannelType,
+        channel_name: str,
         event_type: str,
         event_data: dict[str, Any],
     ) -> None:
-        if channel_type == ChannelType.MAIN:
+        if channel_name == ChannelType.MAIN.value:
             await self._handle_main_channel_event(event_type, event_data)
+            return
+        if channel_name in {
+            ChannelType.HOME_TIMELINE.value,
+            ChannelType.LOCAL_TIMELINE.value,
+            ChannelType.HYBRID_TIMELINE.value,
+            ChannelType.GLOBAL_TIMELINE.value,
+        }:
+            await self._handle_timeline_channel_event(
+                channel_name, event_type, event_data
+            )
 
     async def _handle_main_channel_event(
         self, event_type: str, event_data: dict[str, Any]
@@ -381,6 +431,32 @@ class StreamingClient:
                 "事件数据: {}",
                 lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
             )
+
+    async def _handle_timeline_channel_event(
+        self, channel_name: str, event_type: str, event_data: dict[str, Any]
+    ) -> None:
+        if event_type != "note":
+            logger.debug(f"收到未知类型的 {channel_name} 频道事件: {event_type}")
+            logger.debug(f"数据结构: {list(event_data.keys())}")
+            logger.opt(lazy=True).debug(
+                "事件数据: {}",
+                lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
+            )
+            return
+        payload = event_data.get("body")
+        if not isinstance(payload, dict):
+            payload = event_data
+        else:
+            payload = dict(payload)
+        if isinstance(payload, dict) and "streamingChannel" not in payload:
+            payload["streamingChannel"] = channel_name
+        logger.debug(f"收到 {channel_name} 频道 note")
+        logger.debug(f"数据结构: {list(payload.keys())}")
+        logger.opt(lazy=True).debug(
+            "事件数据: {}",
+            lambda: json.dumps(payload, ensure_ascii=False, indent=2),
+        )
+        await self._call_handlers("note", payload)
 
     async def _call_handlers(self, event_type: str, data: dict[str, Any]) -> None:
         handlers = self.event_handlers.get(event_type, [])

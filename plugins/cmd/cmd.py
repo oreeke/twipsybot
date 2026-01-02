@@ -6,6 +6,7 @@ from loguru import logger
 
 from src.constants import ConfigKeys
 from src.plugin import PluginBase
+from src.streaming import ChannelType
 from src.utils import get_memory_usage, get_system_info, health_check
 
 
@@ -42,6 +43,10 @@ class CmdPlugin(PluginBase):
                 "dbclear": {
                     "description": "清理插件数据 (用法: dbclear <插件名> [键名])",
                     "aliases": ["清理"],
+                },
+                "timeline": {
+                    "description": "查看/切换时间线订阅 (用法: timeline [status|add|del|set|clear|reset] ...)",
+                    "aliases": ["tl", "时间线"],
                 },
             }
 
@@ -89,6 +94,7 @@ class CmdPlugin(PluginBase):
             "disable": lambda: self._disable_plugin(args),
             "dbstats": self._get_db_stats,
             "dbclear": lambda: self._clear_plugin_data(args),
+            "timeline": lambda: self._handle_timeline(args),
         }
         if command in commands:
             try:
@@ -230,6 +236,80 @@ class CmdPlugin(PluginBase):
             self.name, ConfigKeys.OPENAI_MODEL, model
         )
         return f"已切换模型: {model}"
+
+    def _timeline_name_map(self) -> dict[str, str]:
+        mapped = {
+            "home": ChannelType.HOME_TIMELINE.value,
+            "local": ChannelType.LOCAL_TIMELINE.value,
+            "hybrid": ChannelType.HYBRID_TIMELINE.value,
+            "global": ChannelType.GLOBAL_TIMELINE.value,
+        }
+        for v in list(mapped.values()):
+            mapped[v.lower()] = v
+        return mapped
+
+    def _format_timeline_status(self) -> str:
+        bot = getattr(self, "bot", None)
+        if not bot:
+            return "Bot 未注入，无法管理时间线订阅"
+        desired = getattr(bot, "timeline_channels", set()) or set()
+        desired_text = ", ".join(sorted(desired)) if desired else "(空)"
+        connected = getattr(bot, "streaming", None)
+        if connected and getattr(connected, "channels", None):
+            connected_names = sorted(
+                {
+                    info.get("name")
+                    for info in connected.channels.values()
+                    if info.get("name")
+                }
+            )
+        else:
+            connected_names = []
+        connected_text = ", ".join(connected_names) if connected_names else "(空)"
+        return f"期望订阅: {desired_text}\n当前连接: {connected_text}"
+
+    async def _handle_timeline(self, args: str) -> str:
+        bot = getattr(self, "bot", None)
+        if not bot:
+            return "Bot 未注入，无法管理时间线订阅"
+        tokens = args.strip().split()
+        if not tokens or tokens[0].lower() in {"status", "show"}:
+            return self._format_timeline_status()
+        action = tokens[0].lower()
+        name_map = self._timeline_name_map()
+        if action in {"reset", "default"}:
+            bot.timeline_channels = bot._load_timeline_channels()
+            await bot.restart_streaming()
+            return "已按配置重置时间线订阅\n" + self._format_timeline_status()
+        if action in {"clear", "off"}:
+            bot.timeline_channels = set()
+            await bot.restart_streaming()
+            return "已清空时间线订阅\n" + self._format_timeline_status()
+        if action not in {"add", "enable", "del", "remove", "disable", "set"}:
+            return (
+                "用法: ^timeline [status|add|del|set|clear|reset] ...\n"
+                "示例: ^timeline add home\n"
+                "示例: ^timeline set home local\n"
+                "可选: home/local/hybrid/global"
+            )
+        raw_names = [t.strip().lower() for t in tokens[1:] if t.strip()]
+        if not raw_names:
+            return "请指定时间线名称: home/local/hybrid/global"
+        resolved: set[str] = set()
+        for raw in raw_names:
+            if raw in name_map:
+                resolved.add(name_map[raw])
+            else:
+                return f"未知时间线: {raw}\n可选: home/local/hybrid/global"
+        current = set(getattr(bot, "timeline_channels", set()) or set())
+        if action in {"add", "enable"}:
+            bot.timeline_channels = current | resolved
+        elif action in {"del", "remove", "disable"}:
+            bot.timeline_channels = current - resolved
+        else:
+            bot.timeline_channels = resolved
+        await bot.restart_streaming()
+        return "已更新时间线订阅\n" + self._format_timeline_status()
 
     def _create_response(self, response_text: str) -> dict[str, Any] | None:
         try:

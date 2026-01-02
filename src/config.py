@@ -62,6 +62,11 @@ class Config:
             ),
             "BOT_RESPONSE_CHAT_ENABLED": (ConfigKeys.BOT_RESPONSE_CHAT_ENABLED, bool),
             "BOT_RESPONSE_CHAT_MEMORY": (ConfigKeys.BOT_RESPONSE_CHAT_MEMORY, int),
+            "BOT_TIMELINE_ENABLED": (ConfigKeys.BOT_TIMELINE_ENABLED, bool),
+            "BOT_TIMELINE_HOME": (ConfigKeys.BOT_TIMELINE_HOME, bool),
+            "BOT_TIMELINE_LOCAL": (ConfigKeys.BOT_TIMELINE_LOCAL, bool),
+            "BOT_TIMELINE_HYBRID": (ConfigKeys.BOT_TIMELINE_HYBRID, bool),
+            "BOT_TIMELINE_GLOBAL": (ConfigKeys.BOT_TIMELINE_GLOBAL, bool),
             "DB_PATH": (ConfigKeys.DB_PATH, str),
             "LOG_PATH": (ConfigKeys.LOG_PATH, str),
             "LOG_LEVEL": (ConfigKeys.LOG_LEVEL, str),
@@ -151,6 +156,11 @@ class Config:
             ConfigKeys.BOT_RESPONSE_MENTION_ENABLED: True,
             ConfigKeys.BOT_RESPONSE_CHAT_ENABLED: True,
             ConfigKeys.BOT_RESPONSE_CHAT_MEMORY: 10,
+            ConfigKeys.BOT_TIMELINE_ENABLED: False,
+            ConfigKeys.BOT_TIMELINE_HOME: False,
+            ConfigKeys.BOT_TIMELINE_LOCAL: False,
+            ConfigKeys.BOT_TIMELINE_HYBRID: False,
+            ConfigKeys.BOT_TIMELINE_GLOBAL: False,
             ConfigKeys.DB_PATH: "data/misskey_ai.db",
             ConfigKeys.LOG_PATH: "logs/misskey_ai.log",
             ConfigKeys.LOG_LEVEL: "INFO",
@@ -185,6 +195,11 @@ class Config:
         require_type(ConfigKeys.BOT_AUTO_POST_ENABLED, (bool,), "自动发帖开关")
         require_type(ConfigKeys.BOT_RESPONSE_MENTION_ENABLED, (bool,), "提及响应开关")
         require_type(ConfigKeys.BOT_RESPONSE_CHAT_ENABLED, (bool,), "聊天响应开关")
+        require_type(ConfigKeys.BOT_TIMELINE_ENABLED, (bool,), "时间线订阅开关")
+        require_type(ConfigKeys.BOT_TIMELINE_HOME, (bool,), "时间线订阅 Home 开关")
+        require_type(ConfigKeys.BOT_TIMELINE_LOCAL, (bool,), "时间线订阅 Local 开关")
+        require_type(ConfigKeys.BOT_TIMELINE_HYBRID, (bool,), "时间线订阅 Hybrid 开关")
+        require_type(ConfigKeys.BOT_TIMELINE_GLOBAL, (bool,), "时间线订阅 Global 开关")
         require_type(ConfigKeys.DB_PATH, (str,), "数据库路径")
         require_type(ConfigKeys.LOG_PATH, (str,), "日志路径")
         require_type(ConfigKeys.LOG_LEVEL, (str,), "日志级别")

@@ -17,6 +17,13 @@ bot:
     你是一个可爱的AI助手，运行在Misskey平台上。
     请用简短、友好的方式发帖和回答问题。
 
+  timeline:
+    enabled: false                                  # 是否订阅时间线
+    home: false                                     # homeTimeline
+    local: false                                    # localTimeline
+    hybrid: false                                   # hybridTimeline
+    global: false                                   # globalTimeline
+
   auto_post:
     enabled: true                                   # 是否启用自动发帖
     interval_minutes: 180                           # 发帖间隔（分钟）

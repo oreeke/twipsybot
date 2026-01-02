@@ -87,6 +87,11 @@ class PluginBase:
     async def on_follow(self, _follow_data: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
+    async def on_timeline_note(
+        self, _note_data: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        return None
+
     async def on_auto_post(self) -> dict[str, Any] | None:
         return None
 
@@ -306,6 +311,9 @@ class PluginManager:
 
     async def on_follow(self, follow_data: dict[str, Any]) -> list[dict[str, Any]]:
         return await self.call_plugin_hook("on_follow", follow_data)
+
+    async def on_timeline_note(self, note_data: dict[str, Any]) -> list[dict[str, Any]]:
+        return await self.call_plugin_hook("on_timeline_note", note_data)
 
     async def on_auto_post(self) -> list[dict[str, Any]]:
         return await self.call_plugin_hook("on_auto_post")

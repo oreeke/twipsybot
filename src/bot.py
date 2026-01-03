@@ -538,14 +538,14 @@ class MisskeyBot:
     ) -> None:
         limit = limit or self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
         history = list(self._chat_histories.get(user_id) or [])
-        last = history[-1] if history else None
+        last = next(reversed(history), None)
         if user_text and not (
             isinstance(last, dict)
             and last.get("role") == "user"
             and last.get("content") == user_text
         ):
             history.append({"role": "user", "content": user_text})
-        last = history[-1] if history else None
+        last = next(reversed(history), None)
         if assistant_text and not (
             isinstance(last, dict)
             and last.get("role") == "assistant"

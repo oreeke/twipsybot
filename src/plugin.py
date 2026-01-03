@@ -74,7 +74,8 @@ class PluginBase:
         return False
 
     async def initialize(self) -> bool:
-        return bool(self.name) or True
+        await asyncio.sleep(0)
+        return True
 
     async def cleanup(self) -> None:
         await self._cleanup_registered_resources()
@@ -163,9 +164,7 @@ class PluginManager:
                 and not plugin_dir.name.startswith(".")
                 and plugin_dir.name not in {"__pycache__", "example"}
             ):
-                await self._load_plugin(
-                    plugin_dir, self._load_plugin_config(plugin_dir)
-                )
+                self._load_plugin(plugin_dir, self._load_plugin_config(plugin_dir))
         await self._initialize_plugins()
         enabled_count = sum(plugin.enabled for plugin in self.plugins.values())
         logger.info(f"已发现 {len(self.plugins)} 个插件，{enabled_count} 个已启用")
@@ -182,9 +181,7 @@ class PluginManager:
             logger.error(f"加载插件 {plugin_dir.name} 配置文件时出错: {e}")
             return {}
 
-    async def _load_plugin(
-        self, plugin_dir: Path, plugin_config: dict[str, Any]
-    ) -> None:
+    def _load_plugin(self, plugin_dir: Path, plugin_config: dict[str, Any]) -> None:
         try:
             plugin_file = plugin_dir / f"{plugin_dir.name}.py"
             if not plugin_file.exists():

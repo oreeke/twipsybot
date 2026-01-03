@@ -538,16 +538,18 @@ class MisskeyBot:
     ) -> None:
         limit = limit or self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
         history = list(self._chat_histories.get(user_id) or [])
+        last = history[-1] if history else None
         if user_text and not (
-            history
-            and history[-1].get("role") == "user"
-            and history[-1].get("content") == user_text
+            isinstance(last, dict)
+            and last.get("role") == "user"
+            and last.get("content") == user_text
         ):
             history.append({"role": "user", "content": user_text})
+        last = history[-1] if history else None
         if assistant_text and not (
-            history
-            and history[-1].get("role") == "assistant"
-            and history[-1].get("content") == assistant_text
+            isinstance(last, dict)
+            and last.get("role") == "assistant"
+            and last.get("content") == assistant_text
         ):
             history.append({"role": "assistant", "content": assistant_text})
         self._chat_histories[user_id] = history[-max(0, limit * 2) :]
@@ -567,7 +569,7 @@ class MisskeyBot:
         logger.info("启动服务组件...")
         self.runtime.running = True
         await self._initialize_services()
-        await self._setup_scheduler()
+        self._setup_scheduler()
         await self._setup_streaming()
         logger.info("服务组件就绪，等待新任务...")
         memory_usage = get_memory_usage()
@@ -575,7 +577,7 @@ class MisskeyBot:
 
     async def _initialize_services(self) -> None:
         await self.persistence.initialize()
-        await self.openai.initialize()
+        self.openai.initialize()
         current_user = await self.misskey.get_current_user()
         self.bot_user_id = current_user.get("id")
         self.bot_username = current_user.get("username")
@@ -585,7 +587,7 @@ class MisskeyBot:
         await self.plugin_manager.load_plugins()
         await self.plugin_manager.on_startup()
 
-    async def _setup_scheduler(self) -> None:
+    def _setup_scheduler(self) -> None:
         cron_jobs = [
             (self.runtime.reset_daily_counters, 0),
             (self.persistence.vacuum, 2),
@@ -645,11 +647,10 @@ class MisskeyBot:
 
     @staticmethod
     def format_log_text(text: str, max_length: int = 50) -> str:
-        return (
-            "None"
-            if not text
-            else f"{text[:max_length]}{'...' if len(text) > max_length else ''}"
-        )
+        if not text:
+            return "None"
+        suffix = "..." if len(text) > max_length else ""
+        return f"{text[:max_length]}{suffix}"
 
     @property
     def ai_config(self) -> dict[str, Any]:

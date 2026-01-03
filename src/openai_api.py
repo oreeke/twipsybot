@@ -49,7 +49,7 @@ class OpenAIAPI:
             logger.error(f"创建 OpenAI API 客户端失败: {e}")
             raise APIConnectionError() from e
 
-    async def initialize(self) -> None:
+    def initialize(self) -> None:
         if not self._initialized:
             logger.info(f"OpenAI API 客户端初始化完成: {self.api_base}")
             self._initialized = True
@@ -166,20 +166,28 @@ class OpenAIAPI:
     def _collect_responses_output_text(output: Any) -> list[str]:
         if not isinstance(output, list):
             raise APIConnectionError()
-        parts: list[str] = []
+        return list(OpenAIAPI._iter_responses_output_text(output))
+
+    @staticmethod
+    def _iter_responses_output_text(output: list[Any]):
         for item in output:
             if getattr(item, "type", None) != "message":
                 continue
-            content = getattr(item, "content", None)
-            if not isinstance(content, list):
-                continue
-            for c in content:
-                if getattr(c, "type", None) == "output_text" and isinstance(
-                    (t := getattr(c, "text", None)), str
-                ):
-                    if t:
-                        parts.append(t)
-        return parts
+            yield from OpenAIAPI._iter_responses_message_content(
+                getattr(item, "content", None)
+            )
+
+    @staticmethod
+    def _iter_responses_message_content(content: Any):
+        if not isinstance(content, list):
+            return
+        for c in content:
+            if (
+                getattr(c, "type", None) == "output_text"
+                and isinstance((t := getattr(c, "text", None)), str)
+                and t
+            ):
+                yield t
 
     async def _make_api_request(
         self,

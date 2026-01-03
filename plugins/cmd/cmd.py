@@ -249,7 +249,7 @@ class CmdPlugin(PluginBase):
             "hybrid": ChannelType.HYBRID_TIMELINE.value,
             "global": ChannelType.GLOBAL_TIMELINE.value,
         }
-        for v in list(mapped.values()):
+        for v in tuple(mapped.values()):
             mapped[v.lower()] = v
         return mapped
 

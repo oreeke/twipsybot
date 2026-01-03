@@ -10,8 +10,12 @@ from src.plugin import PluginBase
 
 class WeatherPlugin(PluginBase):
     description = "天气插件，查询指定城市的天气信息"
-    LOCATION_PATTERN = re.compile(
-        r"([\u4e00-\u9fa5a-zA-Z]+(?:\s+[\u4e00-\u9fa5a-zA-Z]+)*)(?:天气|weather)|(?:天气|weather)\s*([\u4e00-\u9fa5a-zA-Z]+(?:\s+[\u4e00-\u9fa5a-zA-Z]+)*)"
+    _LOCATION_TOKEN = r"[\u4e00-\u9fa5A-Za-z]+(?:\s+[\u4e00-\u9fa5A-Za-z]+)*"
+    LOCATION_BEFORE_KEYWORD_PATTERN = re.compile(
+        rf"(?P<loc>{_LOCATION_TOKEN})\s*(?:天气|weather)", re.IGNORECASE
+    )
+    LOCATION_AFTER_KEYWORD_PATTERN = re.compile(
+        rf"(?:天气|weather)\s*(?P<loc>{_LOCATION_TOKEN})", re.IGNORECASE
     )
     MENTION_PATTERN = re.compile(r"@\w+\s*")
 
@@ -65,17 +69,15 @@ class WeatherPlugin(PluginBase):
             return None
         username = self._extract_username(data)
         cleaned_text = self.MENTION_PATTERN.sub("", text)
-        location_match = self.LOCATION_PATTERN.search(cleaned_text)
+        location_match = self.LOCATION_BEFORE_KEYWORD_PATTERN.search(
+            cleaned_text
+        ) or self.LOCATION_AFTER_KEYWORD_PATTERN.search(cleaned_text)
         return await self._handle_weather_request(username, location_match)
 
     async def _handle_weather_request(
         self, username: str, location_match
     ) -> dict[str, Any] | None:
-        location = (
-            (location_match.group(1) or location_match.group(2) or "").strip()
-            if location_match
-            else ""
-        )
+        location = location_match.group("loc").strip() if location_match else ""
         if not location:
             return {
                 "handled": True,

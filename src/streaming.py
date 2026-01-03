@@ -269,7 +269,7 @@ class StreamingClient:
             logger.error(f"清理失败连接时出错: {e}")
 
     async def _disconnect_all_channels(self) -> None:
-        for channel_id in list(self.channels.keys()):
+        for channel_id in self.channels:
             if self._ws_available:
                 try:
                     message = {"type": "disconnect", "body": {"id": channel_id}}

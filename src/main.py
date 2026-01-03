@@ -30,14 +30,12 @@ class BotRunner:
         try:
             self.bot = MisskeyBot(config)
             await self.bot.start()
-            await self._setup_monitoring_and_signals()
+            self._setup_monitoring_and_signals()
             await self.shutdown_event.wait()
-        except asyncio.CancelledError:
-            raise
         finally:
             await self.shutdown()
 
-    async def _setup_monitoring_and_signals(self) -> None:
+    def _setup_monitoring_and_signals(self) -> None:
         signals = (
             (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
             if sys.platform != "win32"

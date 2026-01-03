@@ -73,44 +73,11 @@ class PluginBase:
         self._initialized = False
         return False
 
-    @staticmethod
-    async def initialize() -> bool:
-        return True
+    async def initialize(self) -> bool:
+        return bool(self.name) or True
 
     async def cleanup(self) -> None:
         await self._cleanup_registered_resources()
-
-    @staticmethod
-    async def on_startup() -> None:
-        return None
-
-    @staticmethod
-    async def on_mention(_mention_data: dict[str, Any]) -> dict[str, Any] | None:
-        return None
-
-    @staticmethod
-    async def on_message(_message_data: dict[str, Any]) -> dict[str, Any] | None:
-        return None
-
-    @staticmethod
-    async def on_reaction(_reaction_data: dict[str, Any]) -> dict[str, Any] | None:
-        return None
-
-    @staticmethod
-    async def on_follow(_follow_data: dict[str, Any]) -> dict[str, Any] | None:
-        return None
-
-    @staticmethod
-    async def on_timeline_note(_note_data: dict[str, Any]) -> dict[str, Any] | None:
-        return None
-
-    @staticmethod
-    async def on_auto_post() -> dict[str, Any] | None:
-        return None
-
-    @staticmethod
-    async def on_shutdown() -> None:
-        return None
 
     def get_info(self) -> dict[str, Any]:
         return {

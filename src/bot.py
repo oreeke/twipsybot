@@ -81,6 +81,17 @@ class MentionHandler:
         self.bot = bot
         self.errors = errors
 
+    @staticmethod
+    def _effective_text(note_data: Any) -> str:
+        if not isinstance(note_data, dict):
+            return ""
+        parts: list[str] = []
+        for k in ("cw", "text"):
+            v = note_data.get(k)
+            if isinstance(v, str) and (s := v.strip()):
+                parts.append(s)
+        return "\n\n".join(parts).strip()
+
     async def handle(self, note: dict[str, Any]) -> None:
         if not self.bot.config.get(ConfigKeys.BOT_RESPONSE_MENTION_ENABLED):
             return
@@ -112,14 +123,16 @@ class MentionHandler:
             reply_target_id = note.get("note", {}).get("id")
             if is_reply_event:
                 note_data = note["note"]
-                text = note_data.get("text", "")
+                text_parts: list[str] = []
+                if t := self._effective_text(note_data.get("reply")):
+                    text_parts.append(t)
+                if t := self._effective_text(note_data):
+                    text_parts.append(t)
+                text = "\n\n".join(text_parts).strip()
                 user_id = note_data.get("userId")
                 username = note_data.get("user", {}).get("username")
-                reply_info = note_data.get("reply", {})
-                if reply_info and reply_info.get("text"):
-                    text = f"{reply_info.get('text')}\n\n{text}"
             else:
-                text = note.get("note", {}).get("text", "")
+                text = self._effective_text(note.get("note"))
                 user_id = extract_user_id(note)
                 username = extract_username(note)
             if not self._is_bot_mentioned(text):

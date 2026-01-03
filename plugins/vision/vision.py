@@ -136,7 +136,11 @@ class VisionPlugin(PluginBase):
             return (
                 data.get("text") or data.get("content") or data.get("body") or ""
             ).strip()
-        return (data.get("text") or data.get("body") or "").strip()
+        parts: list[str] = []
+        for v in (data.get("cw"), data.get("text") or data.get("body")):
+            if isinstance(v, str) and (s := v.strip()):
+                parts.append(s)
+        return "\n\n".join(parts).strip()
 
     @staticmethod
     def _extract_files(data: dict[str, Any], *, kind: str) -> list[dict[str, Any]]:

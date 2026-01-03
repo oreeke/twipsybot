@@ -312,7 +312,10 @@ class StreamingClient:
 
     @staticmethod
     def _is_chat_payload(event_data: dict[str, Any]) -> bool:
-        has_users = bool(event_data.get("fromUserId") and event_data.get("toUserId"))
+        has_users = bool(
+            event_data.get("fromUserId")
+            and (event_data.get("toUserId") or event_data.get("toRoomId"))
+        )
         has_content = (
             event_data.get("text") is not None
             or event_data.get("fileId") is not None

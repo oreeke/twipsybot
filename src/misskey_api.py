@@ -337,6 +337,15 @@ class MisskeyAPI:
         logger.debug(f"Misskey 聊天发送成功，message_id: {result.get('id', 'unknown')}")
         return result
 
+    async def send_room_message(self, room_id: str, text: str) -> dict[str, Any]:
+        result = await self.make_request(
+            "chat/messages/create-to-room", {"toRoomId": room_id, "text": text}
+        )
+        logger.debug(
+            f"Misskey 群聊消息发送成功，message_id: {result.get('id', 'unknown')}"
+        )
+        return result
+
     async def create_reaction(self, note_id: str, reaction: str) -> dict[str, Any]:
         if not note_id:
             raise ValueError("note_id 不能为空")

@@ -62,7 +62,13 @@ class ErrorResponder:
                 return
             if message:
                 user_id = extract_user_id(message)
-                if user_id:
+                room_id = message.get("toRoomId")
+                to_room = message.get("toRoom")
+                if not room_id and isinstance(to_room, dict):
+                    room_id = to_room.get("id")
+                if isinstance(room_id, str) and room_id:
+                    await self.bot.misskey.send_room_message(room_id, error_message)
+                elif isinstance(user_id, str) and user_id:
                     await self.bot.misskey.send_message(user_id, error_message)
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
@@ -173,6 +179,8 @@ class ChatHandler:
         if not message.get("id"):
             logger.debug("缺少 ID，跳过处理")
             return
+        if self.bot.bot_user_id and extract_user_id(message) == self.bot.bot_user_id:
+            return
         logger.opt(lazy=True).debug(
             "聊天数据: {}",
             lambda: json.dumps(message, ensure_ascii=False, indent=2),
@@ -185,69 +193,144 @@ class ChatHandler:
             logger.error(f"处理聊天时出错: {e}")
             await self.errors.handle(e, message=message)
 
+    @staticmethod
+    def _parse_room(message: dict[str, Any]) -> tuple[str | None, str | None]:
+        to_room = message.get("toRoom")
+        room_id = message.get("toRoomId")
+        room_name = None
+        if isinstance(to_room, dict):
+            if not room_id:
+                room_id = to_room.get("id")
+            room_name = to_room.get("name")
+        room_id = room_id if isinstance(room_id, str) and room_id else None
+        room_name = room_name if isinstance(room_name, str) and room_name else None
+        return room_id, room_name
+
+    def _log_incoming_chat(
+        self,
+        *,
+        username: str,
+        text: str,
+        has_media: bool,
+        room_label: str | None,
+    ) -> None:
+        prefix = f"群聊 {room_label} " if room_label else ""
+        if text:
+            logger.info(
+                f"收到 {prefix}@{username} 的聊天: {self.bot.format_log_text(text)}"
+            )
+            return
+        if has_media:
+            logger.info(f"收到 {prefix}@{username} 的聊天: （无文本，包含媒体）")
+
     async def _process(self, message: dict[str, Any]) -> None:
         text = message.get("text") or message.get("content") or message.get("body", "")
         user_id = extract_user_id(message)
         username = extract_username(message)
+        room_id, room_name = self._parse_room(message)
         has_media = bool(message.get("fileId") or message.get("file"))
-        if not user_id:
+        if not isinstance(user_id, str) or not user_id:
             logger.debug("聊天缺少必要信息 - 用户 ID 为空")
             return
         if not text and not has_media:
             logger.debug("聊天缺少必要信息 - 文本为空且无媒体")
             return
-        async with self.bot.lock_actor(user_id, username):
-            if text:
-                logger.info(
-                    f"收到 @{username} 的聊天: {self.bot.format_log_text(text)}"
-                )
-            else:
-                logger.info(f"收到 @{username} 的聊天: （无文本，包含媒体）")
-            if await self._try_plugin_response(message, user_id, username):
+        conversation_id = f"room:{room_id}" if room_id else user_id
+        actor_id = room_id or user_id
+        room_label = room_name or room_id
+        async with self.bot.lock_actor(actor_id, username):
+            self._log_incoming_chat(
+                username=username, text=text, has_media=has_media, room_label=room_label
+            )
+            if await self._try_plugin_response(
+                message, conversation_id, user_id, username, room_id
+            ):
                 return
             if not text:
                 return
-            await self._generate_ai_response(user_id, username, text)
+            await self._generate_ai_response(
+                conversation_id, user_id, username, text, room_id
+            )
+
+    async def _send_chat_reply(
+        self, *, user_id: str, room_id: str | None, text: str
+    ) -> None:
+        if room_id:
+            await self.bot.misskey.send_room_message(room_id, text)
+        else:
+            await self.bot.misskey.send_message(user_id, text)
 
     async def _try_plugin_response(
-        self, message: dict[str, Any], user_id: str, username: str
+        self,
+        message: dict[str, Any],
+        conversation_id: str,
+        user_id: str,
+        username: str,
+        room_id: str | None,
     ) -> bool:
         plugin_results = await self.bot.plugin_manager.on_message(message)
         for result in plugin_results:
-            if result and result.get("handled"):
-                logger.debug(f"聊天已被插件处理: {result.get('plugin_name')}")
-                response = result.get("response")
-                if response:
-                    await self.bot.misskey.send_message(user_id, response)
-                    logger.info(
-                        f"插件已回复 @{username}: {self.bot.format_log_text(response)}"
-                    )
-                    text = message.get("text") or message.get("content") or ""
-                    if text:
-                        self.bot.append_chat_turn(
-                            user_id,
-                            text,
-                            response,
-                            self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY),
-                        )
+            if await self._apply_plugin_result(
+                result,
+                message=message,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                username=username,
+                room_id=room_id,
+            ):
                 return True
         return False
 
+    async def _apply_plugin_result(
+        self,
+        result: Any,
+        *,
+        message: dict[str, Any],
+        conversation_id: str,
+        user_id: str,
+        username: str,
+        room_id: str | None,
+    ) -> bool:
+        if not (result and result.get("handled")):
+            return False
+        logger.debug(f"聊天已被插件处理: {result.get('plugin_name')}")
+        response = result.get("response")
+        if not response:
+            return True
+        await self._send_chat_reply(user_id=user_id, room_id=room_id, text=response)
+        logger.info(f"插件已回复 @{username}: {self.bot.format_log_text(response)}")
+        user_text = message.get("text") or message.get("content") or ""
+        if user_text:
+            user_content = f"{username}: {user_text}" if room_id else user_text
+            self.bot.append_chat_turn(
+                conversation_id,
+                user_content,
+                response,
+                self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY),
+            )
+        return True
+
     async def _generate_ai_response(
-        self, user_id: str, username: str, text: str
+        self,
+        conversation_id: str,
+        user_id: str,
+        username: str,
+        text: str,
+        room_id: str | None,
     ) -> None:
         limit = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
-        history = await self.bot.get_or_load_chat_history(user_id, limit=limit)
+        history = await self.bot.get_or_load_chat_history(conversation_id, limit=limit)
         messages: list[dict[str, str]] = []
         if self.bot.system_prompt:
             messages.append({"role": "system", "content": self.bot.system_prompt})
         messages.extend(history)
-        messages.append({"role": "user", "content": text})
+        user_content = f"{username}: {text}" if room_id else text
+        messages.append({"role": "user", "content": user_content})
         reply = await self.bot.openai.generate_chat(messages, **self.bot.ai_config)
         logger.debug("生成聊天回复成功")
-        await self.bot.misskey.send_message(user_id, reply)
+        await self._send_chat_reply(user_id=user_id, room_id=room_id, text=reply)
         logger.info(f"已回复 @{username}: {self.bot.format_log_text(reply)}")
-        self.bot.append_chat_turn(user_id, text, reply, limit)
+        self.bot.append_chat_turn(conversation_id, user_content, reply, limit)
 
     async def get_chat_history(
         self, user_id: str, limit: int | None = None
@@ -528,6 +611,9 @@ class MisskeyBot:
         limit = limit or self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
         if (cached := self._chat_histories.get(user_id)) is not None:
             return list(cached)[-max(0, limit * 2) :]
+        if user_id.startswith("room:"):
+            self._chat_histories[user_id] = []
+            return []
         history = await self.handlers.chat.get_chat_history(user_id, limit=limit)
         trimmed = history[-max(0, limit * 2) :]
         self._chat_histories[user_id] = trimmed

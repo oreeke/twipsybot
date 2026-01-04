@@ -419,7 +419,6 @@ class StreamingClient:
         logger.debug(
             f"Received data without event type - channel: {channel_name}, event_id={event_id}"
         )
-        logger.debug(f"Schema: {list(event_data.keys())}")
         if self.log_dump_events:
             logger.opt(lazy=True).debug(
                 _EVENT_DATA_LOG_TEMPLATE,
@@ -454,7 +453,6 @@ class StreamingClient:
             await self._call_handlers(handler_map[event_type], event_data)
         else:
             logger.debug(f"Unknown main channel event type: {event_type}")
-            logger.debug(f"Schema: {list(event_data.keys())}")
             if self.log_dump_events:
                 logger.opt(lazy=True).debug(
                     _EVENT_DATA_LOG_TEMPLATE,
@@ -466,7 +464,6 @@ class StreamingClient:
     ) -> None:
         if event_type != "note":
             logger.debug(f"Unknown {channel_name} channel event type: {event_type}")
-            logger.debug(f"Schema: {list(event_data.keys())}")
             if self.log_dump_events:
                 logger.opt(lazy=True).debug(
                     _EVENT_DATA_LOG_TEMPLATE,
@@ -481,7 +478,6 @@ class StreamingClient:
         if isinstance(payload, dict) and "streamingChannel" not in payload:
             payload["streamingChannel"] = channel_name
         logger.debug(f"Received {channel_name} note")
-        logger.debug(f"Schema: {list(payload.keys())}")
         if self.log_dump_events:
             logger.opt(lazy=True).debug(
                 _EVENT_DATA_LOG_TEMPLATE,

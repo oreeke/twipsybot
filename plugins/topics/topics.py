@@ -25,7 +25,7 @@ class TopicsPlugin(PluginBase):
             await self._load_topics()
             await self._initialize_plugin_data()
             self._log_plugin_action(
-                "初始化完成", f"装载 {len(self.topics)} 个主题关键词"
+                "初始化完成", f"装载 {len(self.topics)} 个自定义关键词"
             )
             return True
         except Exception as e:
@@ -60,7 +60,6 @@ class TopicsPlugin(PluginBase):
                 await self.persistence_manager.set_plugin_data(
                     "Topics", "last_used_line", str(max(0, self.start_line - 1))
                 )
-            logger.debug("Topics 插件数据库初始化完成")
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
@@ -89,7 +88,6 @@ class TopicsPlugin(PluginBase):
                 logger.warning("主题文件为空")
                 self._use_default_topics()
                 return
-            logger.debug(f"成功加载 {len(self.topics)} 个主题关键词")
         except Exception as e:
             logger.warning(f"加载主题文件失败: {e}")
             self._use_default_topics()

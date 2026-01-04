@@ -7,6 +7,7 @@ from loguru import logger
 
 from src.constants import ConfigKeys
 from src.plugin import PluginBase
+from src.streaming import ChannelType, TIMELINE_CHANNELS
 
 
 class RadarPlugin(PluginBase):
@@ -21,6 +22,9 @@ class RadarPlugin(PluginBase):
 
     def __init__(self, context):
         super().__init__(context)
+        self.allowed_timeline_channels = self._parse_timeline_channels(
+            self.config.get("timeline")
+        )
         self.include_users = self._parse_str_set(self.config.get("include_users"))
         self.exclude_users = self._parse_str_set(self.config.get("exclude_users"))
         self.keyword_case_sensitive = self._parse_bool(
@@ -68,8 +72,36 @@ class RadarPlugin(PluginBase):
         )
 
     async def initialize(self) -> bool:
-        self._log_plugin_action("初始化完成")
+        self._log_plugin_action("初始化完成", self._format_timeline_limit())
         return True
+
+    def _format_timeline_limit(self) -> str:
+        if self.allowed_timeline_channels is None:
+            return "时间线 不限定"
+        if not self.allowed_timeline_channels:
+            return "时间线 (空)"
+        name_map = {
+            ChannelType.HOME_TIMELINE.value: "home",
+            ChannelType.LOCAL_TIMELINE.value: "local",
+            ChannelType.HYBRID_TIMELINE.value: "hybrid",
+            ChannelType.GLOBAL_TIMELINE.value: "global",
+        }
+        order = ("home", "local", "hybrid", "global")
+        resolved = {name_map.get(c) for c in self.allowed_timeline_channels}
+        tokens = [t for t in order if t in resolved]
+        return "时间线 " + "/".join(tokens) if tokens else "时间线 (空)"
+
+    @staticmethod
+    def _timeline_name_map() -> dict[str, str]:
+        mapped = {
+            "home": ChannelType.HOME_TIMELINE.value,
+            "local": ChannelType.LOCAL_TIMELINE.value,
+            "hybrid": ChannelType.HYBRID_TIMELINE.value,
+            "global": ChannelType.GLOBAL_TIMELINE.value,
+        }
+        for v in tuple(mapped.values()):
+            mapped[v.lower()] = v
+        return mapped
 
     @staticmethod
     def _normalize_str(value: Any) -> str | None:
@@ -128,6 +160,45 @@ class RadarPlugin(PluginBase):
                 elif v is not None and not isinstance(v, bool):
                     items.append(str(v).strip())
         return {x.lower() for x in items if x}
+
+    @staticmethod
+    def _normalize_timeline_tokens(value: Any) -> list[str] | None:
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, str):
+            s = value.replace(",", " ").replace("\t", " ").strip()
+            return [t.strip().lower() for t in s.split() if t.strip()] or None
+        if isinstance(value, list):
+            tokens = [
+                str(v).strip().lower()
+                for v in value
+                if v is not None and not isinstance(v, bool) and str(v).strip()
+            ]
+            return tokens or None
+        s = str(value).strip()
+        return [s.lower()] if s else None
+
+    def _resolve_timeline_tokens(self, tokens: list[str]) -> set[str]:
+        name_map = self._timeline_name_map()
+        resolved: set[str] = set()
+        unknown: list[str] = []
+        for raw in tokens:
+            if mapped := name_map.get(raw):
+                resolved.add(mapped)
+            elif raw:
+                unknown.append(raw)
+        for raw in unknown:
+            logger.warning(
+                f"Radar 未知 timeline 配置: {raw}，可选: home/local/hybrid/global"
+            )
+        return {c for c in resolved if c in TIMELINE_CHANNELS}
+
+    def _parse_timeline_channels(self, value: Any) -> set[str] | None:
+        tokens = self._normalize_timeline_tokens(value)
+        if tokens is None:
+            return None
+        resolved = self._resolve_timeline_tokens(tokens)
+        return resolved if resolved else set()
 
     def _parse_keyword_groups(self, value: Any) -> list[list[str]]:
         if value is None or isinstance(value, bool):
@@ -300,6 +371,14 @@ class RadarPlugin(PluginBase):
     ) -> dict[str, Any] | None:
         if not hasattr(self, "misskey"):
             return None
+        channel = note_data.get("streamingChannel")
+        if not isinstance(channel, str) or not channel:
+            channel = "unknown"
+        if (
+            self.allowed_timeline_channels is not None
+            and channel not in self.allowed_timeline_channels
+        ):
+            return None
         note_id = note_data.get("id")
         should_skip = (
             not isinstance(note_id, str)
@@ -314,7 +393,6 @@ class RadarPlugin(PluginBase):
             str((note_data.get("user", {}) or {}).get("username", "unknown")).strip()
             or "unknown"
         )
-        channel = note_data.get("streamingChannel", "unknown")
         try:
             lock_ctx = None
             if hasattr(self, "bot"):

@@ -3,6 +3,7 @@
 
 enabled: false                   # 插件总开关
 priority: 50                     # 插件优先级（数字越大越先执行）
+timeline: []                     # 时间线：home/local/hybrid/global；空=不限定（支持列表或字符串，逗号/空格分隔）
 
 include_users: []                # 白名单：用户名或 name@host；空=不限定（支持列表或字符串，逗号/空格分隔）
 exclude_users: []                # 黑名单：用户名或 name@host；空=不排除

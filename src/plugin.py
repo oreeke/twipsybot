@@ -266,9 +266,7 @@ class PluginManager:
             if not plugin.enabled:
                 continue
             try:
-                if await plugin.initialize():
-                    logger.debug(f"插件 {plugin.name} 初始化完成")
-                else:
+                if not await plugin.initialize():
                     logger.warning(f"插件 {plugin.name} 初始化失败")
                     plugin.set_enabled(False)
             except Exception as e:

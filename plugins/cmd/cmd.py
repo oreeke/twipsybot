@@ -51,7 +51,7 @@ class CmdPlugin(PluginBase):
             }
 
     async def initialize(self) -> bool:
-        self._log_plugin_action("初始化完成", f"支持 {len(self.commands)} 个命令")
+        self._log_plugin_action("初始化完成", f"支持 {len(self.commands)} 组命令")
         return True
 
     async def on_startup(self) -> None:

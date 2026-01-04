@@ -20,18 +20,18 @@ class TopicsPlugin(PluginBase):
     async def initialize(self) -> bool:
         try:
             if not self.persistence_manager:
-                logger.error("Topics 插件未获得 persistence_manager 实例")
+                logger.error("Topics plugin missing persistence_manager instance")
                 return False
             await self._load_topics()
             await self._initialize_plugin_data()
             self._log_plugin_action(
-                "初始化完成", f"装载 {len(self.topics)} 个自定义关键词"
+                "initialized", f"loaded {len(self.topics)} custom topics"
             )
             return True
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"Topics 插件初始化失败: {e}")
+            logger.error(f"Topics plugin initialization failed: {e}")
             return False
 
     async def cleanup(self) -> None:
@@ -48,7 +48,7 @@ class TopicsPlugin(PluginBase):
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"Topics 插件处理自动发帖失败: {e}")
+            logger.error(f"Topics plugin auto-post hook failed: {e}")
             return None
 
     async def _initialize_plugin_data(self) -> None:
@@ -63,18 +63,18 @@ class TopicsPlugin(PluginBase):
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.warning(f"Topics 插件数据库初始化失败: {e}")
+            logger.warning(f"Topics plugin DB initialization failed: {e}")
             raise
 
     def _use_default_topics(self) -> None:
         self.topics = ["科技", "生活", "学习", "思考", "创新"]
-        logger.info(f"使用默认主题关键词: {self.topics}")
+        logger.info(f"Using default topics: {self.topics}")
 
     async def _load_topics(self) -> None:
         try:
             topics_file_path = Path(__file__).parent / "topics.txt"
             if not topics_file_path.exists():
-                logger.warning(f"主题文件不存在: {topics_file_path}")
+                logger.warning(f"Topics file not found: {topics_file_path}")
                 self._use_default_topics()
                 return
             async with await anyio.open_file(
@@ -85,11 +85,11 @@ class TopicsPlugin(PluginBase):
                 line.strip() for line in content.splitlines() if line.strip()
             ]
             if not self.topics:
-                logger.warning("主题文件为空")
+                logger.warning("Topics file is empty")
                 self._use_default_topics()
                 return
         except Exception as e:
-            logger.warning(f"加载主题文件失败: {e}")
+            logger.warning(f"Failed to load topics file: {e}")
             self._use_default_topics()
 
     async def _get_next_topic(self) -> str:
@@ -99,12 +99,14 @@ class TopicsPlugin(PluginBase):
             last_used_line = await self._get_last_used_line()
             topic = self.topics[last_used_line % len(self.topics)]
             await self._update_last_used_line(last_used_line + 1)
-            self._log_plugin_action("选择主题", f"{topic} (行数: {last_used_line + 1})")
+            self._log_plugin_action(
+                "selected topic", f"{topic} (line: {last_used_line + 1})"
+            )
             return topic
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.warning(f"获取下一个主题失败: {e}")
+            logger.warning(f"Failed to get next topic: {e}")
             return self.topics[0] if self.topics else "生活"
 
     async def _get_last_used_line(self) -> int:
@@ -116,7 +118,7 @@ class TopicsPlugin(PluginBase):
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.warning(f"获取上次使用行数失败: {e}")
+            logger.warning(f"Failed to get last used line: {e}")
             return 0
 
     async def _update_last_used_line(self, line_number: int) -> None:
@@ -127,4 +129,4 @@ class TopicsPlugin(PluginBase):
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.warning(f"更新上次使用行数失败: {e}")
+            logger.warning(f"Failed to update last used line: {e}")

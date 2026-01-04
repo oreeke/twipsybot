@@ -46,12 +46,12 @@ class OpenAIAPI:
             )
             self._initialized = False
         except Exception as e:
-            logger.error(f"创建 OpenAI API 客户端失败: {e}")
+            logger.error(f"Failed to create OpenAI API client: {e}")
             raise APIConnectionError() from e
 
     def initialize(self) -> None:
         if not self._initialized:
-            logger.info(f"OpenAI API 客户端初始化完成: {self.api_base}")
+            logger.info(f"OpenAI API client initialized: {self.api_base}")
             self._initialized = True
 
     @retry_async(
@@ -76,13 +76,13 @@ class OpenAIAPI:
             response = await self._make_api_request(messages, max_tokens, temperature)
             return self._process_api_response(response, call_type)
         except BadRequestError as e:
-            logger.error(f"API 请求参数错误: {e}")
+            logger.error(f"API request parameter error: {e}")
             raise ValueError() from e
         except OpenAIAuthenticationError as e:
-            logger.error(f"API 认证失败: {e}")
+            logger.error(f"API authentication failed: {e}")
             raise AuthenticationError() from e
         except (ValueError, TypeError, KeyError) as e:
-            logger.error(f"API 响应数据格式错误: {e}")
+            logger.error(f"Invalid API response format: {e}")
             raise ValueError() from e
 
     def _should_use_responses(self) -> bool:
@@ -116,20 +116,24 @@ class OpenAIAPI:
                 messages, max_tokens, temperature
             )
             text = self._extract_responses_text(response)
-            logger.debug(f"OpenAI API {call_type}调用成功，生成内容长度: {len(text)}")
+            logger.debug(
+                f"OpenAI API {call_type} call succeeded; output length: {len(text)}"
+            )
             return text
         except OpenAIAuthenticationError as e:
-            logger.error(f"API 认证失败: {e}")
+            logger.error(f"API authentication failed: {e}")
             raise AuthenticationError() from e
         except (NotFoundError, BadRequestError) as e:
             if self.api_mode != "auto":
                 raise
-            logger.warning(f"Responses API 不可用，回退到 Chat Completions: {e}")
+            logger.warning(
+                f"Responses API unavailable; falling back to Chat Completions: {e}"
+            )
             return await self._call_api_common(
                 messages, max_tokens, temperature, call_type
             )
         except (ValueError, TypeError, KeyError) as e:
-            logger.error(f"API 响应数据格式错误: {e}")
+            logger.error(f"Invalid API response format: {e}")
             raise ValueError() from e
 
     async def _make_responses_request(
@@ -217,7 +221,7 @@ class OpenAIAPI:
         if not generated_text:
             raise APIConnectionError()
         logger.debug(
-            f"OpenAI API {call_type}调用成功，生成内容长度: {len(generated_text)}"
+            f"OpenAI API {call_type} call succeeded; output length: {len(generated_text)}"
         )
         return generated_text
 
@@ -231,7 +235,7 @@ class OpenAIAPI:
     async def close(self):
         if getattr(self, "client", None):
             await self.client.close()
-            logger.debug("OpenAI API 客户端已关闭")
+            logger.debug("OpenAI API client closed")
 
     @staticmethod
     def _build_messages(
@@ -251,7 +255,9 @@ class OpenAIAPI:
         temperature: float | None = None,
     ) -> str:
         messages = self._build_messages(prompt, system_prompt)
-        return await self._call_api(messages, max_tokens, temperature, "单轮文本")
+        return await self._call_api(
+            messages, max_tokens, temperature, "single-turn text"
+        )
 
     async def generate_chat(
         self,
@@ -259,4 +265,6 @@ class OpenAIAPI:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> str:
-        return await self._call_api(messages, max_tokens, temperature, "多轮对话")
+        return await self._call_api(
+            messages, max_tokens, temperature, "multi-turn chat"
+        )

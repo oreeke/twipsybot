@@ -21,7 +21,7 @@ def retry_async(max_retries=3, retryable_exceptions=None):
         "stop": stop_after_attempt(max_retries),
         "wait": wait_fixed(3),
         "before_sleep": lambda retry_state: logger.info(
-            f"第 {retry_state.attempt_number} 次重试..."
+            f"Retry attempt #{retry_state.attempt_number}..."
         ),
     }
     if retryable_exceptions:
@@ -68,5 +68,5 @@ def health_check() -> bool:
     try:
         return psutil.Process().is_running()
     except Exception as e:
-        logger.error(f"健康检查失败: {e}")
+        logger.error(f"Health check failed: {e}")
         return False

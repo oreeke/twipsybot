@@ -80,11 +80,11 @@ class PersistenceManager:
             return
         await self._create_tables()
         self._initialized = True
-        logger.info(f"Persistence 管理器初始化完成: {self.db_path}")
+        logger.info(f"Persistence manager initialized: {self.db_path}")
 
     async def close(self) -> None:
         await self._pool.close_all()
-        logger.debug("Persistence 管理器已关闭")
+        logger.debug("Persistence manager closed")
 
     async def _create_tables(self) -> None:
         conn = await self._pool.get_connection()
@@ -134,7 +134,7 @@ class PersistenceManager:
         except aiosqlite.Error as e:
             if fetch_type in ("insert", "update"):
                 await conn.rollback()
-                logger.error(f"数据库{fetch_type}操作失败: {e}")
+                logger.error(f"Database {fetch_type} operation failed: {e}")
             raise
         finally:
             await self._pool.return_connection(conn)
@@ -187,10 +187,10 @@ class PersistenceManager:
         conn = await self._pool.get_connection()
         try:
             await conn.execute("VACUUM")
-            logger.debug("数据库优化完成")
+            logger.debug("Database vacuum completed")
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"数据库优化失败: {e}")
+            logger.error(f"Database vacuum failed: {e}")
         finally:
             await self._pool.return_connection(conn)

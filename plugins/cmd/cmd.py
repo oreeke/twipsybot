@@ -51,7 +51,7 @@ class CmdPlugin(PluginBase):
             }
 
     async def initialize(self) -> bool:
-        self._log_plugin_action("初始化完成", f"支持 {len(self.commands)} 组命令")
+        self._log_plugin_action("initialized", f"{len(self.commands)} command groups")
         return True
 
     async def on_startup(self) -> None:
@@ -66,7 +66,7 @@ class CmdPlugin(PluginBase):
             return
         self.openai.model = model
         self._set_global_config_value(ConfigKeys.OPENAI_MODEL, model)
-        self._log_plugin_action("应用模型覆盖", model)
+        self._log_plugin_action("applied model override", model)
 
     def _is_authorized(self, user_id: str, username: str) -> bool:
         return user_id in self.allowed_users or username in self.allowed_users
@@ -103,7 +103,7 @@ class CmdPlugin(PluginBase):
             except Exception as e:
                 if isinstance(e, asyncio.CancelledError):
                     raise
-                logger.error(f"执行命令 {command} 时出错: {e}")
+                logger.error(f"Error executing command {command}: {e}")
                 return f"命令执行失败: {str(e)}"
         return f"未知命令: {command}"
 
@@ -325,7 +325,7 @@ class CmdPlugin(PluginBase):
             }
             return response if self._validate_plugin_response(response) else None
         except Exception as e:
-            logger.error(f"创建响应时出错: {e}")
+            logger.error(f"Error creating response: {e}")
             return None
 
     async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -347,7 +347,7 @@ class CmdPlugin(PluginBase):
             command_name = self._find_command(parts[0])
             args = parts[1] if len(parts) > 1 else ""
             if command_name:
-                self._log_plugin_action("执行命令", f"@{username}: ^{command_text}")
+                self._log_plugin_action("ran command", f"@{username}: ^{command_text}")
                 result = await self._execute_command(command_name, args)
                 return self._create_response(result)
             return self._create_response(
@@ -356,5 +356,5 @@ class CmdPlugin(PluginBase):
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"处理命令时出错: {e}")
+            logger.error(f"Error handling command: {e}")
             return self._create_response("命令处理失败，请稍后重试。")

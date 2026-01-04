@@ -68,7 +68,7 @@ class PluginBase:
         await self.cleanup()
         if self._resources_to_cleanup:
             logger.warning(
-                f"插件 {self.name} 存在未清理的资源: {len(self._resources_to_cleanup)} 项"
+                f"Plugin {self.name} has uncleaned resources: {len(self._resources_to_cleanup)}"
             )
         self._initialized = False
         return False
@@ -90,7 +90,7 @@ class PluginBase:
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
-        logger.info(f"插件 {self.name} {'启用' if enabled else '禁用'}")
+        logger.info(f"Plugin {self.name} {'enabled' if enabled else 'disabled'}")
 
     @staticmethod
     def _extract_username(data: dict[str, Any]) -> str:
@@ -101,7 +101,7 @@ class PluginBase:
         return extract_user_id(data)
 
     def _log_plugin_action(self, action: str, details: str = "") -> None:
-        logger.info(f"{self.name} 插件{action}{': ' + details if details else ''}")
+        logger.info(f"Plugin {self.name} {action}{': ' + details if details else ''}")
 
     @staticmethod
     def _validate_plugin_response(response: Any) -> bool:
@@ -129,7 +129,7 @@ class PluginBase:
             except Exception as e:
                 if isinstance(e, asyncio.CancelledError):
                     raise
-                logger.error(f"插件 {self.name} 清理资源失败: {e}")
+                logger.error(f"Plugin {self.name} resource cleanup failed: {e}")
         self._resources_to_cleanup.clear()
 
 
@@ -156,7 +156,7 @@ class PluginManager:
 
     async def load_plugins(self) -> None:
         if not self.plugins_dir.exists():
-            logger.info(f"插件目录不存在: {self.plugins_dir}")
+            logger.info(f"Plugins directory not found: {self.plugins_dir}")
             return
         for plugin_dir in self.plugins_dir.iterdir():
             if (
@@ -167,7 +167,7 @@ class PluginManager:
                 self._load_plugin(plugin_dir, self._load_plugin_config(plugin_dir))
         await self._initialize_plugins()
         enabled_count = sum(plugin.enabled for plugin in self.plugins.values())
-        logger.info(f"已发现 {len(self.plugins)} 个插件，{enabled_count} 个已启用")
+        logger.info(f"Found {len(self.plugins)} plugins; {enabled_count} enabled")
 
     @staticmethod
     def _load_plugin_config(plugin_dir: Path) -> dict[str, Any]:
@@ -178,7 +178,7 @@ class PluginManager:
             with open(config_file, "r", encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         except Exception as e:
-            logger.error(f"加载插件 {plugin_dir.name} 配置文件时出错: {e}")
+            logger.error(f"Error loading plugin config for {plugin_dir.name}: {e}")
             return {}
 
     def _load_plugin(self, plugin_dir: Path, plugin_config: dict[str, Any]) -> None:
@@ -186,7 +186,7 @@ class PluginManager:
             plugin_file = plugin_dir / f"{plugin_dir.name}.py"
             if not plugin_file.exists():
                 logger.warning(
-                    f"插件目录 {plugin_dir.name} 中未找到 {plugin_dir.name}.py 文件"
+                    f"Missing plugin file in {plugin_dir.name}: {plugin_dir.name}.py"
                 )
                 return
             if not (module := self._load_plugin_module(plugin_dir, plugin_file)):
@@ -197,10 +197,10 @@ class PluginManager:
                 plugin_class, plugin_dir.name, plugin_config
             )
             self.plugins[plugin_dir.name] = plugin_instance
-            status = "启用" if plugin_instance.enabled else "禁用"
-            logger.debug(f"已发现插件: {plugin_dir.name} (状态: {status})")
+            status = "enabled" if plugin_instance.enabled else "disabled"
+            logger.debug(f"Discovered plugin: {plugin_dir.name} (status: {status})")
         except Exception as e:
-            logger.error(f"加载插件 {plugin_dir.name} 失败: {e}")
+            logger.error(f"Failed to load plugin {plugin_dir.name}: {e}")
 
     @staticmethod
     def _load_plugin_module(plugin_dir: Path, plugin_file: Path):
@@ -208,7 +208,7 @@ class PluginManager:
             f"plugins.{plugin_dir.name}.plugin", plugin_file
         )
         if spec is None or spec.loader is None:
-            logger.warning(f"无法加载插件规范: {plugin_dir.name}")
+            logger.warning(f"Failed to load plugin spec: {plugin_dir.name}")
             return None
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
@@ -225,7 +225,7 @@ class PluginManager:
             and attr is not PluginBase
         ]
         if not candidates:
-            logger.warning(f"插件 {plugin_name.capitalize()} 中未找到有效的插件类")
+            logger.warning(f"No valid plugin class found in {plugin_name.capitalize()}")
             return None
         expected = f"{plugin_name.capitalize()}Plugin"
         for cls in candidates:
@@ -235,7 +235,7 @@ class PluginManager:
             return candidates[0]
         names = sorted(cls.__name__ for cls in candidates)
         logger.warning(
-            f"插件 {plugin_name.capitalize()} 存在多个插件类 {names}，期望 {expected}"
+            f"Multiple plugin classes found in {plugin_name.capitalize()}: {names}; expected {expected}"
         )
         return None
 
@@ -267,12 +267,12 @@ class PluginManager:
                 continue
             try:
                 if not await plugin.initialize():
-                    logger.warning(f"插件 {plugin.name} 初始化失败")
+                    logger.warning(f"Plugin {plugin.name} initialization failed")
                     plugin.set_enabled(False)
             except Exception as e:
                 if isinstance(e, asyncio.CancelledError):
                     raise
-                logger.exception(f"初始化插件 {plugin.name} 时出错: {e}")
+                logger.exception(f"Error initializing plugin {plugin.name}: {e}")
                 plugin.set_enabled(False)
 
     async def cleanup_plugins(self) -> None:
@@ -283,7 +283,7 @@ class PluginManager:
                 except Exception as e:
                     if isinstance(e, asyncio.CancelledError):
                         raise
-                    logger.exception(f"清理插件 {plugin.name} 时出错: {e}")
+                    logger.exception(f"Error cleaning up plugin {plugin.name}: {e}")
 
     async def on_startup(self) -> None:
         await self.call_plugin_hook("on_startup")
@@ -335,7 +335,7 @@ class PluginManager:
                 if isinstance(e, asyncio.CancelledError):
                     raise
                 logger.exception(
-                    f"调用插件 {plugin.name} 的 {hook_name} hook 时发生未处理异常: {e}"
+                    f"Unhandled exception in plugin {plugin.name} hook {hook_name}: {e}"
                 )
         return results
 

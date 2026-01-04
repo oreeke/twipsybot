@@ -26,7 +26,7 @@ class BotRunner:
         log_path = Path(config.get(ConfigKeys.LOG_PATH))
         log_path.parent.mkdir(parents=True, exist_ok=True)
         logger.add(log_path, level=config.get(ConfigKeys.LOG_LEVEL))
-        logger.info("启动机器人...")
+        logger.info("Starting bot...")
         try:
             self.bot = MisskeyBot(config)
             await self.bot.start()
@@ -43,7 +43,9 @@ class BotRunner:
         )
 
         def signal_handler(sig, _):
-            logger.info(f"收到信号 {signal.Signals(sig).name}，准备关闭...")
+            logger.info(
+                f"Received signal {signal.Signals(sig).name}; preparing to shut down..."
+            )
             if self.shutdown_event and not self.shutdown_event.is_set():
                 self.shutdown_event.set()
                 try:
@@ -56,29 +58,29 @@ class BotRunner:
             try:
                 signal.signal(sig, signal_handler)
             except Exception:
-                logger.warning(f"无法注册信号处理器: {sig}")
+                logger.warning(f"Failed to register signal handler: {sig}")
 
     async def shutdown(self) -> None:
         if self._shutdown_called:
             return
         self._shutdown_called = True
-        logger.info("关闭机器人...")
+        logger.info("Shutting down bot...")
         if self.bot:
             await self.bot.stop()
-        logger.info("机器人已关闭")
+        logger.info("Bot shut down")
 
 
 def main() -> int:
     runner = BotRunner()
     try:
         asyncio.run(runner.run())
-        logger.info("再见~")
+        logger.info("Bye")
         return 0
     except KeyboardInterrupt:
         try:
             asyncio.run(runner.shutdown())
         except Exception:
-            logger.exception("关闭时出错")
+            logger.exception("Error during shutdown")
         return 130
     except (
         OSError,
@@ -92,13 +94,13 @@ def main() -> int:
         AuthenticationError,
     ) as e:
         if isinstance(e, (ConfigurationError, AuthenticationError, APIConnectionError)):
-            logger.error(f"启动时出错: {e}")
+            logger.error(f"Startup error: {e}")
         else:
-            logger.exception("启动时发生未处理异常")
+            logger.exception("Unhandled exception during startup")
         try:
             asyncio.run(runner.shutdown())
         except Exception:
-            logger.exception("关闭时出错")
+            logger.exception("Error during shutdown")
         if isinstance(e, ConfigurationError):
             return 2
         if isinstance(e, AuthenticationError):

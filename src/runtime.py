@@ -66,10 +66,10 @@ class BotRuntime:
 
     def check_post_counter(self, max_posts: int) -> bool:
         if self.posts_today >= max_posts:
-            logger.debug(f"今日发帖数量已达上限 ({max_posts})，跳过自动发帖")
+            logger.debug(f"Daily post limit reached ({max_posts}); skipping auto-post")
             return False
         return True
 
     def reset_daily_counters(self) -> None:
         self.posts_today = 0
-        logger.debug("发帖计数器已重置")
+        logger.debug("Post counter reset")

@@ -29,18 +29,18 @@ class Config:
                 content = await f.read()
             self.data = yaml.safe_load(content) or {}
             if not isinstance(self.data, dict):
-                raise ConfigurationError("配置文件根节点必须为对象")
-            logger.debug(f"已加载配置文件: {config_path}")
+                raise ConfigurationError("config file root node must be an object")
+            logger.debug(f"Loaded config file: {config_path}")
             self._override_from_env()
             self._validate_config()
         except yaml.YAMLError as e:
-            logger.error(f"YAML 配置文件解析错误: {e}")
+            logger.error(f"YAML config parse error: {e}")
             raise ConfigurationError() from e
         except OSError as e:
-            logger.error(f"配置文件读取错误: {e}")
+            logger.error(f"Config file read error: {e}")
             raise ConfigurationError() from e
         except (ValueError, TypeError, AttributeError) as e:
-            logger.error(f"配置处理错误: {e}")
+            logger.error(f"Config processing error: {e}")
             raise ConfigurationError() from e
 
     def _override_from_env(self) -> None:
@@ -110,17 +110,21 @@ class Config:
             try:
                 resolved = path.resolve()
             except OSError:
-                logger.debug(f"无法解析配置文件路径: {file_path}")
+                logger.debug(f"Failed to resolve config file path: {file_path}")
                 return file_path
             if not resolved.is_relative_to(project_root):
-                logger.debug(f"禁止从项目目录外读取配置文件: {file_path}")
+                logger.debug(
+                    f"Refusing to read config file outside project root: {file_path}"
+                )
                 return file_path
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read().strip()
-                logger.debug(f"从文件加载配置: {file_path}")
+                logger.debug(f"Loaded config value from file: {file_path}")
                 return content
         except (OSError, UnicodeDecodeError) as e:
-            logger.debug(f"无法从文件加载配置 {file_path}，使用原始值: {e}")
+            logger.debug(
+                f"Failed to load config from file {file_path}; using raw value: {e}"
+            )
             return file_path
 
     @staticmethod
@@ -141,15 +145,15 @@ class Config:
             builtin_default = self._get_builtin_default(key)
             if builtin_default is not None:
                 return builtin_default
-            logger.error(f"配置文件格式错误: {e}")
+            logger.error(f"Invalid config format: {e}")
             return None
 
     def get_required(self, key: str, desc: str | None = None) -> Any:
         value = self.get(key)
         if value is None:
-            raise ConfigurationError(f"缺少必要配置项: {desc or key}")
+            raise ConfigurationError(f"missing required config: {desc or key}")
         if isinstance(value, str) and not value.strip():
-            raise ConfigurationError(f"缺少必要配置项: {desc or key}")
+            raise ConfigurationError(f"missing required config: {desc or key}")
         return value
 
     @staticmethod
@@ -187,19 +191,19 @@ class Config:
         self._validate_required_configs()
         self._validate_types_and_ranges()
         self._validate_file_paths()
-        logger.debug("配置验证完成")
+        logger.debug("Config validation completed")
 
     def _validate_required_configs(self) -> None:
-        self.get_required(ConfigKeys.MISSKEY_INSTANCE_URL, "Misskey 实例 URL")
-        self.get_required(ConfigKeys.MISSKEY_ACCESS_TOKEN, "Misskey 访问令牌")
-        self.get_required(ConfigKeys.OPENAI_API_KEY, "OpenAI API 密钥")
+        self.get_required(ConfigKeys.MISSKEY_INSTANCE_URL, "Misskey instance URL")
+        self.get_required(ConfigKeys.MISSKEY_ACCESS_TOKEN, "Misskey access token")
+        self.get_required(ConfigKeys.OPENAI_API_KEY, "OpenAI API key")
 
     def _require_type(self, key: str, types: tuple[type, ...], desc: str) -> Any:
         value = self.get(key)
         if value is None:
             return None
         if not isinstance(value, types):
-            raise ConfigurationError(f"配置项类型错误: {desc}")
+            raise ConfigurationError(f"invalid config type: {desc}")
         return value
 
     @staticmethod
@@ -215,79 +219,101 @@ class Config:
 
     def _validate_types_and_ranges(self) -> None:
         for key, types, desc in (
-            (ConfigKeys.MISSKEY_INSTANCE_URL, (str,), "Misskey 实例 URL"),
-            (ConfigKeys.MISSKEY_ACCESS_TOKEN, (str,), "Misskey 访问令牌"),
-            (ConfigKeys.OPENAI_API_KEY, (str,), "OpenAI API 密钥"),
-            (ConfigKeys.OPENAI_MODEL, (str,), "OpenAI 模型名称"),
-            (ConfigKeys.OPENAI_API_BASE, (str,), "OpenAI API 端点"),
-            (ConfigKeys.BOT_AUTO_POST_ENABLED, (bool,), "自动发帖开关"),
-            (ConfigKeys.BOT_RESPONSE_MENTION_ENABLED, (bool,), "提及响应开关"),
-            (ConfigKeys.BOT_RESPONSE_CHAT_ENABLED, (bool,), "聊天响应开关"),
-            (ConfigKeys.BOT_TIMELINE_ENABLED, (bool,), "时间线订阅开关"),
-            (ConfigKeys.BOT_TIMELINE_HOME, (bool,), "时间线订阅 Home 开关"),
-            (ConfigKeys.BOT_TIMELINE_LOCAL, (bool,), "时间线订阅 Local 开关"),
-            (ConfigKeys.BOT_TIMELINE_HYBRID, (bool,), "时间线订阅 Hybrid 开关"),
-            (ConfigKeys.BOT_TIMELINE_GLOBAL, (bool,), "时间线订阅 Global 开关"),
-            (ConfigKeys.DB_PATH, (str,), "数据库路径"),
-            (ConfigKeys.LOG_PATH, (str,), "日志路径"),
-            (ConfigKeys.LOG_LEVEL, (str,), "日志级别"),
+            (ConfigKeys.MISSKEY_INSTANCE_URL, (str,), "Misskey instance URL"),
+            (ConfigKeys.MISSKEY_ACCESS_TOKEN, (str,), "Misskey access token"),
+            (ConfigKeys.OPENAI_API_KEY, (str,), "OpenAI API key"),
+            (ConfigKeys.OPENAI_MODEL, (str,), "OpenAI model"),
+            (ConfigKeys.OPENAI_API_BASE, (str,), "OpenAI API base URL"),
+            (ConfigKeys.BOT_AUTO_POST_ENABLED, (bool,), "auto-post enabled"),
+            (
+                ConfigKeys.BOT_RESPONSE_MENTION_ENABLED,
+                (bool,),
+                "mention response enabled",
+            ),
+            (ConfigKeys.BOT_RESPONSE_CHAT_ENABLED, (bool,), "chat response enabled"),
+            (ConfigKeys.BOT_TIMELINE_ENABLED, (bool,), "timeline subscription enabled"),
+            (
+                ConfigKeys.BOT_TIMELINE_HOME,
+                (bool,),
+                "timeline home subscription enabled",
+            ),
+            (
+                ConfigKeys.BOT_TIMELINE_LOCAL,
+                (bool,),
+                "timeline local subscription enabled",
+            ),
+            (
+                ConfigKeys.BOT_TIMELINE_HYBRID,
+                (bool,),
+                "timeline hybrid subscription enabled",
+            ),
+            (
+                ConfigKeys.BOT_TIMELINE_GLOBAL,
+                (bool,),
+                "timeline global subscription enabled",
+            ),
+            (ConfigKeys.DB_PATH, (str,), "database path"),
+            (ConfigKeys.LOG_PATH, (str,), "log path"),
+            (ConfigKeys.LOG_LEVEL, (str,), "log level"),
         ):
             self._require_type(key, types, desc)
 
         mode = self._normalize_lower(
-            self._require_type(ConfigKeys.OPENAI_API_MODE, (str,), "OpenAI API 模式")
+            self._require_type(ConfigKeys.OPENAI_API_MODE, (str,), "OpenAI API mode")
         )
         self._validate_predicate(
             mode,
             lambda v: v in {"auto", "chat", "responses"},
-            "OpenAI API 模式必须是 auto/chat/responses",
+            "OpenAI API mode must be auto/chat/responses",
         )
         max_tokens = self._require_type(
-            ConfigKeys.OPENAI_MAX_TOKENS, (int,), "最大生成 token 数"
+            ConfigKeys.OPENAI_MAX_TOKENS, (int,), "max tokens"
         )
-        self._validate_predicate(
-            max_tokens, lambda v: v > 0, "最大生成 token 数必须大于 0"
-        )
+        self._validate_predicate(max_tokens, lambda v: v > 0, "max tokens must be > 0")
         temperature = self._require_type(
-            ConfigKeys.OPENAI_TEMPERATURE, (int, float), "温度参数"
+            ConfigKeys.OPENAI_TEMPERATURE, (int, float), "temperature"
         )
         self._validate_predicate(
-            temperature, lambda v: 0 <= float(v) <= 2, "温度参数必须在 0~2 之间"
+            temperature,
+            lambda v: 0 <= float(v) <= 2,
+            "temperature must be between 0 and 2",
         )
         interval = self._require_type(
-            ConfigKeys.BOT_AUTO_POST_INTERVAL, (int,), "发帖间隔（分钟）"
-        )
-        self._validate_predicate(interval, lambda v: v > 0, "发帖间隔必须大于 0")
-        max_per_day = self._require_type(
-            ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY, (int,), "每日最大发帖数量"
+            ConfigKeys.BOT_AUTO_POST_INTERVAL, (int,), "auto-post interval (minutes)"
         )
         self._validate_predicate(
-            max_per_day, lambda v: v >= 0, "每日最大发帖数量不能小于 0"
+            interval, lambda v: v > 0, "auto-post interval must be > 0"
+        )
+        max_per_day = self._require_type(
+            ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY, (int,), "max auto-posts per day"
+        )
+        self._validate_predicate(
+            max_per_day, lambda v: v >= 0, "max auto-posts per day must be >= 0"
         )
         chat_memory = self._require_type(
-            ConfigKeys.BOT_RESPONSE_CHAT_MEMORY, (int,), "聊天上下文记忆长度"
+            ConfigKeys.BOT_RESPONSE_CHAT_MEMORY, (int,), "chat context memory length"
         )
         self._validate_predicate(
-            chat_memory, lambda v: v >= 0, "聊天上下文记忆长度不能小于 0"
+            chat_memory, lambda v: v >= 0, "chat context memory length must be >= 0"
         )
         visibility = self._require_type(
-            ConfigKeys.BOT_AUTO_POST_VISIBILITY, (str,), "发帖可见性"
+            ConfigKeys.BOT_AUTO_POST_VISIBILITY, (str,), "post visibility"
         )
         self._validate_predicate(
             visibility,
             lambda v: v in {"public", "home", "followers"},
-            "发帖可见性必须是 public/home/followers",
+            "post visibility must be public/home/followers",
         )
 
     def _validate_file_paths(self) -> None:
         paths = [
-            (self.get(ConfigKeys.DB_PATH), "数据库目录"),
-            (self.get(ConfigKeys.LOG_PATH), "日志目录"),
+            (self.get(ConfigKeys.DB_PATH), "database directory"),
+            (self.get(ConfigKeys.LOG_PATH), "log directory"),
         ]
         for path, desc in paths:
             if path:
                 try:
                     Path(path).parent.mkdir(parents=True, exist_ok=True)
                 except OSError as e:
-                    logger.error(f"创建{desc}失败 {path}: {e}")
-                    raise ConfigurationError(f"无法创建{desc}: {path}") from e
+                    logger.error(f"Failed to create directory for path {path}: {e}")
+                    raise ConfigurationError(f"failed to create {desc}: {path}") from e

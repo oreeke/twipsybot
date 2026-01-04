@@ -161,7 +161,7 @@ class MisskeyAPI:
 
     async def close(self) -> None:
         await self.transport.close_session(silent=True)
-        logger.debug("Misskey API 客户端已关闭")
+        logger.debug("Misskey API client closed")
 
     @property
     def session(self) -> aiohttp.ClientSession:
@@ -175,35 +175,35 @@ class MisskeyAPI:
     def handle_response_status(response, endpoint: str):
         status = response.status
         if status == HTTP_BAD_REQUEST:
-            logger.error(f"API 请求错误: {endpoint}")
+            logger.error(f"API bad request: {endpoint}")
             raise APIBadRequestError()
         if status == HTTP_UNAUTHORIZED:
-            logger.error(f"API 认证失败: {endpoint}")
+            logger.error(f"API authentication failed: {endpoint}")
             raise AuthenticationError()
         if status == HTTP_FORBIDDEN:
-            logger.error(f"API 权限不足: {endpoint}")
+            logger.error(f"API forbidden: {endpoint}")
             raise AuthenticationError()
         if status == HTTP_TOO_MANY_REQUESTS:
-            logger.warning(f"API 频率限制: {endpoint}")
+            logger.warning(f"API rate limited: {endpoint}")
             raise APIRateLimitError()
 
     async def _process_response(self, response, endpoint: str):
         if response.status in (HTTP_OK, HTTP_NO_CONTENT):
             if response.status == HTTP_NO_CONTENT:
-                logger.debug(f"Misskey API 请求成功: {endpoint}")
+                logger.debug(f"Misskey API request succeeded: {endpoint}")
                 return {}
             try:
                 result = await response.json()
-                logger.debug(f"Misskey API 请求成功: {endpoint}")
+                logger.debug(f"Misskey API request succeeded: {endpoint}")
                 return result
             except (json.JSONDecodeError, aiohttp.ContentTypeError):
                 if not await response.read():
-                    logger.debug(f"Misskey API 请求成功: {endpoint}")
+                    logger.debug(f"Misskey API request succeeded: {endpoint}")
                     return {}
                 raise APIConnectionError()
         self.handle_response_status(response, endpoint)
         error_text = await response.text()
-        logger.error(f"API 请求失败: {response.status} - {error_text}")
+        logger.error(f"API request failed: {response.status} - {error_text}")
         raise APIConnectionError()
 
     @retry_async(
@@ -225,7 +225,7 @@ class MisskeyAPI:
             aiohttp.ClientError,
             json.JSONDecodeError,
         ) as e:
-            logger.error(f"HTTP 请求错误: {e}")
+            logger.error(f"HTTP request error: {e}")
             raise APIConnectionError() from e
 
     @retry_async(
@@ -245,7 +245,7 @@ class MisskeyAPI:
             async with self._semaphore, session.post(url, data=form) as response:
                 return await self._process_response(response, endpoint)
         except (aiohttp.ClientError, json.JSONDecodeError) as e:
-            logger.error(f"HTTP 请求错误: {e}")
+            logger.error(f"HTTP request error: {e}")
             raise APIConnectionError() from e
         finally:
             for resource in resources:
@@ -271,7 +271,7 @@ class MisskeyAPI:
         reply_priority = visibility_priority.get(visibility, 3)
         if reply_priority > original_priority:
             logger.debug(
-                f"调整回复可见性从 {visibility} 到 {original_visibility} 以匹配原帖"
+                f"Adjusted reply visibility from {visibility} to {original_visibility} to match original"
             )
             return original_visibility
         return visibility
@@ -286,7 +286,9 @@ class MisskeyAPI:
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.warning(f"获取原帖可见性失败，使用默认设置: {e}")
+            logger.warning(
+                f"Failed to get original note visibility; using default: {e}"
+            )
             return visibility if visibility is not None else "home"
 
     async def create_note(
@@ -297,7 +299,9 @@ class MisskeyAPI:
         validate_reply: bool = True,
     ) -> dict[str, Any]:
         if reply_id and validate_reply and not await self.note_exists(reply_id):
-            logger.warning(f"目标帖子不存在，将创建新帖回复: {reply_id}")
+            logger.warning(
+                f"Target note not found; creating a new note instead of a reply: {reply_id}"
+            )
             reply_id = None
         if reply_id:
             visibility = await self._get_visibility_for_reply(reply_id, visibility)
@@ -308,7 +312,7 @@ class MisskeyAPI:
             data["replyId"] = reply_id
         result = await self.make_request("notes/create", data)
         logger.debug(
-            f"Misskey 发帖成功，note_id: {result.get('createdNote', {}).get('id', 'unknown')}"
+            f"Misskey note created: note_id={result.get('createdNote', {}).get('id', 'unknown')}"
         )
         return result
 
@@ -334,7 +338,9 @@ class MisskeyAPI:
         result = await self.make_request(
             "chat/messages/create-to-user", {"toUserId": user_id, "text": text}
         )
-        logger.debug(f"Misskey 聊天发送成功，message_id: {result.get('id', 'unknown')}")
+        logger.debug(
+            f"Misskey chat message sent: message_id={result.get('id', 'unknown')}"
+        )
         return result
 
     async def send_room_message(self, room_id: str, text: str) -> dict[str, Any]:
@@ -342,15 +348,15 @@ class MisskeyAPI:
             "chat/messages/create-to-room", {"toRoomId": room_id, "text": text}
         )
         logger.debug(
-            f"Misskey 群聊消息发送成功，message_id: {result.get('id', 'unknown')}"
+            f"Misskey room message sent: message_id={result.get('id', 'unknown')}"
         )
         return result
 
     async def create_reaction(self, note_id: str, reaction: str) -> dict[str, Any]:
         if not note_id:
-            raise ValueError("note_id 不能为空")
+            raise ValueError("note_id cannot be empty")
         if not reaction:
-            raise ValueError("reaction 不能为空")
+            raise ValueError("reaction cannot be empty")
         return await self.make_request(
             "notes/reactions/create", {"noteId": note_id, "reaction": reaction}
         )
@@ -362,7 +368,7 @@ class MisskeyAPI:
         text: str | None = None,
     ) -> dict[str, Any]:
         if not note_id:
-            raise ValueError("note_id 不能为空")
+            raise ValueError("note_id cannot be empty")
         data: dict[str, Any] = {"renoteId": note_id}
         if visibility:
             data["visibility"] = visibility
@@ -370,7 +376,7 @@ class MisskeyAPI:
             data["text"] = text
         result = await self.make_request("notes/create", data)
         logger.debug(
-            f"Misskey 转贴成功，note_id: {result.get('createdNote', {}).get('id', 'unknown')}"
+            f"Misskey renote created: note_id={result.get('createdNote', {}).get('id', 'unknown')}"
         )
         return result
 
@@ -539,7 +545,7 @@ class MisskeyDrive:
     ) -> dict[str, Any]:
         file_path = Path(path)
         if not file_path.is_file():
-            raise ValueError(f"文件不存在: {file_path}")
+            raise ValueError(f"file not found: {file_path}")
         filename = name or file_path.name
 
         def build():
@@ -580,7 +586,7 @@ class MisskeyDrive:
                 async for chunk in response.content.iter_chunked(65536):
                     total += len(chunk)
                     if total > max_bytes:
-                        raise ValueError("文件大小超过限制")
+                        raise ValueError("file size exceeds limit")
                     chunks.append(chunk)
                 return b"".join(chunks)
         except (aiohttp.ClientError, OSError) as e:

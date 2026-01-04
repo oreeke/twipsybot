@@ -40,7 +40,7 @@ class VisionPlugin(PluginBase):
                 direct_url, max_bytes=self.max_bytes
             )
         except Exception as e:
-            logger.error(f"Vision 下载图片失败: {repr(e)}")
+            logger.error(f"Vision failed to download image: {repr(e)}")
             return None
 
     async def _ensure_image_mime(self, fid: str, mime: str | None) -> str | None:
@@ -49,7 +49,7 @@ class VisionPlugin(PluginBase):
         try:
             info = await self.drive.show_file(fid)
         except Exception as e:
-            logger.error(f"Vision 读取文件信息失败: {repr(e)}")
+            logger.error(f"Vision failed to read file info: {repr(e)}")
             return None
         return self._normalize_image_mime(info.get("type"))
 
@@ -59,7 +59,7 @@ class VisionPlugin(PluginBase):
                 fid, thumbnail=self.use_thumbnail, max_bytes=self.max_bytes
             )
         except Exception as e:
-            logger.error(f"Vision 下载图片失败: {repr(e)}")
+            logger.error(f"Vision failed to download image: {repr(e)}")
             return None
 
     @staticmethod
@@ -106,19 +106,19 @@ class VisionPlugin(PluginBase):
         return max(0, int(n * mul))
 
     async def initialize(self) -> bool:
-        self._log_plugin_action("初始化完成")
+        self._log_plugin_action("initialized")
         return True
 
     async def on_mention(self, mention_data: dict[str, Any]) -> dict[str, Any] | None:
         if not (parts := await self._build_user_content(mention_data, kind="mention")):
             return None
-        reply = await self._call_vision(parts, call_type="提及图片")
+        reply = await self._call_vision(parts, call_type="mention image")
         return self._create_response(reply)
 
     async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
         if not (parts := await self._build_user_content(message_data, kind="chat")):
             return None
-        reply = await self._call_vision(parts, call_type="聊天图片")
+        reply = await self._call_vision(parts, call_type="chat image")
         return self._create_response(reply)
 
     def _create_response(self, response_text: str) -> dict[str, Any] | None:
@@ -223,5 +223,5 @@ class VisionPlugin(PluginBase):
             max_tokens=self.global_config.get(ConfigKeys.OPENAI_MAX_TOKENS),
             temperature=self.global_config.get(ConfigKeys.OPENAI_TEMPERATURE),
         )
-        logger.debug(f"Vision {call_type} 回复成功，长度: {len(reply)}")
+        logger.debug(f"Vision {call_type} reply generated; length: {len(reply)}")
         return reply

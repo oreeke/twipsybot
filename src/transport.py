@@ -43,17 +43,17 @@ class TCPClient:
             except Exception as e:
                 if isinstance(e, asyncio.CancelledError):
                     raise
-                logger.warning(f"关闭会话时出错: {e}")
+                logger.warning(f"Error closing session: {e}")
         if self.__connector and not self.__connector.closed:
             try:
                 await self.__connector.close()
             except Exception as e:
                 if isinstance(e, asyncio.CancelledError):
                     raise
-                logger.warning(f"关闭连接器时出错: {e}")
+                logger.warning(f"Error closing connector: {e}")
         self.__session = self.__connector = None
         if not silent:
-            logger.debug("TCP 会话已关闭")
+            logger.debug("TCP session closed")
 
     async def ws_connect(self, url: str, *, compress: int = 0) -> Any:
         try:
@@ -66,7 +66,7 @@ class TCPClient:
                 compress=compress,
             )
         except aiohttp.ClientConnectorError as e:
-            logger.error(f"TCP 客户端连接失败: {e}")
+            logger.error(f"TCP client connection failed: {e}")
             raise ClientConnectorError()
 
 

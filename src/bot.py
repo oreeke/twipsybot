@@ -12,8 +12,6 @@ from .config import Config
 from .constants import (
     CHAT_CACHE_MAX_USERS,
     CHAT_CACHE_TTL,
-    DEFAULT_ERROR_MESSAGE,
-    ERROR_MESSAGES,
     ConfigKeys,
     USER_LOCK_CACHE_MAX,
     USER_LOCK_TTL,
@@ -42,44 +40,9 @@ class MentionContext:
     username: str | None
 
 
-class ErrorResponder:
+class MentionHandler:
     def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
-
-    async def handle(
-        self,
-        error: Exception,
-        *,
-        mention: MentionContext | None = None,
-        message: dict[str, Any] | None = None,
-    ) -> None:
-        error_message = ERROR_MESSAGES.get(type(error).__name__, DEFAULT_ERROR_MESSAGE)
-        try:
-            if mention and mention.username:
-                await self.bot.misskey.create_note(
-                    text=f"@{mention.username}\n{error_message}", validate_reply=False
-                )
-                return
-            if message:
-                user_id = extract_user_id(message)
-                room_id = message.get("toRoomId")
-                to_room = message.get("toRoom")
-                if not room_id and isinstance(to_room, dict):
-                    room_id = to_room.get("id")
-                if isinstance(room_id, str) and room_id:
-                    await self.bot.misskey.send_room_message(room_id, error_message)
-                elif isinstance(user_id, str) and user_id:
-                    await self.bot.misskey.send_message(user_id, error_message)
-        except Exception as e:
-            if isinstance(e, asyncio.CancelledError):
-                raise
-            logger.error(f"发送错误回复失败: {e}")
-
-
-class MentionHandler:
-    def __init__(self, bot: "MisskeyBot", errors: ErrorResponder):
-        self.bot = bot
-        self.errors = errors
 
     @staticmethod
     def _effective_text(note_data: Any) -> str:
@@ -101,7 +64,7 @@ class MentionHandler:
         try:
             async with self.bot.lock_actor(mention.user_id, mention.username):
                 logger.info(
-                    f"收到 @{mention.username} 的提及: {self.bot.format_log_text(mention.text)}"
+                    f"Mention received from @{mention.username}: {self.bot.format_log_text(mention.text)}"
                 )
                 if await self._try_plugin_response(mention, note):
                     return
@@ -109,14 +72,13 @@ class MentionHandler:
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"处理提及时出错: {e}")
-            await self.errors.handle(e, mention=mention)
+            logger.error(f"Error handling mention: {e}")
 
     def _parse(self, note: dict[str, Any]) -> MentionContext:
         try:
             is_reply_event = note.get("type") == "reply" and "note" in note
             logger.opt(lazy=True).debug(
-                "提及数据: {}",
+                "Mention data: {}",
                 lambda: json.dumps(note, ensure_ascii=False, indent=2),
             )
             mention_id = note.get("id")
@@ -136,11 +98,13 @@ class MentionHandler:
                 user_id = extract_user_id(note)
                 username = extract_username(note)
             if not self._is_bot_mentioned(text):
-                logger.debug(f"用户 @{username} 的回复中未 @机器人，跳过处理")
+                logger.debug(
+                    f"Reply from @{username} does not mention the bot; skipping"
+                )
                 mention_id = None
             return MentionContext(mention_id, reply_target_id, text, user_id, username)
         except Exception as e:
-            logger.error(f"解析消息数据失败: {e}")
+            logger.error(f"Failed to parse message data: {e}")
             return MentionContext(None, None, "", None, None)
 
     def _is_bot_mentioned(self, text: str) -> bool:
@@ -154,7 +118,7 @@ class MentionHandler:
         plugin_results = await self.bot.plugin_manager.on_mention(note)
         for result in plugin_results:
             if result and result.get("handled"):
-                logger.debug(f"提及已被插件处理: {result.get('plugin_name')}")
+                logger.debug(f"Mention handled by plugin: {result.get('plugin_name')}")
                 response = result.get("response")
                 if response:
                     formatted = f"@{mention.username}\n{response}"
@@ -162,7 +126,7 @@ class MentionHandler:
                         text=formatted, reply_id=mention.reply_target_id
                     )
                     logger.info(
-                        f"插件已回复 @{mention.username}: {self.bot.format_log_text(formatted)}"
+                        f"Plugin replied to @{mention.username}: {self.bot.format_log_text(formatted)}"
                     )
                 return True
         return False
@@ -171,31 +135,30 @@ class MentionHandler:
         reply = await self.bot.openai.generate_text(
             mention.text, self.bot.system_prompt, **self.bot.ai_config
         )
-        logger.debug("生成提及回复成功")
+        logger.debug("Mention reply generated")
         formatted = f"@{mention.username}\n{reply}"
         await self.bot.misskey.create_note(
             text=formatted, reply_id=mention.reply_target_id
         )
         logger.info(
-            f"已回复 @{mention.username}: {self.bot.format_log_text(formatted)}"
+            f"Replied to @{mention.username}: {self.bot.format_log_text(formatted)}"
         )
 
 
 class ChatHandler:
-    def __init__(self, bot: "MisskeyBot", errors: ErrorResponder):
+    def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
-        self.errors = errors
 
     async def handle(self, message: dict[str, Any]) -> None:
         if not self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_ENABLED):
             return
         if not message.get("id"):
-            logger.debug("缺少 ID，跳过处理")
+            logger.debug("Missing id; skipping")
             return
         if self.bot.bot_user_id and extract_user_id(message) == self.bot.bot_user_id:
             return
         logger.opt(lazy=True).debug(
-            "聊天数据: {}",
+            "Chat data: {}",
             lambda: json.dumps(message, ensure_ascii=False, indent=2),
         )
         try:
@@ -203,8 +166,7 @@ class ChatHandler:
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"处理聊天时出错: {e}")
-            await self.errors.handle(e, message=message)
+            logger.error(f"Error handling chat: {e}")
 
     @staticmethod
     def _parse_room(message: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -227,14 +189,14 @@ class ChatHandler:
         has_media: bool,
         room_label: str | None,
     ) -> None:
-        prefix = f"群聊 {room_label} " if room_label else ""
+        prefix = f"Room {room_label} " if room_label else ""
         if text:
             logger.info(
-                f"收到 {prefix}@{username} 的聊天: {self.bot.format_log_text(text)}"
+                f"Chat received from {prefix}@{username}: {self.bot.format_log_text(text)}"
             )
             return
         if has_media:
-            logger.info(f"收到 {prefix}@{username} 的聊天: （无文本，包含媒体）")
+            logger.info(f"Chat received from {prefix}@{username}: (no text; has media)")
 
     async def _process(self, message: dict[str, Any]) -> None:
         text = message.get("text") or message.get("content") or message.get("body", "")
@@ -243,10 +205,10 @@ class ChatHandler:
         room_id, room_name = self._parse_room(message)
         has_media = bool(message.get("fileId") or message.get("file"))
         if not isinstance(user_id, str) or not user_id:
-            logger.debug("聊天缺少必要信息 - 用户 ID 为空")
+            logger.debug("Chat missing required info: user_id is empty")
             return
         if not text and not has_media:
-            logger.debug("聊天缺少必要信息 - 文本为空且无媒体")
+            logger.debug("Chat missing required info: empty text and no media")
             return
         conversation_id = f"room:{room_id}" if room_id else user_id
         actor_id = room_id or user_id
@@ -306,12 +268,14 @@ class ChatHandler:
     ) -> bool:
         if not (result and result.get("handled")):
             return False
-        logger.debug(f"聊天已被插件处理: {result.get('plugin_name')}")
+        logger.debug(f"Chat handled by plugin: {result.get('plugin_name')}")
         response = result.get("response")
         if not response:
             return True
         await self._send_chat_reply(user_id=user_id, room_id=room_id, text=response)
-        logger.info(f"插件已回复 @{username}: {self.bot.format_log_text(response)}")
+        logger.info(
+            f"Plugin replied to @{username}: {self.bot.format_log_text(response)}"
+        )
         user_text = message.get("text") or message.get("content") or ""
         if user_text:
             user_content = f"{username}: {user_text}" if room_id else user_text
@@ -348,9 +312,9 @@ class ChatHandler:
         ):
             messages.append({"role": "user", "content": user_content})
         reply = await self.bot.openai.generate_chat(messages, **self.bot.ai_config)
-        logger.debug("生成聊天回复成功")
+        logger.debug("Chat reply generated")
         await self._send_chat_reply(user_id=user_id, room_id=room_id, text=reply)
-        logger.info(f"已回复 @{username}: {self.bot.format_log_text(reply)}")
+        logger.info(f"Replied to @{username}: {self.bot.format_log_text(reply)}")
         self.bot.append_chat_turn(conversation_id, user_content, reply, limit)
 
     async def get_chat_history(
@@ -370,7 +334,7 @@ class ChatHandler:
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"获取聊天历史时出错: {e}")
+            logger.error(f"Error getting chat history: {e}")
             return []
 
     async def _get_room_chat_history(
@@ -412,9 +376,9 @@ class ReactionHandler:
         username = extract_username(reaction)
         note_id = reaction.get("note", {}).get("id", "unknown")
         reaction_type = reaction.get("reaction", "unknown")
-        logger.info(f"用户 @{username} 对帖子 {note_id} 做出反应: {reaction_type}")
+        logger.info(f"User @{username} reacted to note {note_id}: {reaction_type}")
         logger.opt(lazy=True).debug(
-            "反应数据: {}",
+            "Reaction data: {}",
             lambda: json.dumps(reaction, ensure_ascii=False, indent=2),
         )
         try:
@@ -422,7 +386,7 @@ class ReactionHandler:
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"处理反应事件时出错: {e}")
+            logger.error(f"Error handling reaction event: {e}")
 
 
 class FollowHandler:
@@ -431,9 +395,9 @@ class FollowHandler:
 
     async def handle(self, follow: dict[str, Any]) -> None:
         username = extract_username(follow)
-        logger.info(f"用户 @{username} 关注了 @{self.bot.bot_username}")
+        logger.info(f"User @{username} followed @{self.bot.bot_username}")
         logger.opt(lazy=True).debug(
-            "关注数据: {}",
+            "Follow data: {}",
             lambda: json.dumps(follow, ensure_ascii=False, indent=2),
         )
         try:
@@ -441,7 +405,7 @@ class FollowHandler:
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"处理关注事件时出错: {e}")
+            logger.error(f"Error handling follow event: {e}")
 
 
 class AutoPostService:
@@ -462,7 +426,7 @@ class AutoPostService:
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"自动发帖时出错: {e}")
+            logger.error(f"Error during auto-post: {e}")
 
     async def _try_plugin_post(self, plugin_results: list[Any], max_posts: int) -> bool:
         for result in plugin_results:
@@ -474,8 +438,10 @@ class AutoPostService:
                 )
                 await self.bot.misskey.create_note(content, visibility=visibility)
                 self.bot.runtime.post_count()
-                logger.info(f"自动发帖成功: {self.bot.format_log_text(content)}")
-                logger.info(f"今日发帖计数: {self.bot.runtime.posts_today}/{max_posts}")
+                logger.info(f"Auto-post succeeded: {self.bot.format_log_text(content)}")
+                logger.info(
+                    f"Daily post count: {self.bot.runtime.posts_today}/{max_posts}"
+                )
                 return True
         return False
 
@@ -491,7 +457,7 @@ class AutoPostService:
                 if result.get("timestamp"):
                     timestamp_override = result.get("timestamp")
                 logger.info(
-                    f"{result.get('plugin_name')} 插件请求修改提示词: {plugin_prompt}"
+                    f"Plugin {result.get('plugin_name')} requested prompt modification: {plugin_prompt}"
                 )
         post_prompt = self.bot.config.get(ConfigKeys.BOT_AUTO_POST_PROMPT, "")
         try:
@@ -499,13 +465,13 @@ class AutoPostService:
                 self.bot.system_prompt, post_prompt, plugin_prompt, timestamp_override
             )
         except ValueError as e:
-            logger.warning(f"自动发帖失败，跳过本次发帖: {e}")
+            logger.warning(f"Auto-post failed; skipping this run: {e}")
             return
         visibility = self.bot.config.get(ConfigKeys.BOT_AUTO_POST_VISIBILITY)
         await self.bot.misskey.create_note(content, visibility=visibility)
         self.bot.runtime.post_count()
-        logger.info(f"自动发帖成功: {self.bot.format_log_text(content)}")
-        logger.info(f"今日发帖计数: {self.bot.runtime.posts_today}/{max_posts}")
+        logger.info(f"Auto-post succeeded: {self.bot.format_log_text(content)}")
+        logger.info(f"Daily post count: {self.bot.runtime.posts_today}/{max_posts}")
 
     async def _generate_post(
         self,
@@ -515,7 +481,7 @@ class AutoPostService:
         timestamp_override: int | None = None,
     ) -> str:
         if not prompt:
-            raise ValueError("缺少提示词")
+            raise ValueError("Missing prompt")
         timestamp_min = timestamp_override or int(
             datetime.now(timezone.utc).timestamp() // 60
         )
@@ -528,9 +494,8 @@ class AutoPostService:
 class BotHandlers:
     def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
-        self.errors = ErrorResponder(bot)
-        self.mention = MentionHandler(bot, self.errors)
-        self.chat = ChatHandler(bot, self.errors)
+        self.mention = MentionHandler(bot)
+        self.chat = ChatHandler(bot)
         self.reaction = ReactionHandler(bot)
         self.follow = FollowHandler(bot)
         self.auto_post = AutoPostService(bot)
@@ -570,7 +535,7 @@ class MisskeyBot:
             )
             self.scheduler = AsyncIOScheduler()
         except (ValueError, TypeError, KeyError) as e:
-            logger.error(f"初始化失败: {e}")
+            logger.error(f"Initialization failed: {e}")
             raise ConfigurationError() from e
         self.persistence = PersistenceManager(config.get(ConfigKeys.DB_PATH))
         self.runtime = BotRuntime(self)
@@ -597,7 +562,7 @@ class MisskeyBot:
         )
         self.handlers = BotHandlers(self)
         self.timeline_channels = self._load_timeline_channels()
-        logger.info("机器人初始化完成")
+        logger.info("Bot initialized")
 
     @staticmethod
     def _actor_key(user_id: str | None, username: str | None) -> str | None:
@@ -708,16 +673,16 @@ class MisskeyBot:
 
     async def start(self) -> None:
         if self.runtime.running:
-            logger.warning("机器人已在运行中")
+            logger.warning("Bot is already running")
             return
-        logger.info("启动服务组件...")
+        logger.info("Starting services...")
         self.runtime.running = True
         await self._initialize_services()
         self._setup_scheduler()
         await self._setup_streaming()
-        logger.info("服务组件就绪，等待新任务...")
+        logger.info("Services ready; awaiting new tasks...")
         memory_usage = get_memory_usage()
-        logger.debug(f"内存使用: {memory_usage['rss_mb']} MB")
+        logger.debug(f"Memory usage: {memory_usage['rss_mb']} MB")
 
     async def _initialize_services(self) -> None:
         await self.persistence.initialize()
@@ -726,7 +691,7 @@ class MisskeyBot:
         self.bot_user_id = current_user.get("id")
         self.bot_username = current_user.get("username")
         logger.info(
-            f"已连接 Misskey 实例，机器人 ID: {self.bot_user_id}, @{self.bot_username}"
+            f"Connected to Misskey instance: bot_id={self.bot_user_id}, @{self.bot_username}"
         )
         await self.plugin_manager.load_plugins()
         await self.plugin_manager.on_startup()
@@ -740,7 +705,7 @@ class MisskeyBot:
             self.scheduler.add_job(func, "cron", hour=hour, minute=0, second=0)
         if self.config.get(ConfigKeys.BOT_AUTO_POST_ENABLED):
             interval_minutes = self.config.get(ConfigKeys.BOT_AUTO_POST_INTERVAL)
-            logger.info(f"自动发帖已启用，间隔: {interval_minutes} 分钟")
+            logger.info(f"Auto-post enabled; interval: {interval_minutes} minutes")
             self.scheduler.add_job(
                 self.handlers.on_auto_post,
                 "interval",
@@ -762,14 +727,14 @@ class MisskeyBot:
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.exception(f"设置 Streaming 连接失败: {e}")
+            logger.exception(f"Failed to set up Streaming connection: {e}")
             raise
 
     async def stop(self) -> None:
         if not self.runtime.running:
-            logger.warning("机器人已停止")
+            logger.warning("Bot is already stopped")
             return
-        logger.info("停止服务组件...")
+        logger.info("Stopping services...")
         self.runtime.running = False
         try:
             await self.plugin_manager.on_shutdown()
@@ -785,9 +750,9 @@ class MisskeyBot:
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.exception(f"停止机器人时出错: {e}")
+            logger.exception(f"Error stopping bot: {e}")
         finally:
-            logger.info("服务组件已停止")
+            logger.info("Services stopped")
 
     @staticmethod
     def format_log_text(text: str, max_length: int = 50) -> str:

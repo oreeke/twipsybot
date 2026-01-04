@@ -72,14 +72,14 @@ class RadarPlugin(PluginBase):
         )
 
     async def initialize(self) -> bool:
-        self._log_plugin_action("初始化完成", self._format_timeline_limit())
+        self._log_plugin_action("initialized", self._format_timeline_limit())
         return True
 
     def _format_timeline_limit(self) -> str:
         if self.allowed_timeline_channels is None:
-            return "时间线 不限定"
+            return "Timeline: unrestricted"
         if not self.allowed_timeline_channels:
-            return "时间线 (空)"
+            return "Timeline: (empty)"
         name_map = {
             ChannelType.HOME_TIMELINE.value: "home",
             ChannelType.LOCAL_TIMELINE.value: "local",
@@ -89,7 +89,7 @@ class RadarPlugin(PluginBase):
         order = ("home", "local", "hybrid", "global")
         resolved = {name_map.get(c) for c in self.allowed_timeline_channels}
         tokens = [t for t in order if t in resolved]
-        return "时间线 " + "/".join(tokens) if tokens else "时间线 (空)"
+        return f"Timeline: {'/'.join(tokens)}" if tokens else "Timeline: (empty)"
 
     @staticmethod
     def _timeline_name_map() -> dict[str, str]:
@@ -403,7 +403,7 @@ class RadarPlugin(PluginBase):
             else:
                 await self._act(note_data, note_id, channel)
         except Exception as e:
-            logger.error(f"Radar 互动失败: {repr(e)}")
+            logger.error(f"Radar interaction failed: {repr(e)}")
         return None
 
     async def _maybe_react(
@@ -413,9 +413,9 @@ class RadarPlugin(PluginBase):
             return
         try:
             await self.misskey.create_reaction(note_id, self.reaction)
-            self._log_plugin_action("反应", f"{note_id} {self.reaction} [{channel}]")
+            self._log_plugin_action("reacted", f"{note_id} {self.reaction} [{channel}]")
         except Exception as e:
-            logger.error(f"Radar 反应失败: {repr(e)}")
+            logger.error(f"Radar reaction failed: {repr(e)}")
 
     async def _build_reply_text(self, note_data: dict[str, Any]) -> str | None:
         if self.reply_text:
@@ -427,7 +427,7 @@ class RadarPlugin(PluginBase):
         try:
             return await self._generate_ai_reply(note_data)
         except Exception as e:
-            logger.error(f"Radar AI 回复失败: {repr(e)}")
+            logger.error(f"Radar AI reply failed: {repr(e)}")
             return None
 
     async def _maybe_reply(
@@ -439,9 +439,9 @@ class RadarPlugin(PluginBase):
             return
         try:
             await self.misskey.create_note(text=text, reply_id=note_id)
-            self._log_plugin_action("回复", f"{note_id} [{channel}]")
+            self._log_plugin_action("replied", f"{note_id} [{channel}]")
         except Exception as e:
-            logger.error(f"Radar 回复失败: {repr(e)}")
+            logger.error(f"Radar reply failed: {repr(e)}")
 
     async def _build_quote_text(self, note_data: dict[str, Any]) -> str | None:
         if self.quote_text:
@@ -453,7 +453,7 @@ class RadarPlugin(PluginBase):
         try:
             return await self._generate_ai_quote(note_data)
         except Exception as e:
-            logger.error(f"Radar AI 引用失败: {repr(e)}")
+            logger.error(f"Radar AI quote failed: {repr(e)}")
             return None
 
     async def _maybe_quote(
@@ -468,11 +468,11 @@ class RadarPlugin(PluginBase):
                 note_id, visibility=self.quote_visibility, text=text
             )
             self._log_plugin_action(
-                "引用", f"{note_id} {self.quote_visibility or ''} [{channel}]"
+                "quoted", f"{note_id} {self.quote_visibility or ''} [{channel}]"
             )
             return True
         except Exception as e:
-            logger.error(f"Radar 引用失败: {repr(e)}")
+            logger.error(f"Radar quote failed: {repr(e)}")
             return False
 
     async def _maybe_renote(self, note_id: str, channel: str) -> None:
@@ -481,10 +481,10 @@ class RadarPlugin(PluginBase):
         try:
             await self.misskey.create_renote(note_id, visibility=self.renote_visibility)
             self._log_plugin_action(
-                "转贴", f"{note_id} {self.renote_visibility or ''} [{channel}]"
+                "renoted", f"{note_id} {self.renote_visibility or ''} [{channel}]"
             )
         except Exception as e:
-            logger.error(f"Radar 转贴失败: {repr(e)}")
+            logger.error(f"Radar renote failed: {repr(e)}")
 
     async def _act(self, note_data: dict[str, Any], note_id: str, channel: str) -> None:
         await self._maybe_react(note_data, note_id, channel)

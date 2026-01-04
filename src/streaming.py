@@ -41,7 +41,7 @@ TIMELINE_CHANNELS = frozenset(
     }
 )
 
-_EVENT_DATA_LOG_TEMPLATE = "事件数据: {}"
+_EVENT_DATA_LOG_TEMPLATE = "Event data: {}"
 
 
 class StreamingClient:
@@ -78,7 +78,7 @@ class StreamingClient:
         await self._close_websocket()
         await self.transport.close_session(silent=True)
         self.processed_events.clear()
-        logger.debug("Streaming 客户端已关闭")
+        logger.debug("Streaming client closed")
 
     def on_mention(self, handler: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
         self._add_event_handler("mention", handler)
@@ -124,11 +124,11 @@ class StreamingClient:
                 retry_count += 1
                 if not reconnect or retry_count >= WS_MAX_RETRIES:
                     logger.error(
-                        f"WebSocket 连接失败，已达最大重试次数 {WS_MAX_RETRIES}"
+                        f"WebSocket connection failed; max retries reached ({WS_MAX_RETRIES})"
                     )
                     raise
                 logger.debug(
-                    f"WebSocket 连接异常，重新连接... {retry_count}/{WS_MAX_RETRIES}"
+                    f"WebSocket connection error; reconnecting... {retry_count}/{WS_MAX_RETRIES}"
                 )
                 self.running = False
                 self.channels.clear()
@@ -152,14 +152,16 @@ class StreamingClient:
             channel.value if isinstance(channel, ChannelType) else str(channel)
         )
         if not channel_name:
-            raise ValueError("频道名称不能为空")
+            raise ValueError("channel name must not be empty")
         existing_channels = [
             ch_id
             for ch_id, ch_info in self.channels.items()
             if ch_info.get("name") == channel_name
         ]
         if existing_channels:
-            logger.warning(f"频道类型 {channel_name} 已存在连接: {existing_channels}")
+            logger.warning(
+                f"Channel {channel_name} already connected: {existing_channels}"
+            )
             return existing_channels[0]
         channel_id = str(uuid.uuid4())
         message = {
@@ -171,11 +173,13 @@ class StreamingClient:
             },
         }
         if not self._ws_available:
-            logger.error(f"WebSocket 连接不可用，无法连接频道: {channel_name}")
+            logger.error(
+                f"WebSocket unavailable; cannot connect channel: {channel_name}"
+            )
             raise WebSocketConnectionError()
         await self.ws_connection.send_json(message)
         self.channels[channel_id] = {"name": channel_name, "params": params or {}}
-        logger.debug(f"已连接频道: {channel_name} (ID: {channel_id})")
+        logger.debug(f"Connected channel: {channel_name} (ID: {channel_id})")
         return channel_id
 
     async def disconnect_channel(self, channel: ChannelType | str) -> None:
@@ -183,7 +187,7 @@ class StreamingClient:
             channel.value if isinstance(channel, ChannelType) else str(channel)
         )
         if not channel_name:
-            raise ValueError("频道名称不能为空")
+            raise ValueError("channel name must not be empty")
         channels_to_remove = [
             ch_id
             for ch_id, ch_info in self.channels.items()
@@ -194,7 +198,7 @@ class StreamingClient:
                 message = {"type": "disconnect", "body": {"id": channel_id}}
                 await self.ws_connection.send_json(message)
             del self.channels[channel_id]
-        logger.debug(f"已断开频道连接: {channel_name}")
+        logger.debug(f"Disconnected channel: {channel_name}")
 
     async def connect_once(self, channels: list[str] | None = None) -> None:
         if self.running:
@@ -211,7 +215,7 @@ class StreamingClient:
             except ValueError:
                 await self.connect_channel(channel)
         if self._first_connection:
-            logger.info("Streaming 客户端已启动")
+            logger.info("Streaming client started")
             self._first_connection = False
 
     async def _connect_websocket(self) -> None:
@@ -222,10 +226,10 @@ class StreamingClient:
         safe_url = f"{base_ws_url}/streaming"
         try:
             self.ws_connection = await self.transport.ws_connect(ws_url)
-            logger.debug(f"WebSocket 连接成功: {safe_url}")
+            logger.debug(f"WebSocket connected: {safe_url}")
         except (aiohttp.ClientError, OSError) as e:
             await self._cleanup_failed_connection()
-            logger.error(f"WebSocket 连接失败: {e}")
+            logger.error(f"WebSocket connection failed: {e}")
             raise WebSocketConnectionError()
 
     async def _listen_messages(self) -> None:
@@ -254,7 +258,7 @@ class StreamingClient:
             ):
                 raise WebSocketReconnectError()
             except (ValueError, TypeError, AttributeError, KeyError) as e:
-                logger.error(f"解析消息失败: {e}")
+                logger.error(f"Failed to parse message: {e}")
                 continue
 
     async def _close_websocket(self) -> None:
@@ -266,7 +270,7 @@ class StreamingClient:
         try:
             await self._close_websocket()
         except Exception as e:
-            logger.error(f"清理失败连接时出错: {e}")
+            logger.error(f"Error cleaning up failed connection: {e}")
 
     async def _disconnect_all_channels(self) -> None:
         for channel_id in self.channels:
@@ -275,26 +279,26 @@ class StreamingClient:
                     message = {"type": "disconnect", "body": {"id": channel_id}}
                     await self.ws_connection.send_json(message)
                 except Exception as e:
-                    logger.warning(f"断开频道 {channel_id} 时出错: {e}")
+                    logger.warning(f"Error disconnecting channel {channel_id}: {e}")
         self.channels.clear()
 
     async def _process_message(
         self, data: dict[str, Any], raw_message: str | None = None
     ) -> None:
         if not data or not isinstance(data, dict):
-            logger.debug(f"收到无效消息格式，跳过处理: {raw_message}")
+            logger.debug(f"Invalid message format; skipping: {raw_message}")
             return
         message_type = data.get("type")
         body = data.get("body", {})
         if message_type == "channel":
             await self._handle_channel_message(body)
         else:
-            logger.debug(f"收到未知消息类型: {message_type}")
+            logger.debug(f"Unknown message type received: {message_type}")
 
     async def _handle_channel_message(self, body: dict[str, Any]) -> None:
         channel_id = body.get("id")
         if channel_id not in self.channels:
-            logger.debug(f"收到未知频道的消息: {channel_id}")
+            logger.debug(f"Message received for unknown channel: {channel_id}")
             return
         channel_info = self.channels[channel_id]
         channel_name = channel_info.get("name", "unknown")
@@ -306,7 +310,7 @@ class StreamingClient:
         self._track_event(event_id)
         if event_type:
             logger.debug(
-                f"收到 {channel_name} 频道事件: {event_type} (频道 ID: {channel_id}, 事件 ID: {event_id})"
+                f"Received {channel_name} event: {event_type} (channel_id={channel_id}, event_id={event_id})"
             )
         await self._enqueue_event(channel_name, event_data)
 
@@ -379,7 +383,9 @@ class StreamingClient:
         except asyncio.TimeoutError:
             event_id = event_data.get("id", "unknown")
             event_type = event_data.get("type", "unknown")
-            logger.warning(f"事件队列拥塞，丢弃事件: {event_type} (ID: {event_id})")
+            logger.warning(
+                f"Event queue congested; dropping event: {event_type} (id={event_id})"
+            )
 
     async def _worker_loop(self) -> None:
         while True:
@@ -392,7 +398,7 @@ class StreamingClient:
             except Exception as e:
                 if isinstance(e, asyncio.CancelledError):
                     raise
-                logger.exception(f"处理事件失败: {e}")
+                logger.exception(f"Failed to process event: {e}")
 
     async def _dispatch_event(
         self, channel_name: str, event_data: dict[str, Any]
@@ -409,9 +415,9 @@ class StreamingClient:
     ) -> None:
         event_id = event_data.get("id", "unknown")
         logger.debug(
-            f"收到无事件类型的数据 - 频道: {channel_name}, 事件 ID: {event_id}"
+            f"Received data without event type - channel: {channel_name}, event_id={event_id}"
         )
-        logger.debug(f"数据结构: {list(event_data.keys())}")
+        logger.debug(f"Schema: {list(event_data.keys())}")
         logger.opt(lazy=True).debug(
             _EVENT_DATA_LOG_TEMPLATE,
             lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
@@ -444,8 +450,8 @@ class StreamingClient:
         if event_type in handler_map:
             await self._call_handlers(handler_map[event_type], event_data)
         else:
-            logger.debug(f"收到未知类型的 main 频道事件: {event_type}")
-            logger.debug(f"数据结构: {list(event_data.keys())}")
+            logger.debug(f"Unknown main channel event type: {event_type}")
+            logger.debug(f"Schema: {list(event_data.keys())}")
             logger.opt(lazy=True).debug(
                 _EVENT_DATA_LOG_TEMPLATE,
                 lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
@@ -455,8 +461,8 @@ class StreamingClient:
         self, channel_name: str, event_type: str, event_data: dict[str, Any]
     ) -> None:
         if event_type != "note":
-            logger.debug(f"收到未知类型的 {channel_name} 频道事件: {event_type}")
-            logger.debug(f"数据结构: {list(event_data.keys())}")
+            logger.debug(f"Unknown {channel_name} channel event type: {event_type}")
+            logger.debug(f"Schema: {list(event_data.keys())}")
             logger.opt(lazy=True).debug(
                 _EVENT_DATA_LOG_TEMPLATE,
                 lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
@@ -469,8 +475,8 @@ class StreamingClient:
             payload = dict(payload)
         if isinstance(payload, dict) and "streamingChannel" not in payload:
             payload["streamingChannel"] = channel_name
-        logger.debug(f"收到 {channel_name} 频道 note")
-        logger.debug(f"数据结构: {list(payload.keys())}")
+        logger.debug(f"Received {channel_name} note")
+        logger.debug(f"Schema: {list(payload.keys())}")
         logger.opt(lazy=True).debug(
             _EVENT_DATA_LOG_TEMPLATE,
             lambda: json.dumps(payload, ensure_ascii=False, indent=2),
@@ -488,12 +494,12 @@ class StreamingClient:
             except Exception as e:
                 if isinstance(e, asyncio.CancelledError):
                     raise
-                logger.exception(f"事件处理器执行失败 ({event_type}): {e}")
+                logger.exception(f"Event handler failed ({event_type}): {e}")
 
     def _is_duplicate_event(self, event_id: str | None, event_type: str | None) -> bool:
         if event_id and event_id in self.processed_events:
             logger.debug(
-                f"检测到重复事件，跳过处理 - {event_type}, 事件 ID: {event_id}"
+                f"Duplicate event detected; skipping - {event_type}, event_id={event_id}"
             )
             return True
         return False

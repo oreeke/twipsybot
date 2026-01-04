@@ -59,14 +59,3 @@ CHAT_CACHE_MAX_USERS = 5000
 CHAT_CACHE_TTL = 3600
 USER_LOCK_CACHE_MAX = 5000
 USER_LOCK_TTL = 3600
-
-ERROR_MESSAGES = {
-    "MisskeyBotError": "抱歉，出现未知问题，请联系管理员。",
-    "APIRateLimitError": "抱歉，请求过于频繁，请稍后再试。",
-    "AuthenticationError": "抱歉，服务配置有误，请联系管理员。",
-    "APIConnectionError": "抱歉，服务暂不可用，请稍后再试。",
-    "APIBadRequestError": "抱歉，服务暂不可用，请稍后再试。",
-    "ValueError": "抱歉，请求参数无效，请检查输入。",
-    "RuntimeError": "抱歉，系统资源不足，请稍后再试。",
-}
-DEFAULT_ERROR_MESSAGE = "抱歉，处理您的消息时出现了错误。"

@@ -30,8 +30,8 @@ class ExamplePlugin(PluginBase):
 
     async def initialize(self) -> bool:
         self._log_plugin_action(
-            "初始化完成",
-            f"问候: {self.greeting_enabled}, 自动发帖: {self.auto_post_enabled}, 纯媒体: {self.allow_media_only}",
+            "initialized",
+            f"greeting={self.greeting_enabled}, auto_post={self.auto_post_enabled}, media_only={self.allow_media_only}",
         )
         return True
 
@@ -93,13 +93,13 @@ class ExamplePlugin(PluginBase):
             if any(k in text for k in self.greeting_keywords):
                 username = self._extract_username(mention_data)
                 await self._bump_counter("mention_greeting_count")
-                self._log_plugin_action("处理问候消息", f"来自 @{username}")
+                self._log_plugin_action("handled greeting", f"from @{username}")
                 return self._create_response("你好！这是示例插件的回复。")
             if "example" in text or "示例" in text:
                 await self._bump_counter("mention_example_count")
                 return self._create_response("示例插件已收到你的提及。")
         except Exception as e:
-            logger.exception(f"Example 插件处理提及时发生异常: {e}")
+            logger.exception(f"Example plugin exception while handling mention: {e}")
         return None
 
     async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -114,12 +114,12 @@ class ExamplePlugin(PluginBase):
             if all(k in text for k in self.test_keywords[:2]) or "example" in text:
                 username = self._extract_username(message_data)
                 await self._bump_counter("chat_test_count")
-                self._log_plugin_action("处理测试消息", f"来自 @{username}")
+                self._log_plugin_action("handled test message", f"from @{username}")
                 return self._create_response(
                     "插件系统工作正常！这是来自示例插件的回复。"
                 )
         except Exception as e:
-            logger.exception(f"Example 插件处理消息时发生异常: {e}")
+            logger.exception(f"Example plugin exception while handling message: {e}")
         return None
 
     async def on_auto_post(self) -> dict[str, Any] | None:
@@ -127,11 +127,13 @@ class ExamplePlugin(PluginBase):
             return None
         try:
             await self._bump_counter("auto_post_count")
-            self._log_plugin_action("生成自动发布内容")
+            self._log_plugin_action("generated auto-post content")
             return {
                 "plugin_name": self.name,
                 "content": "这是来自示例插件的自动发布内容！",
             }
         except Exception as e:
-            logger.exception(f"Example 插件生成自动发布内容时发生异常: {e}")
+            logger.exception(
+                f"Example plugin exception while generating auto-post content: {e}"
+            )
             return None

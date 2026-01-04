@@ -29,12 +29,12 @@ class WeatherPlugin(PluginBase):
 
     async def initialize(self) -> bool:
         if not self.api_key:
-            logger.warning("Weather 插件未配置 API 密钥，插件将被禁用")
+            logger.warning("Weather plugin missing API key; disabling plugin")
             self.enabled = False
             return False
         self.session = aiohttp.ClientSession()
         self._register_resource(self.session, "close")
-        self._log_plugin_action("初始化完成")
+        self._log_plugin_action("initialized")
         return True
 
     async def cleanup(self) -> None:
@@ -49,7 +49,7 @@ class WeatherPlugin(PluginBase):
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"Weather 插件处理提及时出错: {e}")
+            logger.error(f"Weather plugin error handling mention: {e}")
             return None
 
     async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -58,7 +58,7 @@ class WeatherPlugin(PluginBase):
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"Weather 插件处理消息时出错: {e}")
+            logger.error(f"Weather plugin error handling message: {e}")
             return None
 
     async def _process_weather_message(
@@ -84,7 +84,9 @@ class WeatherPlugin(PluginBase):
                 "plugin_name": self.name,
                 "response": "请指定要查询的城市，例如：北京天气 或 天气上海",
             }
-        self._log_plugin_action("处理天气查询", f"来自 @{username}，查询 {location}")
+        self._log_plugin_action(
+            "handling weather request", f"from @{username}: {location}"
+        )
         weather_info = await self._get_weather(location)
         response = {
             "handled": True,
@@ -93,7 +95,7 @@ class WeatherPlugin(PluginBase):
         }
         if self._validate_plugin_response(response):
             return response
-        logger.error("Weather 插件响应验证失败")
+        logger.error("Weather plugin response validation failed")
         return None
 
     async def _get_weather(self, city: str) -> str | None:
@@ -117,12 +119,14 @@ class WeatherPlugin(PluginBase):
                 if response.status == 200:
                     data = await response.json()
                     return self._format_weather_info_v25(data, display_name)
-                logger.warning(f"Weather API 2.5 请求失败，状态码: {response.status}")
+                logger.warning(
+                    f"Weather API v2.5 request failed: status={response.status}"
+                )
                 return "抱歉，天气服务暂时不可用。"
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"获取天气信息失败: {e}")
+            logger.error(f"Failed to fetch weather data: {e}")
             return "抱歉，获取天气信息时出现错误。"
 
     async def _get_coordinates(self, city: str) -> tuple[float, float, str] | None:
@@ -134,7 +138,9 @@ class WeatherPlugin(PluginBase):
             params = {"q": city, "limit": 1, "appid": self.api_key}
             async with session.get(self.geocoding_url, params=params) as response:
                 if response.status != 200:
-                    logger.warning(f"Geocoding API 请求失败，状态码: {response.status}")
+                    logger.warning(
+                        f"Geocoding API request failed: status={response.status}"
+                    )
                     return None
                 data = await response.json()
                 if not data:
@@ -147,7 +153,7 @@ class WeatherPlugin(PluginBase):
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
-            logger.error(f"获取城市坐标失败: {e}")
+            logger.error(f"Failed to fetch city coordinates: {e}")
             return None
 
     @staticmethod
@@ -175,5 +181,5 @@ class WeatherPlugin(PluginBase):
                 weather_text += f"\n👁️ 能见度: {visibility:.1f} km"
             return weather_text
         except Exception as e:
-            logger.error(f"解析 Weather API 2.5 天气数据时出错: {e}")
+            logger.error(f"Error parsing Weather API v2.5 data: {e}")
             return "抱歉，天气数据解析失败。"

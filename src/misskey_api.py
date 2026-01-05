@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -151,6 +152,9 @@ class MisskeyAPI:
         self.transport: TCPClient = ClientSession
         self.drive: MisskeyDrive = MisskeyDrive(self)
         self._semaphore = asyncio.Semaphore(MISSKEY_MAX_CONCURRENCY)
+        self._antennas_cache: list[dict[str, Any]] = []
+        self._antennas_cache_expires_at = 0.0
+        self._antennas_cache_lock = asyncio.Lock()
 
     async def __aenter__(self):
         return self
@@ -337,6 +341,20 @@ class MisskeyAPI:
     async def get_current_user(self) -> dict[str, Any]:
         return await self.make_request("i", {})
 
+    async def list_antennas(self) -> list[dict[str, Any]]:
+        now = time.monotonic()
+        if now < self._antennas_cache_expires_at and self._antennas_cache:
+            return list(self._antennas_cache)
+        async with self._antennas_cache_lock:
+            now = time.monotonic()
+            if now < self._antennas_cache_expires_at and self._antennas_cache:
+                return list(self._antennas_cache)
+            result = await self.make_request("antennas/list", {})
+            antennas = result if isinstance(result, list) else []
+            self._antennas_cache = antennas
+            self._antennas_cache_expires_at = time.monotonic() + 30.0
+            return list(antennas)
+
     async def send_message(self, user_id: str, text: str) -> dict[str, Any]:
         result = await self.make_request(
             "chat/messages/create-to-user", {"toUserId": user_id, "text": text}
@@ -369,6 +387,7 @@ class MisskeyAPI:
         note_id: str,
         visibility: str | None = None,
         text: str | None = None,
+        local_only: bool | None = None,
     ) -> dict[str, Any]:
         if not note_id:
             raise ValueError("note_id cannot be empty")
@@ -377,6 +396,8 @@ class MisskeyAPI:
             data["visibility"] = visibility
         if text:
             data["text"] = text
+        if local_only is not None:
+            data["localOnly"] = bool(local_only)
         result = await self.make_request("notes/create", data)
         logger.debug(
             f"Misskey renote created: note_id={result.get('createdNote', {}).get('id', 'unknown')}"

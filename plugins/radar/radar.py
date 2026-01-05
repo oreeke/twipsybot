@@ -7,11 +7,11 @@ from loguru import logger
 
 from src.constants import ConfigKeys
 from src.plugin import PluginBase
-from src.streaming import ChannelType, TIMELINE_CHANNELS
+from src.streaming import ChannelType
 
 
 class RadarPlugin(PluginBase):
-    description = "雷达插件：在订阅时间线中匹配感兴趣的帖子并自动互动"
+    description = "雷达插件：与天线推送的帖子互动（反应、回复、转发、引用）"
 
     DEFAULT_REPLY_AI_PROMPT = (
         "根据帖子内容写一句自然回复，不要复述原文，不要加引号，不超过30字：\n{content}"
@@ -22,42 +22,14 @@ class RadarPlugin(PluginBase):
 
     def __init__(self, context):
         super().__init__(context)
-        self.allowed_timeline_channels = self._parse_timeline_channels(
-            self.config.get("timeline")
-        )
-        self.include_users = self._parse_str_set(self.config.get("include_users"))
-        self.exclude_users = self._parse_str_set(self.config.get("exclude_users"))
-        self.keyword_case_sensitive = self._parse_bool(
-            self.config.get("keyword_case_sensitive"), False
-        )
-        self.include_groups = self._parse_keyword_groups(
-            self.config.get("include_keywords")
-        )
-        self.exclude_groups = self._parse_keyword_groups(
-            self.config.get("exclude_keywords")
-        )
-        self.has_any_filter = bool(
-            self.include_users
-            or self.exclude_users
-            or self.include_groups
-            or self.exclude_groups
-        )
-        self.allow_attachments = self._parse_bool(
-            self.config.get("allow_attachments"), True
-        )
-        self.include_bot_users = self._parse_bool(
-            self.config.get("include_bot_users", self.config.get("include_bot_user")),
-            False,
-        )
-        self.include_replies = self._parse_bool(
-            self.config.get("include_replies", self.config.get("include_reply")),
-            False,
-        )
         self.reaction = self._normalize_str(self.config.get("reaction"))
         self.reply_enabled = self._parse_bool(self.config.get("reply_enabled"), False)
         self.reply_text = self._normalize_str(self.config.get("reply_text"))
         self.reply_ai = self._parse_bool(self.config.get("reply_ai"), False)
         self.reply_ai_prompt = self._normalize_str(self.config.get("reply_ai_prompt"))
+        self.reply_local_only = self._parse_bool(
+            self.config.get("reply_local_only"), False
+        )
         self.quote_enabled = self._parse_bool(self.config.get("quote_enabled"), False)
         self.quote_text = self._normalize_str(self.config.get("quote_text"))
         self.quote_ai = self._parse_bool(self.config.get("quote_ai"), False)
@@ -65,9 +37,15 @@ class RadarPlugin(PluginBase):
         self.quote_visibility = self._normalize_visibility(
             self.config.get("quote_visibility")
         )
+        self.quote_local_only = self._parse_bool(
+            self.config.get("quote_local_only"), False
+        )
         self.renote_enabled = self._parse_bool(self.config.get("renote_enabled"), False)
         self.renote_visibility = self._normalize_visibility(
             self.config.get("renote_visibility")
+        )
+        self.renote_local_only = self._parse_bool(
+            self.config.get("renote_local_only"), False
         )
         self.skip_self = True
         self.dedupe_cache = TTLCache(
@@ -76,36 +54,106 @@ class RadarPlugin(PluginBase):
         )
 
     async def initialize(self) -> bool:
-        self._log_plugin_action("initialized", self._format_timeline_limit())
+        self._log_plugin_action("initialized", await self._format_antenna_sources())
         return True
 
-    def _format_timeline_limit(self) -> str:
-        if self.allowed_timeline_channels is None:
-            return "Timeline: unrestricted"
-        if not self.allowed_timeline_channels:
-            return "Timeline: (empty)"
-        name_map = {
-            ChannelType.HOME_TIMELINE.value: "home",
-            ChannelType.LOCAL_TIMELINE.value: "local",
-            ChannelType.HYBRID_TIMELINE.value: "hybrid",
-            ChannelType.GLOBAL_TIMELINE.value: "global",
-        }
-        order = ("home", "local", "hybrid", "global")
-        resolved = {name_map.get(c) for c in self.allowed_timeline_channels}
-        tokens = [t for t in order if t in resolved]
-        return f"Timeline: {'/'.join(tokens)}" if tokens else "Timeline: (empty)"
+    async def _format_antenna_sources(self) -> str:
+        bot = self._get_bot_with_config()
+        if not bot:
+            return "Antenna: (unknown)"
+        selectors = self._get_antenna_selectors(bot)
+        if not selectors:
+            return "Antenna: (empty)"
+        id_to_name = await self._get_antenna_name_map()
+        resolved_ids = await self._resolve_antenna_ids_safe(bot, selectors)
+        return self._format_antenna_source_display(selectors, resolved_ids, id_to_name)
+
+    def _get_bot_with_config(self):
+        bot = getattr(self, "bot", None)
+        if not bot or not getattr(bot, "config", None):
+            return None
+        return bot
 
     @staticmethod
-    def _timeline_name_map() -> dict[str, str]:
-        mapped = {
-            "home": ChannelType.HOME_TIMELINE.value,
-            "local": ChannelType.LOCAL_TIMELINE.value,
-            "hybrid": ChannelType.HYBRID_TIMELINE.value,
-            "global": ChannelType.GLOBAL_TIMELINE.value,
-        }
-        for v in tuple(mapped.values()):
-            mapped[v.lower()] = v
-        return mapped
+    def _dedupe(items: list[str]) -> list[str]:
+        return list(dict.fromkeys(items))
+
+    def _get_antenna_selectors(self, bot) -> list[str]:
+        selectors = self._get_selectors_from_bot(bot)
+        if selectors:
+            return selectors
+        return self._get_selectors_from_config(bot)
+
+    def _get_selectors_from_bot(self, bot) -> list[str]:
+        if not hasattr(bot, "_load_antenna_selectors"):
+            return []
+        try:
+            raw = bot._load_antenna_selectors() or []
+        except Exception:
+            return []
+        selectors = [str(v).strip() for v in raw if v is not None and str(v).strip()]
+        return self._dedupe(selectors)
+
+    def _get_selectors_from_config(self, bot) -> list[str]:
+        raw = bot.config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS)
+        if raw is None or isinstance(raw, bool):
+            return []
+        if isinstance(raw, str):
+            tokens = [t.strip() for t in raw.replace(",", " ").split() if t.strip()]
+            return self._dedupe(tokens)
+        if isinstance(raw, list):
+            tokens = [str(v).strip() for v in raw if v is not None and str(v).strip()]
+            return self._dedupe(tokens)
+        s = str(raw).strip()
+        return [s] if s else []
+
+    async def _get_antenna_name_map(self) -> dict[str, str]:
+        misskey = getattr(self, "misskey", None)
+        if not misskey:
+            return {}
+        antennas = await misskey.list_antennas()
+        return self._build_antenna_id_name_map(antennas)
+
+    @staticmethod
+    def _build_antenna_id_name_map(antennas: Any) -> dict[str, str]:
+        if not isinstance(antennas, list):
+            return {}
+        mapping: dict[str, str] = {}
+        for antenna in antennas:
+            if not isinstance(antenna, dict):
+                continue
+            antenna_id = antenna.get("id")
+            name = antenna.get("name")
+            if not isinstance(antenna_id, str) or not antenna_id:
+                continue
+            if not isinstance(name, str) or not name.strip():
+                continue
+            mapping[antenna_id] = name.strip()
+        return mapping
+
+    async def _resolve_antenna_ids_safe(self, bot, selectors: list[str]) -> list[str]:
+        if not hasattr(bot, "_resolve_antenna_ids"):
+            return []
+        try:
+            ids = await bot._resolve_antenna_ids(selectors)
+        except Exception:
+            return []
+        ids = [v.strip() for v in ids if isinstance(v, str) and v.strip()]
+        return self._dedupe(ids)
+
+    def _format_antenna_source_display(
+        self,
+        selectors: list[str],
+        resolved_ids: list[str],
+        id_to_name: dict[str, str],
+    ) -> str:
+        if not resolved_ids:
+            return f"Antenna: {', '.join(selectors)}"
+        display = [
+            id_to_name.get(antenna_id, antenna_id) for antenna_id in resolved_ids
+        ]
+        display = self._dedupe(display)
+        return f"Antenna: {', '.join(display)}"
 
     @staticmethod
     def _normalize_str(value: Any) -> str | None:
@@ -148,81 +196,6 @@ class RadarPlugin(PluginBase):
                 return int(s)
         return default
 
-    @staticmethod
-    def _parse_str_set(value: Any) -> set[str]:
-        if value is None or isinstance(value, bool):
-            return set()
-        items: list[str] = []
-        if isinstance(value, str):
-            s = value.replace(",", " ").replace("\t", " ").strip()
-            items.extend([x.strip() for x in s.split() if x.strip()])
-            return {x.lower() for x in items if x}
-        if isinstance(value, list):
-            for v in value:
-                if isinstance(v, str) and v.strip():
-                    items.append(v.strip())
-                elif v is not None and not isinstance(v, bool):
-                    items.append(str(v).strip())
-        return {x.lower() for x in items if x}
-
-    @staticmethod
-    def _normalize_timeline_tokens(value: Any) -> list[str] | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, str):
-            s = value.replace(",", " ").replace("\t", " ").strip()
-            return [t.strip().lower() for t in s.split() if t.strip()] or None
-        if isinstance(value, list):
-            tokens = [
-                str(v).strip().lower()
-                for v in value
-                if v is not None and not isinstance(v, bool) and str(v).strip()
-            ]
-            return tokens or None
-        s = str(value).strip()
-        return [s.lower()] if s else None
-
-    def _resolve_timeline_tokens(self, tokens: list[str]) -> set[str]:
-        name_map = self._timeline_name_map()
-        resolved: set[str] = set()
-        unknown: list[str] = []
-        for raw in tokens:
-            if mapped := name_map.get(raw):
-                resolved.add(mapped)
-            elif raw:
-                unknown.append(raw)
-        for raw in unknown:
-            logger.warning(
-                f"Radar 未知 timeline 配置: {raw}，可选: home/local/hybrid/global"
-            )
-        return {c for c in resolved if c in TIMELINE_CHANNELS}
-
-    def _parse_timeline_channels(self, value: Any) -> set[str] | None:
-        tokens = self._normalize_timeline_tokens(value)
-        if tokens is None:
-            return None
-        resolved = self._resolve_timeline_tokens(tokens)
-        return resolved if resolved else set()
-
-    def _parse_keyword_groups(self, value: Any) -> list[list[str]]:
-        if value is None or isinstance(value, bool):
-            return []
-        if isinstance(value, list):
-            text = "\n".join(str(v) for v in value if v is not None)
-        else:
-            text = str(value)
-        groups: list[list[str]] = []
-        for line in text.splitlines():
-            raw = line.strip()
-            if not raw:
-                continue
-            tokens = [t.strip() for t in raw.split() if t.strip()]
-            if not self.keyword_case_sensitive:
-                tokens = [t.lower() for t in tokens]
-            if tokens:
-                groups.append(tokens)
-        return groups
-
     def _normalize_visibility(self, value: Any) -> str | None:
         s = self._normalize_str(value)
         if not s:
@@ -247,29 +220,6 @@ class RadarPlugin(PluginBase):
             variants.add(f"{base}@{host.strip()}".lower())
         return variants
 
-    def _is_bot_user(self, note: dict[str, Any]) -> bool:
-        user = note.get("user")
-        if not isinstance(user, dict):
-            return False
-        value = user.get("isBot")
-        if value is None:
-            value = user.get("is_bot")
-        if value is None:
-            value = user.get("bot")
-        return self._parse_bool(value, False)
-
-    def _has_attachments(self, note: dict[str, Any]) -> bool:
-        files = note.get("files")
-        file_ids = note.get("fileIds")
-        has_files = isinstance(files, list) and bool(files)
-        has_file_ids = isinstance(file_ids, list) and bool(file_ids)
-        if has_files or has_file_ids:
-            return True
-        renote = note.get("renote")
-        if isinstance(renote, dict):
-            return self._has_attachments(renote)
-        return False
-
     def _effective_text(self, note: dict[str, Any]) -> str:
         parts: list[str] = []
         for k in ("cw", "text"):
@@ -281,26 +231,6 @@ class RadarPlugin(PluginBase):
             parts.append(self._effective_text(renote))
         return "\n".join(p for p in parts if p).strip()
 
-    def _match_groups(self, text: str, groups: list[list[str]]) -> bool:
-        if not groups:
-            return True
-        t = text if self.keyword_case_sensitive else text.lower()
-        return any(all(token in t for token in group) for group in groups)
-
-    @staticmethod
-    def _is_reply_note(note: dict[str, Any]) -> bool:
-        if isinstance(note.get("replyId"), str) and note["replyId"].strip():
-            return True
-        if isinstance(note.get("reply_id"), str) and note["reply_id"].strip():
-            return True
-        return isinstance(note.get("reply"), dict)
-
-    def _has_reply_in_chain(self, note: dict[str, Any]) -> bool:
-        if self._is_reply_note(note):
-            return True
-        renote = note.get("renote")
-        return isinstance(renote, dict) and self._has_reply_in_chain(renote)
-
     def _should_skip_self(self, note: dict[str, Any], variants: set[str]) -> bool:
         if not self.skip_self or not hasattr(self, "bot"):
             return False
@@ -309,37 +239,6 @@ class RadarPlugin(PluginBase):
             return True
         bot_name = getattr(self.bot, "bot_username", None)
         return isinstance(bot_name, str) and bot_name and bot_name.lower() in variants
-
-    def _should_skip_user(self, variants: set[str]) -> bool:
-        if self.include_users and variants.isdisjoint(self.include_users):
-            return True
-        return bool(self.exclude_users) and not variants.isdisjoint(self.exclude_users)
-
-    def _should_skip_keywords(self, text: str) -> bool:
-        if not self._match_groups(text, self.include_groups):
-            return True
-        return bool(self.exclude_groups) and self._match_groups(
-            text, self.exclude_groups
-        )
-
-    def _should_process(self, note: dict[str, Any]) -> bool:
-        if not self.has_any_filter:
-            return False
-        if not self.include_replies and self._has_reply_in_chain(note):
-            return False
-        variants = self._extract_user_variants(note)
-        if self._should_skip_self(note, variants):
-            return False
-        if not self.include_bot_users and self._is_bot_user(note):
-            return False
-        if self._should_skip_user(variants):
-            return False
-        if not self.allow_attachments and self._has_attachments(note):
-            return False
-        text = self._effective_text(note)
-        if self._should_skip_keywords(text):
-            return False
-        return True
 
     @staticmethod
     def _format_reply_text(template: str, note: dict[str, Any]) -> str:
@@ -392,21 +291,16 @@ class RadarPlugin(PluginBase):
         if not hasattr(self, "misskey"):
             return None
         channel = note_data.get("streamingChannel")
-        if not isinstance(channel, str) or not channel:
-            channel = "unknown"
-        if (
-            self.allowed_timeline_channels is not None
-            and channel not in self.allowed_timeline_channels
-        ):
+        if not isinstance(channel, str) or channel != ChannelType.ANTENNA.value:
             return None
         note_id = note_data.get("id")
         should_skip = (
-            not isinstance(note_id, str)
-            or not note_id
-            or note_id in self.dedupe_cache
-            or not self._should_process(note_data)
+            not isinstance(note_id, str) or not note_id or note_id in self.dedupe_cache
         )
         if should_skip:
+            return None
+        variants = self._extract_user_variants(note_data)
+        if self._should_skip_self(note_data, variants):
             return None
         self.dedupe_cache[note_id] = True
         username = (
@@ -458,7 +352,9 @@ class RadarPlugin(PluginBase):
         if not (text := await self._build_reply_text(note_data)):
             return
         try:
-            await self.misskey.create_note(text=text, reply_id=note_id)
+            await self.misskey.create_note(
+                text=text, reply_id=note_id, local_only=self.reply_local_only
+            )
             self._log_plugin_action("replied", f"{note_id} [{channel}]")
         except Exception as e:
             logger.error(f"Radar reply failed: {repr(e)}")
@@ -485,7 +381,10 @@ class RadarPlugin(PluginBase):
             return False
         try:
             await self.misskey.create_renote(
-                note_id, visibility=self.quote_visibility, text=text
+                note_id,
+                visibility=self.quote_visibility,
+                text=text,
+                local_only=self.quote_local_only,
             )
             self._log_plugin_action(
                 "quoted", f"{note_id} {self.quote_visibility or ''} [{channel}]"
@@ -499,7 +398,11 @@ class RadarPlugin(PluginBase):
         if not self.renote_enabled:
             return
         try:
-            await self.misskey.create_renote(note_id, visibility=self.renote_visibility)
+            await self.misskey.create_renote(
+                note_id,
+                visibility=self.renote_visibility,
+                local_only=self.renote_local_only,
+            )
             self._log_plugin_action(
                 "renoted", f"{note_id} {self.renote_visibility or ''} [{channel}]"
             )

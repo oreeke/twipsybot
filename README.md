@@ -19,9 +19,9 @@
 ### 主要功能
 
 - 根据已设置的周期和可见性自动发帖
-- 实时响应用户提及（@）和聊天
+- 实时响应用户提及（@）、私信、群聊
 - 自定义系统提示（性格）和发帖提示
-- 订阅时间线，并与感兴趣的帖子互动（需启用 [Radar](./plugins/radar) 插件）
+- 订阅天线，对感兴趣的帖子使用反应、回复、转发、引用（需启用 [Radar](./plugins/radar) 插件）
 - 接入多模态模型时，支持图片识别（需启用 [Vision](./plugins/vision) 插件）
 - 配合 OpenAI SDK 兼容性模型生成内容
   - [OpenAI](https://platform.openai.com/docs/overview)
@@ -81,6 +81,7 @@ bot:
     local: false                                    # localTimeline
     hybrid: false                                   # hybridTimeline
     global: false                                   # globalTimeline
+    antenna_ids: []                                 # antenna ID 或名称（逗号/空格分隔）
 
   auto_post:
     enabled: true                                   # 是否启用自动发帖
@@ -169,6 +170,7 @@ BOT_TIMELINE_HOME=false                                    # homeTimeline
 BOT_TIMELINE_LOCAL=false                                   # localTimeline
 BOT_TIMELINE_HYBRID=false                                  # hybridTimeline
 BOT_TIMELINE_GLOBAL=false                                  # globalTimeline
+BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）
 LOG_LEVEL=INFO                                             # 日志级别 (DEBUG/INFO/WARNING/ERROR)
 LOG_DUMP_EVENTS=false                                      # 是否输出事件原始数据（DEBUG）
 ```

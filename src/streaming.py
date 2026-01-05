@@ -23,6 +23,8 @@ from .transport import ClientSession
 
 __all__ = ("ChannelType", "StreamingClient")
 
+ChannelSpec = str | tuple[str, dict[str, Any]]
+
 
 class ChannelType(str, Enum):
     MAIN = "main"
@@ -30,6 +32,7 @@ class ChannelType(str, Enum):
     LOCAL_TIMELINE = "localTimeline"
     HYBRID_TIMELINE = "hybridTimeline"
     GLOBAL_TIMELINE = "globalTimeline"
+    ANTENNA = "antenna"
 
 
 TIMELINE_CHANNELS = frozenset(
@@ -40,6 +43,8 @@ TIMELINE_CHANNELS = frozenset(
         ChannelType.GLOBAL_TIMELINE.value,
     }
 )
+
+NOTE_CHANNELS = frozenset({*TIMELINE_CHANNELS, ChannelType.ANTENNA.value})
 
 _EVENT_DATA_LOG_TEMPLATE = "Event data: {}"
 
@@ -112,14 +117,25 @@ class StreamingClient:
             and isinstance(data.get("user"), dict)
         )
 
+    @staticmethod
+    def _channel_name(spec: ChannelSpec) -> str:
+        return spec[0] if isinstance(spec, tuple) else str(spec)
+
+    @staticmethod
+    def _normalize_channel_specs(
+        channels: list[ChannelSpec] | None,
+    ) -> list[ChannelSpec]:
+        return [c for c in (channels or []) if c and StreamingClient._channel_name(c)]
+
     async def connect(
-        self, channels: list[str] | None = None, *, reconnect: bool = True
+        self, channels: list[ChannelSpec] | None = None, *, reconnect: bool = True
     ) -> None:
         self.should_reconnect = reconnect
+        specs = self._normalize_channel_specs(channels)
         retry_count = 0
         while self.should_reconnect:
             try:
-                await self.connect_once(channels)
+                await self.connect_once(specs)
                 retry_count = 0
                 await self._listen_messages()
                 return
@@ -203,20 +219,22 @@ class StreamingClient:
             del self.channels[channel_id]
         logger.debug(f"Disconnected channel: {channel_name}")
 
-    async def connect_once(self, channels: list[str] | None = None) -> None:
+    async def connect_once(self, channels: list[ChannelSpec] | None = None) -> None:
         if self.running:
             return
         self.running = True
         self._ensure_workers_started()
         await self._connect_websocket()
-        requested = [c for c in (channels or []) if c]
-        if ChannelType.MAIN.value not in requested:
+        requested = self._normalize_channel_specs(channels)
+        if not any(self._channel_name(s) == ChannelType.MAIN.value for s in requested):
             requested.insert(0, ChannelType.MAIN.value)
-        for channel in requested:
+        for spec in requested:
+            channel = self._channel_name(spec)
+            params = spec[1] if isinstance(spec, tuple) else None
             try:
-                await self.connect_channel(ChannelType(channel))
+                await self.connect_channel(ChannelType(channel), params)
             except ValueError:
-                await self.connect_channel(channel)
+                await self.connect_channel(channel, params)
         if self._first_connection:
             logger.info("Streaming client started")
             self._first_connection = False
@@ -336,7 +354,7 @@ class StreamingClient:
         event_type = event_data.get("type")
         if (
             not event_type
-            and channel_name in TIMELINE_CHANNELS
+            and channel_name in NOTE_CHANNELS
             and self._looks_like_note(event_data)
         ):
             wrapped = {"type": "note", "body": event_data}
@@ -434,10 +452,8 @@ class StreamingClient:
         if channel_name == ChannelType.MAIN.value:
             await self._handle_main_channel_event(event_type, event_data)
             return
-        if channel_name in TIMELINE_CHANNELS:
-            await self._handle_timeline_channel_event(
-                channel_name, event_type, event_data
-            )
+        if channel_name in NOTE_CHANNELS:
+            await self._handle_note_channel_event(channel_name, event_type, event_data)
 
     async def _handle_main_channel_event(
         self, event_type: str, event_data: dict[str, Any]
@@ -459,7 +475,7 @@ class StreamingClient:
                     lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
                 )
 
-    async def _handle_timeline_channel_event(
+    async def _handle_note_channel_event(
         self, channel_name: str, event_type: str, event_data: dict[str, Any]
     ) -> None:
         if event_type != "note":
@@ -478,6 +494,8 @@ class StreamingClient:
         if isinstance(payload, dict) and "streamingChannel" not in payload:
             payload["streamingChannel"] = channel_name
         logger.debug(f"Received {channel_name} note")
+        if channel_name == ChannelType.ANTENNA.value:
+            logger.debug(f"Antenna note received: {payload.get('id', 'unknown')}")
         if self.log_dump_events:
             logger.opt(lazy=True).debug(
                 _EVENT_DATA_LOG_TEMPLATE,

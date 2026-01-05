@@ -2,10 +2,12 @@
 
 ### 功能描述
 
-在订阅时间线中匹配感兴趣的帖子并自动互动
+与天线推送的帖子互动（反应、回复、转发、引用）
 
 ### 使用方法
 
-复制 `config.yaml.example` 为 `config.yaml` 并修改配置，将 `enabled` 设为 `true`<br>
-确保主配置已启用时间线订阅 `bot.timeline.enabled: true` 且至少订阅一个时间线<br>
-`include_users` `exclude_users` `include_keywords` `exclude_keywords` 至少一项不为空
+复制 `config.yaml.example` 为 `config.yaml` 并修改配置<br>
+在实例登录机器人账号 -> 添加天线 -> 设置名称（不要空格）和过滤条件并保存<br>
+确保主配置已启用时间线 `bot.timeline.enabled: true`<br>
+在 `bot.timeline.antenna_ids` 中填入天线名<br>
+机器人将接收符合条件的帖子并与之互动

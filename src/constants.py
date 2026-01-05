@@ -22,6 +22,7 @@ class ConfigKeys:
     BOT_TIMELINE_LOCAL = "bot.timeline.local"
     BOT_TIMELINE_HYBRID = "bot.timeline.hybrid"
     BOT_TIMELINE_GLOBAL = "bot.timeline.global"
+    BOT_TIMELINE_ANTENNA_IDS = "bot.timeline.antenna_ids"
     DB_PATH = "db.path"
     LOG_PATH = "log.path"
     LOG_LEVEL = "log.level"

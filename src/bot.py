@@ -24,7 +24,7 @@ from .openai_api import OpenAIAPI
 from .persistence import PersistenceManager
 from .plugin import PluginManager
 from .runtime import BotRuntime
-from .streaming import ChannelType, StreamingClient
+from .streaming import ChannelSpec, ChannelType, StreamingClient
 from .transport import ClientSession
 from .utils import extract_user_id, extract_username, get_memory_usage
 
@@ -617,7 +617,79 @@ class MisskeyBot:
             enabled.add(ChannelType.GLOBAL_TIMELINE.value)
         return enabled
 
-    def get_streaming_channels(self) -> list[str]:
+    def _load_antenna_selectors(self) -> list[str]:
+        value = self.config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS)
+        if value is None or isinstance(value, bool):
+            return []
+        if isinstance(value, str):
+            tokens = [t.strip() for t in value.replace(",", " ").split() if t.strip()]
+            return list(dict.fromkeys(tokens))
+        if isinstance(value, list):
+            tokens = [str(v).strip() for v in value if v is not None and str(v).strip()]
+            return list(dict.fromkeys(tokens))
+        s = str(value).strip()
+        return [s] if s else []
+
+    @staticmethod
+    def _build_antenna_index(
+        antennas: list[dict[str, Any]],
+    ) -> tuple[set[str], dict[str, list[str]]]:
+        antenna_ids: set[str] = set()
+        name_to_ids: dict[str, list[str]] = {}
+        for antenna in antennas:
+            if not isinstance(antenna, dict):
+                continue
+            antenna_id = antenna.get("id")
+            if isinstance(antenna_id, str) and antenna_id:
+                antenna_ids.add(antenna_id)
+            name = antenna.get("name")
+            if not isinstance(name, str):
+                continue
+            normalized_name = name.strip()
+            if not normalized_name or not isinstance(antenna_id, str) or not antenna_id:
+                continue
+            name_to_ids.setdefault(normalized_name, []).append(antenna_id)
+        return antenna_ids, name_to_ids
+
+    @staticmethod
+    def _dedupe_non_empty(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for value in values:
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
+
+    @staticmethod
+    def _resolve_antenna_selector(
+        selector: str, antenna_ids: set[str], name_to_ids: dict[str, list[str]]
+    ) -> str:
+        if selector in antenna_ids:
+            return selector
+        candidates = name_to_ids.get(selector)
+        if not candidates:
+            logger.warning(f"Antenna not found: {selector}")
+            return ""
+        if len(candidates) != 1:
+            logger.warning(f"Antenna name is ambiguous: {selector}")
+            return ""
+        return candidates[0]
+
+    async def _resolve_antenna_ids(self, selectors: list[str]) -> list[str]:
+        normalized = [s.strip() for s in selectors if isinstance(s, str) and s.strip()]
+        if not normalized:
+            return []
+        antennas = await self.misskey.list_antennas()
+        antenna_ids, name_to_ids = self._build_antenna_index(antennas)
+        resolved = [
+            self._resolve_antenna_selector(s, antenna_ids, name_to_ids)
+            for s in normalized
+        ]
+        return self._dedupe_non_empty(resolved)
+
+    async def get_streaming_channels(self) -> list[ChannelSpec]:
         active = {ChannelType.MAIN.value, *self.timeline_channels}
         ordered = [
             ChannelType.MAIN.value,
@@ -626,14 +698,18 @@ class MisskeyBot:
             ChannelType.HYBRID_TIMELINE.value,
             ChannelType.GLOBAL_TIMELINE.value,
         ]
-        return [c for c in ordered if c in active]
+        result: list[ChannelSpec] = [c for c in ordered if c in active]
+        selectors = self._load_antenna_selectors()
+        for antenna_id in await self._resolve_antenna_ids(selectors):
+            result.append((ChannelType.ANTENNA.value, {"antennaId": antenna_id}))
+        return result
 
     async def restart_streaming(self) -> None:
         if (task := self.runtime.tasks.get("streaming")) and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         await self.streaming.disconnect()
-        channels = self.get_streaming_channels()
+        channels = await self.get_streaming_channels()
         await self.streaming.connect_once(channels)
         self.runtime.add_task("streaming", self.streaming.connect(channels))
 
@@ -736,7 +812,7 @@ class MisskeyBot:
             self.streaming.on_reaction(self.handlers.on_reaction)
             self.streaming.on_follow(self.handlers.on_follow)
             self.streaming.on_note(self.handlers.on_timeline_note)
-            channels = self.get_streaming_channels()
+            channels = await self.get_streaming_channels()
             await self.streaming.connect_once(channels)
             self.runtime.add_task("streaming", self.streaming.connect(channels))
         except Exception as e:

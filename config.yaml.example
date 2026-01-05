@@ -24,6 +24,7 @@ bot:
     local: false                                    # localTimeline
     hybrid: false                                   # hybridTimeline
     global: false                                   # globalTimeline
+    antenna_ids: []                                 # antenna ID 或名称（逗号/空格分隔）
 
   auto_post:
     enabled: true                                   # 是否启用自动发帖

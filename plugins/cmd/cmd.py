@@ -10,6 +10,7 @@ from src.streaming import ChannelType
 from src.utils import get_memory_usage, get_system_info, health_check
 
 _MSG_SPECIFY_PLUGIN_NAME = "请指定插件名称"
+_MSG_BOT_NOT_INJECTED_ANTENNA = "Bot 未注入，无法管理天线订阅"
 
 
 class CmdPlugin(PluginBase):
@@ -27,7 +28,10 @@ class CmdPlugin(PluginBase):
                 "help": {"description": "帮助信息", "aliases": []},
                 "status": {"description": "机器人状态", "aliases": []},
                 "sysinfo": {"description": "系统信息", "aliases": []},
-                "memory": {"description": "内存使用情况", "aliases": []},
+                "model": {
+                    "description": "查看/切换模型 (用法: model [模型名]|reset)",
+                    "aliases": [],
+                },
                 "plugins": {"description": "插件列表", "aliases": []},
                 "enable": {
                     "description": "启用插件 (用法: enable <插件名>)",
@@ -41,12 +45,17 @@ class CmdPlugin(PluginBase):
                     "description": "重启插件 (用法: reload <插件名>)",
                     "aliases": [],
                 },
-                "model": {
-                    "description": "查看/切换模型 (用法: model [模型名]|reset)",
-                    "aliases": [],
-                },
                 "timeline": {
                     "description": "查看/切换时间线订阅 (用法: timeline [status|add|del|set|clear|reset] ...)",
+                    "aliases": [],
+                },
+                "antenna": {
+                    "description": "查看/切换天线订阅 (用法: antenna [status|list|set|clear] ...)",
+                    "aliases": [],
+                },
+                "cache": {"description": "内存使用情况", "aliases": []},
+                "cacheclear": {
+                    "description": "清理内存缓存 (用法: cacheclear [chat|locks|events|all])",
                     "aliases": [],
                 },
                 "dbstats": {"description": "数据库统计", "aliases": []},
@@ -93,13 +102,15 @@ class CmdPlugin(PluginBase):
             "help": self._get_help_text,
             "status": self._get_status_text,
             "sysinfo": self._get_system_info,
-            "memory": self._get_memory_usage,
+            "model": lambda: self._handle_model(args),
             "plugins": self._get_plugins_info,
             "enable": lambda: self._enable_plugin(args),
             "disable": lambda: self._disable_plugin(args),
             "reload": lambda: self._reload_plugin(args),
-            "model": lambda: self._handle_model(args),
             "timeline": lambda: self._handle_timeline(args),
+            "antenna": lambda: self._handle_antenna(args),
+            "cache": self._get_memory_usage,
+            "cacheclear": lambda: self._clear_memory_caches(args),
             "dbstats": self._get_db_stats,
             "dbclear": lambda: self._clear_plugin_data(args),
         }
@@ -115,12 +126,17 @@ class CmdPlugin(PluginBase):
         return f"未知命令: {command}"
 
     def _get_help_text(self) -> str:
-        help_lines = ["可用命令:"]
+        entries = []
         for cmd_name, cmd_info in self.commands.items():
             desc = cmd_info.get("description", "无描述")
             aliases = cmd_info.get("aliases", [])
             alias_text = f" ({', '.join(aliases)})" if aliases else ""
-            help_lines.append(f"  ^{cmd_name}{alias_text} - {desc}")
+            entries.append((f"^{cmd_name}{alias_text}", desc))
+        max_width = max((len(left) for left, _ in entries), default=0)
+        help_lines = ["可用命令:", "```"]
+        for left, desc in entries:
+            help_lines.append(f"  {left.ljust(max_width)} - {desc}")
+        help_lines.append("```")
         return "\n".join(help_lines)
 
     def _get_status_text(self) -> str:
@@ -138,16 +154,57 @@ class CmdPlugin(PluginBase):
         process_usage = get_memory_usage()
         return f"内存使用: {process_usage['rss_mb']} MB"
 
+    @staticmethod
+    def _clear_cache(cache) -> int | None:
+        if cache is None:
+            return None
+        before = len(cache)
+        cache.clear()
+        return before
+
+    def _clear_memory_caches(self, args: str) -> str:
+        target = (args or "").strip().lower()
+        bot = getattr(self, "bot", None)
+        if not bot:
+            return "Bot 未注入，无法清理缓存"
+
+        cleared = []
+        getters = {
+            "chat": lambda b: getattr(b, "_chat_histories", None),
+            "locks": lambda b: getattr(b, "_user_locks", None),
+            "events": lambda b: getattr(
+                getattr(b, "streaming", None), "processed_events", None
+            ),
+        }
+        selected = (
+            ("chat", "locks", "events") if not target or target == "all" else (target,)
+        )
+        for key in selected:
+            getter = getters.get(key)
+            if not getter:
+                continue
+            if (before := self._clear_cache(getter(bot))) is not None:
+                cleared.append(f"{key}:{before}")
+
+        if not cleared:
+            return "未清理任何缓存"
+        return "已清理缓存: " + ", ".join(cleared)
+
     def _get_plugins_info(self) -> str:
         plugins = self.plugin_manager.get_plugin_info()
         if not plugins:
             return "当前没有加载任何插件"
-        info_lines = ["插件信息:"]
+        entries = []
         for plugin in plugins:
+            name = str(plugin.get("name") or "")
+            desc = plugin.get("description", "无描述")
             status = "已启用" if plugin.get("enabled", False) else "已禁用"
-            info_lines.append(
-                f"  {plugin['name']} - {plugin.get('description', '无描述')} [{status}]"
-            )
+            entries.append((name, desc, status))
+        max_width = max((len(name) for name, _, _ in entries), default=0)
+        info_lines = ["插件信息:", "```"]
+        for name, desc, status in entries:
+            info_lines.append(f"  {name.ljust(max_width)} - [{status}] {desc}")
+        info_lines.append("```")
         return "\n".join(info_lines)
 
     async def _toggle_plugin(self, plugin_name: str, enable: bool) -> str:
@@ -338,6 +395,167 @@ class CmdPlugin(PluginBase):
             bot.timeline_channels = resolved
         await bot.restart_streaming()
         return "已更新时间线订阅\n" + self._format_timeline_status()
+
+    @staticmethod
+    def _normalize_antenna_selectors(value: Any) -> list[str]:
+        if value is None or isinstance(value, bool):
+            return []
+        if isinstance(value, str):
+            tokens = [t.strip() for t in value.replace(",", " ").split() if t.strip()]
+            return list(dict.fromkeys(tokens))
+        if isinstance(value, list):
+            tokens = [str(v).strip() for v in value if v is not None and str(v).strip()]
+            return list(dict.fromkeys(tokens))
+        s = str(value).strip()
+        return [s] if s else []
+
+    @staticmethod
+    def _build_antenna_index(
+        antennas: Any,
+    ) -> tuple[set[str], dict[str, list[str]], dict[str, str]]:
+        if not isinstance(antennas, list):
+            return set(), {}, {}
+        antenna_ids: set[str] = set()
+        name_to_ids: dict[str, list[str]] = {}
+        id_to_name: dict[str, str] = {}
+        for antenna in antennas:
+            if not isinstance(antenna, dict):
+                continue
+            antenna_id = antenna.get("id")
+            if not isinstance(antenna_id, str) or not antenna_id:
+                continue
+            antenna_ids.add(antenna_id)
+            name = antenna.get("name")
+            if isinstance(name, str) and (normalized := name.strip()):
+                name_to_ids.setdefault(normalized, []).append(antenna_id)
+                id_to_name[antenna_id] = normalized
+        return antenna_ids, name_to_ids, id_to_name
+
+    @staticmethod
+    def _resolve_antenna_selector(
+        selector: str, antenna_ids: set[str], name_to_ids: dict[str, list[str]]
+    ) -> tuple[str, str | None, str | None]:
+        if selector in antenna_ids:
+            return selector, None, None
+        if selector in name_to_ids:
+            candidates = name_to_ids[selector]
+        else:
+            lowered = selector.lower()
+            merged: list[str] = []
+            for name, ids in name_to_ids.items():
+                if name.lower() == lowered and ids:
+                    merged.extend(ids)
+            candidates = list(dict.fromkeys(merged))
+        if not candidates:
+            return "", None, "not_found"
+        if len(candidates) != 1:
+            return "", None, "ambiguous"
+        return candidates[0], selector, None
+
+    async def _format_antenna_status(self) -> str:
+        bot = getattr(self, "bot", None)
+        if not bot:
+            return _MSG_BOT_NOT_INJECTED_ANTENNA
+        selectors = self._normalize_antenna_selectors(
+            bot.config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS)
+        )
+        desired_text = ", ".join(selectors) if selectors else "(空)"
+        antenna_id = self._get_connected_antenna_id(bot)
+        current_text = await self._format_connected_antenna(antenna_id)
+        return f"期望订阅: {desired_text}\n当前连接: {current_text}"
+
+    @staticmethod
+    def _get_connected_antenna_id(bot) -> str | None:
+        connected = getattr(bot, "streaming", None)
+        channels = getattr(connected, "channels", None) if connected else None
+        if not channels:
+            return None
+        for info in channels.values():
+            if info.get("name") == ChannelType.ANTENNA.value:
+                antenna_id = (info.get("params") or {}).get("antennaId")
+                return (
+                    antenna_id if isinstance(antenna_id, str) and antenna_id else None
+                )
+        return None
+
+    async def _format_connected_antenna(self, antenna_id: str | None) -> str:
+        if not antenna_id:
+            return "(空)"
+        misskey = getattr(self, "misskey", None)
+        if not misskey:
+            return antenna_id
+        antennas = await misskey.list_antennas()
+        _, _, id_to_name = self._build_antenna_index(antennas)
+        if name := id_to_name.get(antenna_id):
+            return f"{name} ({antenna_id})"
+        return antenna_id
+
+    async def _list_antennas(self) -> str:
+        if not getattr(self, "misskey", None):
+            return "Misskey 客户端未注入，无法获取天线列表"
+        antennas = await self.misskey.list_antennas()
+        _, _, id_to_name = self._build_antenna_index(antennas)
+        if not id_to_name:
+            return "没有可用天线"
+        lines = ["天线列表:"]
+        for antenna_id, name in sorted(id_to_name.items(), key=lambda x: x[1]):
+            lines.append(f"  {name} - {antenna_id}")
+        return "\n".join(lines)
+
+    async def _set_antenna_selector(self, selector: str) -> str:
+        bot = getattr(self, "bot", None)
+        if not bot:
+            return _MSG_BOT_NOT_INJECTED_ANTENNA
+        selector = selector.strip()
+        if not selector:
+            return "请指定天线名称或 ID"
+        if getattr(self, "misskey", None):
+            antennas = await self.misskey.list_antennas()
+            antenna_ids, name_to_ids, id_to_name = self._build_antenna_index(antennas)
+            resolved_id, _, err = self._resolve_antenna_selector(
+                selector, antenna_ids, name_to_ids
+            )
+            if err == "not_found":
+                return f"未知天线: {selector}\n使用 ^antenna list 查看可选天线"
+            if err == "ambiguous":
+                return f"天线名称不唯一: {selector}\n请使用天线 ID"
+            if resolved_id:
+                selector = resolved_id
+                display = id_to_name.get(resolved_id, "")
+            else:
+                display = ""
+        else:
+            display = ""
+        self._set_global_config_value(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS, [selector])
+        await bot.restart_streaming()
+        if display:
+            return (
+                f"已切换天线: {display} ({selector})\n"
+                + await self._format_antenna_status()
+            )
+        return f"已切换天线: {selector}\n" + await self._format_antenna_status()
+
+    async def _clear_antenna(self) -> str:
+        bot = getattr(self, "bot", None)
+        if not bot:
+            return _MSG_BOT_NOT_INJECTED_ANTENNA
+        self._set_global_config_value(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS, [])
+        await bot.restart_streaming()
+        return "已清空天线订阅\n" + await self._format_antenna_status()
+
+    async def _handle_antenna(self, args: str) -> str:
+        tokens = args.strip().split()
+        if not tokens or tokens[0].lower() in {"status", "show"}:
+            return await self._format_antenna_status()
+        action = tokens[0].lower()
+        if action in {"list", "ls"}:
+            return await self._list_antennas()
+        if action in {"clear", "off", "disable"}:
+            return await self._clear_antenna()
+        if action in {"set", "switch", "to"}:
+            rest = " ".join(tokens[1:]).strip()
+            return await self._set_antenna_selector(rest)
+        return await self._set_antenna_selector(args)
 
     def _create_response(self, response_text: str) -> dict[str, Any] | None:
         try:

@@ -370,18 +370,14 @@ class StreamingClient:
         normalizers = {
             "mention": lambda: self._wrap_note_event("mention", payload),
             "reply": lambda: self._wrap_note_event("reply", payload),
-            "renote": lambda: self._wrap_note_event("renote", payload),
             "chat": lambda: self._wrap_chat_message(payload),
-            "messagingMessage": lambda: self._wrap_chat_message(payload),
             "newChatMessage": lambda: self._wrap_chat_message(payload),
             "newRoomChatMessage": lambda: self._wrap_chat_message(payload),
-            "newMessagingMessage": lambda: self._wrap_chat_message(payload),
             "follow": lambda: self._wrap_follow_user(payload),
             "followed": lambda: self._wrap_follow_user(payload),
             "unfollow": lambda: self._wrap_follow_user(payload),
             "receiveFollowRequest": lambda: self._wrap_follow_user(payload),
             "notification": lambda: self._normalize_notification_event(payload),
-            "unreadNotification": lambda: self._normalize_notification_event(payload),
         }
         normalizer = normalizers.get(event_type)
         return normalizer() if normalizer else (event_type, event_data)
@@ -430,7 +426,7 @@ class StreamingClient:
                 payload
             ),
             "chat": lambda: self._normalize_notification_chat(payload),
-            "messagingMessage": lambda: self._normalize_notification_chat(payload),
+            "reaction": lambda: ("reaction", payload),
         }
         normalizer = normalizers.get(inner_type)
         normalized = normalizer() if normalizer else None

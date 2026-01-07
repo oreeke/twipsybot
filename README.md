@@ -22,6 +22,7 @@
 - 💬 实时响应用户提及（`@`）、私信、群聊
 - 👁️ 接入多模态模型时，支持视觉理解（需启用 [Vision](./plugins/vision) 插件）
 - 📡 订阅天线，对感兴趣的帖子自动反应、回复、转发、引用（需启用 [Radar](./plugins/radar) 插件）
+- 🥏 自定义关键词和期望回复，绕过 AI（需启用 [KeyAct](./plugins/keyact) 插件）
 - 🧠 自定义系统提示（性格）和发帖提示
 
 ## 开始
@@ -188,6 +189,7 @@ docker compose up -d
 | 插件 | 功能描述 |
 | :---: | --- |
 | [Cmd](./plugins/cmd) | 在聊天中使用 `^` 开头的命令管理机器人 |
+| [KeyAct](./plugins/keyact) | 匹配自定义关键词直接回复，绕过 AI |
 | [Radar](./plugins/radar) | 与天线推送的帖子互动（反应、回复、转发、引用） |
 | [Topics](./plugins/topics) | 为自动发帖插入有序循环的主题关键词 |
 | [Vision](./plugins/vision) | 识别提及（`@`）或聊天中的图片并回复 |

@@ -1,0 +1,19 @@
+# KeyAct 插件配置文件
+
+enabled: false                     # 是否启用插件
+priority: 990                      # 插件优先级（数字越大越先执行）
+
+mention_enabled: true              # 是否处理提及（@）
+chat_enabled: true                 # 是否处理聊天（私信/群聊）
+
+case_sensitive: false              # 是否区分大小写
+
+rules:
+  - keywords: ["ping"]             # 关键词列表
+    response: "pong"               # 回复内容
+
+  - keywords: ["帮助", "help"]
+    response: "[帮助文档](https://docs.example.com)"
+
+  - keywords: ["邀请码", "invitation code"]
+    response: "1234567890"

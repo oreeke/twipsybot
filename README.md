@@ -81,6 +81,14 @@ bot:
     mention_enabled: true                           # 是否响应提及（@）
     chat_enabled: true                              # 是否响应聊天
     chat_memory: 10                                 # 聊天上下文记忆长度（条）
+    rate_limit: -1                                  # 回复速率限制：同一用户回复最小间隔；-1 不限制；30s/5m/1h
+    rate_limit_reply: "我需要休息一下..."            # 速率限制回复文案
+    max_turns: -1                                   # 回复次数限制：同一用户最多对话轮数（机器人回复次数）；-1 不限制
+    max_turns_reply: "我要回家了..."                 # 次数限制回复文案
+    max_turns_release: -1                           # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h
+    exclude_users:                                  # 排除用户列表：username@host/userId，这些用户不受以上限制
+      - "admin@example.com"
+      - "user-id-123"
 
 log:
   level: "INFO"                                     # 日志级别 (DEBUG/INFO/WARNING/ERROR)
@@ -150,6 +158,12 @@ BOT_AUTO_POST_PROMPT=生成一篇有趣、有见解的社交媒体帖子。     
 BOT_RESPONSE_MENTION_ENABLED=true                          # 是否响应提及（@）
 BOT_RESPONSE_CHAT_ENABLED=true                             # 是否响应聊天
 BOT_RESPONSE_CHAT_MEMORY=10                                # 聊天上下文记忆长度（条）
+BOT_RESPONSE_RATE_LIMIT=-1                                 # 回复速率限制：同一用户回复最小间隔；-1 不限制；30s/5m/1h
+BOT_RESPONSE_RATE_LIMIT_REPLY=我需要休息一下...             # 速率限制回复文案
+BOT_RESPONSE_MAX_TURNS=-1                                  # 回复次数限制：同一用户最多对话轮数（机器人回复次数）；-1 不限制
+BOT_RESPONSE_MAX_TURNS_REPLY=我要回家了...                  # 次数限制回复文案
+BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h
+BOT_RESPONSE_EXCLUDE_USERS=                                # 排除用户列表：username@host/userId，这些用户不受以上限制
 BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线
 BOT_TIMELINE_HOME=false                                    # homeTimeline
 BOT_TIMELINE_LOCAL=false                                   # localTimeline

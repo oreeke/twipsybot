@@ -66,6 +66,21 @@ class Config:
             ),
             "BOT_RESPONSE_CHAT_ENABLED": (ConfigKeys.BOT_RESPONSE_CHAT_ENABLED, bool),
             "BOT_RESPONSE_CHAT_MEMORY": (ConfigKeys.BOT_RESPONSE_CHAT_MEMORY, int),
+            "BOT_RESPONSE_RATE_LIMIT": (ConfigKeys.BOT_RESPONSE_RATE_LIMIT, str),
+            "BOT_RESPONSE_RATE_LIMIT_REPLY": (
+                ConfigKeys.BOT_RESPONSE_RATE_LIMIT_REPLY,
+                str,
+            ),
+            "BOT_RESPONSE_MAX_TURNS": (ConfigKeys.BOT_RESPONSE_MAX_TURNS, int),
+            "BOT_RESPONSE_MAX_TURNS_REPLY": (
+                ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY,
+                str,
+            ),
+            "BOT_RESPONSE_MAX_TURNS_RELEASE": (
+                ConfigKeys.BOT_RESPONSE_MAX_TURNS_RELEASE,
+                str,
+            ),
+            "BOT_RESPONSE_EXCLUDE_USERS": (ConfigKeys.BOT_RESPONSE_EXCLUDE_USERS, str),
             "BOT_TIMELINE_ENABLED": (ConfigKeys.BOT_TIMELINE_ENABLED, bool),
             "BOT_TIMELINE_HOME": (ConfigKeys.BOT_TIMELINE_HOME, bool),
             "BOT_TIMELINE_LOCAL": (ConfigKeys.BOT_TIMELINE_LOCAL, bool),
@@ -179,6 +194,12 @@ class Config:
             ConfigKeys.BOT_RESPONSE_MENTION_ENABLED: True,
             ConfigKeys.BOT_RESPONSE_CHAT_ENABLED: True,
             ConfigKeys.BOT_RESPONSE_CHAT_MEMORY: 10,
+            ConfigKeys.BOT_RESPONSE_RATE_LIMIT: -1,
+            ConfigKeys.BOT_RESPONSE_RATE_LIMIT_REPLY: "我需要休息一下...",
+            ConfigKeys.BOT_RESPONSE_MAX_TURNS: -1,
+            ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY: "我要回家了...",
+            ConfigKeys.BOT_RESPONSE_MAX_TURNS_RELEASE: -1,
+            ConfigKeys.BOT_RESPONSE_EXCLUDE_USERS: [],
             ConfigKeys.BOT_TIMELINE_ENABLED: False,
             ConfigKeys.BOT_TIMELINE_HOME: False,
             ConfigKeys.BOT_TIMELINE_LOCAL: False,
@@ -236,6 +257,28 @@ class Config:
                 "mention response enabled",
             ),
             (ConfigKeys.BOT_RESPONSE_CHAT_ENABLED, (bool,), "chat response enabled"),
+            (ConfigKeys.BOT_RESPONSE_RATE_LIMIT, (int, str), "response rate limit"),
+            (
+                ConfigKeys.BOT_RESPONSE_RATE_LIMIT_REPLY,
+                (str,),
+                "response rate limit reply",
+            ),
+            (ConfigKeys.BOT_RESPONSE_MAX_TURNS, (int,), "response max turns"),
+            (
+                ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY,
+                (str,),
+                "response max turns reply",
+            ),
+            (
+                ConfigKeys.BOT_RESPONSE_MAX_TURNS_RELEASE,
+                (int, str),
+                "response max turns release",
+            ),
+            (
+                ConfigKeys.BOT_RESPONSE_EXCLUDE_USERS,
+                (list, str),
+                "response exclude users",
+            ),
             (ConfigKeys.BOT_TIMELINE_ENABLED, (bool,), "timeline subscription enabled"),
             (
                 ConfigKeys.BOT_TIMELINE_HOME,
@@ -302,6 +345,27 @@ class Config:
         self._validate_predicate(
             chat_memory, lambda v: v >= 0, "chat context memory length must be >= 0"
         )
+        max_turns = self._require_type(
+            ConfigKeys.BOT_RESPONSE_MAX_TURNS, (int,), "response max turns"
+        )
+        self._validate_predicate(
+            max_turns, lambda v: v >= -1, "response max turns must be >= -1"
+        )
+        for key, desc in (
+            (ConfigKeys.BOT_RESPONSE_RATE_LIMIT, "response rate limit"),
+            (ConfigKeys.BOT_RESPONSE_MAX_TURNS_RELEASE, "response max turns release"),
+        ):
+            value = self.get(key)
+            if value is None:
+                continue
+            if isinstance(value, int):
+                self._validate_predicate(
+                    value, lambda v: v >= -1, f"{desc} must be >= -1"
+                )
+            elif isinstance(value, str):
+                self._validate_predicate(
+                    bool(value.strip()), lambda v: v, f"{desc} must not be empty"
+                )
         visibility = self._require_type(
             ConfigKeys.BOT_AUTO_POST_VISIBILITY, (str,), "post visibility"
         )

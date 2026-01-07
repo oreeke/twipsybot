@@ -1,5 +1,7 @@
 import asyncio
 import json
+import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -34,6 +36,25 @@ from .utils import (
 
 __all__ = ("MisskeyBot",)
 
+_DURATION_PART_RE = re.compile(r"\s*(\d+(?:\.\d+)?)\s*([a-z]+)?", re.IGNORECASE)
+_DURATION_UNITS: dict[str, int] = {
+    "h": 3600,
+    "hr": 3600,
+    "hrs": 3600,
+    "hour": 3600,
+    "hours": 3600,
+    "m": 60,
+    "min": 60,
+    "mins": 60,
+    "minute": 60,
+    "minutes": 60,
+    "s": 1,
+    "sec": 1,
+    "secs": 1,
+    "second": 1,
+    "seconds": 1,
+}
+
 
 @dataclass(slots=True)
 class MentionContext:
@@ -44,9 +65,66 @@ class MentionContext:
     username: str | None
 
 
+@dataclass(slots=True)
+class _ResponseLimitState:
+    last_reply_ts: float | None = None
+    turns: int = 0
+    blocked_until_ts: float | None = None
+
+
+@dataclass(slots=True)
+class _ChatContext:
+    text: str
+    user_id: str
+    username: str
+    handle: str | None
+    mention_to: str | None
+    room_id: str | None
+    room_name: str | None
+    has_media: bool
+    conversation_id: str
+    actor_id: str
+    room_label: str | None
+
+
 class MentionHandler:
     def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
+
+    def _is_self_mention(self, mention: MentionContext) -> bool:
+        if (
+            self.bot.bot_user_id
+            and mention.user_id
+            and mention.user_id == self.bot.bot_user_id
+        ):
+            return True
+        if not (self.bot.bot_username and mention.username):
+            return False
+        return mention.username == self.bot.bot_username or mention.username.startswith(
+            f"{self.bot.bot_username}@"
+        )
+
+    @staticmethod
+    def _format_mention_reply(mention: MentionContext, text: str) -> str:
+        return f"@{mention.username}\n{text}" if mention.username else text
+
+    async def _send_mention_reply(self, mention: MentionContext, text: str) -> None:
+        await self.bot.misskey.create_note(
+            text=self._format_mention_reply(mention, text),
+            reply_id=mention.reply_target_id,
+        )
+
+    async def _maybe_send_blocked_reply(self, mention: MentionContext) -> bool:
+        if not mention.user_id:
+            return False
+        blocked = self.bot.get_response_block_reply(
+            user_id=mention.user_id, handle=mention.username
+        )
+        if not blocked:
+            return False
+        await self._send_mention_reply(mention, blocked)
+        self.bot.record_response(mention.user_id, count_turn=False)
+        return True
 
     def _should_handle_note(
         self,
@@ -106,22 +184,7 @@ class MentionHandler:
         if not self.bot.config.get(ConfigKeys.BOT_RESPONSE_MENTION_ENABLED):
             return
         mention = self._parse(note)
-        if not mention.mention_id:
-            return
-        if (
-            self.bot.bot_user_id
-            and mention.user_id
-            and mention.user_id == self.bot.bot_user_id
-        ):
-            return
-        if (
-            self.bot.bot_username
-            and mention.username
-            and (
-                mention.username == self.bot.bot_username
-                or mention.username.startswith(f"{self.bot.bot_username}@")
-            )
-        ):
+        if not mention.mention_id or self._is_self_mention(mention):
             return
         try:
             async with self.bot.lock_actor(mention.user_id, mention.username):
@@ -129,9 +192,11 @@ class MentionHandler:
                 logger.info(
                     f"Mention received from @{display}: {self.bot.format_log_text(mention.text)}"
                 )
-                handled = await self._try_plugin_response(mention, note)
-                if not handled:
-                    await self._generate_ai_response(mention)
+                if await self._maybe_send_blocked_reply(mention):
+                    return
+                if await self._try_plugin_response(mention, note):
+                    return
+                await self._generate_ai_response(mention)
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
@@ -195,23 +260,27 @@ class MentionHandler:
     ) -> bool:
         plugin_results = await self.bot.plugin_manager.on_mention(note)
         for result in plugin_results:
-            if result and result.get("handled"):
-                logger.debug(f"Mention handled by plugin: {result.get('plugin_name')}")
-                response = result.get("response")
-                if response:
-                    formatted = (
-                        f"@{mention.username}\n{response}"
-                        if mention.username
-                        else response
-                    )
-                    await self.bot.misskey.create_note(
-                        text=formatted, reply_id=mention.reply_target_id
-                    )
-                    logger.info(
-                        f"Plugin replied to @{mention.username or 'unknown'}: {self.bot.format_log_text(formatted)}"
-                    )
-                return True
+            if not (result and result.get("handled")):
+                continue
+            await self._apply_plugin_result(result, mention)
+            return True
         return False
+
+    async def _apply_plugin_result(
+        self, result: dict[str, Any], mention: MentionContext
+    ) -> None:
+        logger.debug(f"Mention handled by plugin: {result.get('plugin_name')}")
+        response = result.get("response")
+        if response:
+            formatted = self._format_mention_reply(mention, response)
+            await self.bot.misskey.create_note(
+                text=formatted, reply_id=mention.reply_target_id
+            )
+            logger.info(
+                f"Plugin replied to @{mention.username or 'unknown'}: {self.bot.format_log_text(formatted)}"
+            )
+            if mention.user_id:
+                self.bot.record_response(mention.user_id, count_turn=True)
 
     async def _generate_ai_response(self, mention: MentionContext) -> None:
         reply = await self.bot.openai.generate_text(
@@ -225,6 +294,8 @@ class MentionHandler:
         logger.info(
             f"Replied to @{mention.username or 'unknown'}: {self.bot.format_log_text(formatted)}"
         )
+        if mention.user_id:
+            self.bot.record_response(mention.user_id, count_turn=True)
 
 
 class ChatHandler:
@@ -287,41 +358,89 @@ class ChatHandler:
             logger.info(f"Chat received from {prefix}@{username}: (no text; has media)")
 
     async def _process(self, message: dict[str, Any]) -> None:
+        ctx = self._parse_chat_context(message)
+        if not ctx:
+            return
+        async with self.bot.lock_actor(ctx.actor_id, ctx.username):
+            self._log_incoming_chat(
+                username=ctx.username,
+                text=ctx.text,
+                has_media=ctx.has_media,
+                room_label=ctx.room_label,
+            )
+            if await self._maybe_send_blocked_reply(ctx):
+                return
+            if await self._try_plugin_response(
+                message,
+                ctx.conversation_id,
+                ctx.user_id,
+                ctx.username,
+                ctx.mention_to,
+                ctx.room_id,
+            ):
+                return
+            if not ctx.text:
+                return
+            await self._generate_ai_response(
+                ctx.conversation_id,
+                ctx.user_id,
+                ctx.username,
+                ctx.mention_to,
+                ctx.text,
+                ctx.room_id,
+            )
+
+    def _parse_chat_context(self, message: dict[str, Any]) -> _ChatContext | None:
         text = message.get("text") or message.get("content") or message.get("body", "")
         user_id = extract_user_id(message)
-        username = extract_username(message)
-        mention_to = extract_user_handle(message) or (
-            username if username != "unknown" else None
-        )
-        room_id, room_name = self._parse_room(message)
-        has_media = bool(message.get("fileId") or message.get("file"))
         if not isinstance(user_id, str) or not user_id:
             logger.debug("Chat missing required info: user_id is empty")
-            return
+            return None
+        username = extract_username(message)
+        handle = extract_user_handle(message)
+        mention_to = handle or (username if username != "unknown" else None)
+        room_id, room_name = self._parse_room(message)
+        has_media = bool(message.get("fileId") or message.get("file"))
         if not text and not has_media:
             logger.debug("Chat missing required info: empty text and no media")
-            return
+            return None
         if room_id and not self._is_bot_mentioned(text):
             logger.debug(
                 f"Room chat from @{username} does not mention the bot; skipping"
             )
-            return
+            return None
         conversation_id = f"room:{room_id}" if room_id else user_id
         actor_id = room_id or user_id
         room_label = room_name or room_id
-        async with self.bot.lock_actor(actor_id, username):
-            self._log_incoming_chat(
-                username=username, text=text, has_media=has_media, room_label=room_label
-            )
-            if await self._try_plugin_response(
-                message, conversation_id, user_id, username, mention_to, room_id
-            ):
-                return
-            if not text:
-                return
-            await self._generate_ai_response(
-                conversation_id, user_id, username, mention_to, text, room_id
-            )
+        return _ChatContext(
+            text=str(text or ""),
+            user_id=user_id,
+            username=username,
+            handle=handle,
+            mention_to=mention_to,
+            room_id=room_id,
+            room_name=room_name,
+            has_media=has_media,
+            conversation_id=conversation_id,
+            actor_id=actor_id,
+            room_label=room_label,
+        )
+
+    async def _maybe_send_blocked_reply(self, ctx: _ChatContext) -> bool:
+        blocked = self.bot.get_response_block_reply(
+            user_id=ctx.user_id,
+            handle=ctx.handle or ctx.mention_to,
+        )
+        if not blocked:
+            return False
+        await self._send_chat_reply(
+            user_id=ctx.user_id,
+            room_id=ctx.room_id,
+            text=blocked,
+            mention_to=ctx.mention_to,
+        )
+        self.bot.record_response(ctx.user_id, count_turn=False)
+        return True
 
     async def _send_chat_reply(
         self, *, user_id: str, room_id: str | None, text: str, mention_to: str | None
@@ -382,6 +501,7 @@ class ChatHandler:
         logger.info(
             f"Plugin replied to @{username}: {self.bot.format_log_text(response)}"
         )
+        self.bot.record_response(user_id, count_turn=True)
         user_text = message.get("text") or message.get("content") or ""
         if user_text:
             user_content = f"{username}: {user_text}" if room_id else user_text
@@ -424,6 +544,7 @@ class ChatHandler:
             user_id=user_id, room_id=room_id, text=reply, mention_to=mention_to
         )
         logger.info(f"Replied to @{username}: {self.bot.format_log_text(reply)}")
+        self.bot.record_response(user_id, count_turn=True)
         self.bot.append_chat_turn(conversation_id, user_content, reply, limit)
 
     async def get_chat_history(
@@ -683,6 +804,9 @@ class MisskeyBot:
         self._chat_histories: TTLCache[str, list[dict[str, str]]] = TTLCache(
             maxsize=CHAT_CACHE_MAX_USERS, ttl=CHAT_CACHE_TTL
         )
+        self._response_limits: TTLCache[str, _ResponseLimitState] = TTLCache(
+            maxsize=5000, ttl=2592000
+        )
         self.handlers = BotHandlers(self)
         self.timeline_channels = self._load_timeline_channels()
         logger.info("Bot initialized")
@@ -737,6 +861,127 @@ class MisskeyBot:
             return list(dict.fromkeys(tokens))
         s = str(value).strip()
         return [s] if s else []
+
+    def _load_response_exclude_users(self) -> set[str]:
+        value = self.config.get(ConfigKeys.BOT_RESPONSE_EXCLUDE_USERS)
+        if value is None or isinstance(value, bool):
+            return set()
+        if isinstance(value, str):
+            tokens = [t.strip() for t in value.replace(",", " ").split() if t.strip()]
+            return {t.lower() for t in tokens}
+        if isinstance(value, list):
+            tokens = [str(v).strip() for v in value if v is not None and str(v).strip()]
+            return {t.lower() for t in tokens}
+        s = str(value).strip()
+        return {s.lower()} if s else set()
+
+    def _is_response_excluded_user(self, *, user_id: str, handle: str | None) -> bool:
+        excluded = self._load_response_exclude_users()
+        if not excluded:
+            return False
+        candidates = {user_id.lower()}
+        if handle:
+            normalized = handle.lower().lstrip("@")
+            if "@" in normalized:
+                candidates.add(normalized)
+                candidates.add(f"@{normalized}")
+        return any(c in excluded for c in candidates)
+
+    @staticmethod
+    def _parse_duration_seconds(value: Any) -> int | None:
+        parsed = MisskeyBot._parse_duration_number(value)
+        if parsed is not None:
+            return parsed
+        if not isinstance(value, str):
+            return None
+        s = value.strip().lower()
+        if not s:
+            return None
+        if s in {"-1", "unlimited", "none", "off"}:
+            return -1
+        return MisskeyBot._parse_duration_string(s)
+
+    @staticmethod
+    def _parse_duration_number(value: Any) -> int | None:
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        return None
+
+    @staticmethod
+    def _parse_duration_string(s: str) -> int | None:
+        total = 0
+        pos = 0
+        while pos < len(s):
+            m = _DURATION_PART_RE.match(s, pos)
+            if not m:
+                return None
+            num = float(m.group(1))
+            unit = (m.group(2) or "").lower()
+            end = m.end()
+            if not unit:
+                return int(num) if end == len(s) and total == 0 else None
+            mul = _DURATION_UNITS.get(unit)
+            if not mul:
+                return None
+            total += int(num * mul)
+            pos = end
+        return total
+
+    def _duration_config_seconds(self, key: str) -> int:
+        seconds = self._parse_duration_seconds(self.config.get(key))
+        if seconds is None:
+            return -1
+        return seconds
+
+    def _get_response_limit_state(self, user_id: str) -> _ResponseLimitState:
+        if user_id not in self._response_limits:
+            self._response_limits[user_id] = _ResponseLimitState()
+        return self._response_limits[user_id]
+
+    def get_response_block_reply(
+        self, *, user_id: str, handle: str | None
+    ) -> str | None:
+        if self._is_response_excluded_user(user_id=user_id, handle=handle):
+            return None
+        now = time.time()
+        state = self._get_response_limit_state(user_id)
+        if (
+            state.blocked_until_ts is not None
+            and state.blocked_until_ts != float("inf")
+            and now >= state.blocked_until_ts
+        ):
+            state.turns = 0
+            state.blocked_until_ts = None
+        if state.blocked_until_ts is not None and now < state.blocked_until_ts:
+            return self.config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY)
+        interval = self._duration_config_seconds(ConfigKeys.BOT_RESPONSE_RATE_LIMIT)
+        if (
+            interval > 0
+            and state.last_reply_ts is not None
+            and now - state.last_reply_ts < interval
+        ):
+            return self.config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT_REPLY)
+        max_turns = self.config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS)
+        if isinstance(max_turns, int) and max_turns >= 0 and state.turns >= max_turns:
+            release = self._duration_config_seconds(
+                ConfigKeys.BOT_RESPONSE_MAX_TURNS_RELEASE
+            )
+            if release < 0:
+                state.blocked_until_ts = float("inf")
+            else:
+                state.blocked_until_ts = now + release
+            return self.config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY)
+        return None
+
+    def record_response(self, user_id: str, *, count_turn: bool) -> None:
+        state = self._get_response_limit_state(user_id)
+        state.last_reply_ts = time.time()
+        if count_turn:
+            state.turns += 1
 
     @staticmethod
     def _build_antenna_index(

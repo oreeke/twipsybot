@@ -195,6 +195,10 @@ docker compose up -d
 > - 自动发帖会尽量绕过 [Prompt caching](https://platform.openai.com/docs/guides/prompt-caching)，想让帖子更多样化请配置并启用 [Topics](./plugins/topics) 插件<br>
 > - 切换模型仅需修改 `api_key` `model` `api_base`，相同 `api_base` 的模型可通过 [Cmd](./plugins/cmd) 实时切换
 
+> [!NOTE]
+>
+> - 数据库自动清理（`db.clear`）或手动删除，会重置对用户的回复限制，以及 [Cmd](./plugins/cmd) 设置的黑白名单
+
 ## 生态
 
 ### 模型兼容

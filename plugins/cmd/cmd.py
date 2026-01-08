@@ -9,7 +9,7 @@ from loguru import logger
 from src.constants import ConfigKeys
 from src.plugin import PluginBase
 from src.streaming import ChannelType
-from src.utils import get_memory_usage, get_system_info, health_check
+from src.utils import get_memory_usage, get_system_info, health_check, normalize_tokens
 
 _MSG_SPECIFY_PLUGIN_NAME = "请指定插件名称"
 _MSG_BOT_NOT_INJECTED_ANTENNA = "Bot 未注入，无法管理天线订阅"
@@ -23,21 +23,65 @@ class CmdPlugin(PluginBase):
         self.allowed_users = self.config.get("allowed_users", [])
         self.commands = self.config.get("commands", {})
         self._setup_default_commands()
-        self._baseline_response_whitelist = self._normalize_user_list(
-            self.global_config.get(ConfigKeys.BOT_RESPONSE_WHITELIST)
-            if self.global_config
-            else []
+        self._init_baselines()
+        self._command_alias_index = self._build_command_alias_index()
+        self._command_handlers = self._build_command_handlers()
+
+    def _global_get(self, key: str, default: Any) -> Any:
+        cfg = getattr(self, "global_config", None)
+        return cfg.get(key) if cfg else default
+
+    def _init_baselines(self) -> None:
+        self._baseline_response_whitelist = normalize_tokens(
+            self._global_get(ConfigKeys.BOT_RESPONSE_WHITELIST, []), lower=True
         )
-        self._baseline_response_blacklist = self._normalize_user_list(
-            self.global_config.get(ConfigKeys.BOT_RESPONSE_BLACKLIST)
-            if self.global_config
-            else []
+        self._baseline_response_blacklist = normalize_tokens(
+            self._global_get(ConfigKeys.BOT_RESPONSE_BLACKLIST, []), lower=True
         )
-        self._baseline_antenna_selectors = self._normalize_antenna_selectors(
-            self.global_config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS)
-            if self.global_config
-            else []
+        self._baseline_antenna_selectors = normalize_tokens(
+            self._global_get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS, [])
         )
+
+    def _build_command_alias_index(self) -> dict[str, str]:
+        index: dict[str, str] = {}
+        for name, info in self.commands.items():
+            if not isinstance(name, str) or not name:
+                continue
+            aliases = info.get("aliases", []) if isinstance(info, dict) else []
+            for alias in aliases or []:
+                if isinstance(alias, str) and (a := alias.strip()):
+                    index.setdefault(a.lower(), name)
+        return index
+
+    def _build_command_handlers(self) -> dict[str, Any]:
+        return {
+            "help": lambda args: self._get_help_text(),
+            "status": lambda args: self._get_status_text(),
+            "sysinfo": lambda args: self._get_system_info(),
+            "model": self._handle_model,
+            "plugins": lambda args: self._get_plugins_info(),
+            "enable": self._enable_plugin,
+            "disable": self._disable_plugin,
+            "reload": self._reload_plugin,
+            "timeline": self._handle_timeline,
+            "antenna": self._handle_antenna,
+            "cache": lambda args: self._get_memory_usage(),
+            "cacheclear": self._clear_memory_caches,
+            "whitelist": lambda args: self._handle_response_user_list(
+                "whitelist",
+                ConfigKeys.BOT_RESPONSE_WHITELIST,
+                args,
+                self._baseline_response_whitelist,
+            ),
+            "blacklist": lambda args: self._handle_response_user_list(
+                "blacklist",
+                ConfigKeys.BOT_RESPONSE_BLACKLIST,
+                args,
+                self._baseline_response_blacklist,
+            ),
+            "dbstats": lambda args: self._get_db_stats(),
+            "dbclear": self._clear_plugin_data,
+        }
 
     def _setup_default_commands(self):
         if not self.commands:
@@ -132,52 +176,20 @@ class CmdPlugin(PluginBase):
         cmd_lower = cmd.lower()
         if cmd_lower in self.commands:
             return cmd_lower
-        for command_name, command_info in self.commands.items():
-            if cmd_lower in (
-                alias.lower() for alias in command_info.get("aliases", [])
-            ):
-                return command_name
-        return None
+        return self._command_alias_index.get(cmd_lower)
 
     async def _execute_command(self, command: str, args: str = "") -> str:
-        commands = {
-            "help": self._get_help_text,
-            "status": self._get_status_text,
-            "sysinfo": self._get_system_info,
-            "model": lambda: self._handle_model(args),
-            "plugins": self._get_plugins_info,
-            "enable": lambda: self._enable_plugin(args),
-            "disable": lambda: self._disable_plugin(args),
-            "reload": lambda: self._reload_plugin(args),
-            "timeline": lambda: self._handle_timeline(args),
-            "antenna": lambda: self._handle_antenna(args),
-            "cache": self._get_memory_usage,
-            "cacheclear": lambda: self._clear_memory_caches(args),
-            "whitelist": lambda: self._handle_response_user_list(
-                "whitelist",
-                ConfigKeys.BOT_RESPONSE_WHITELIST,
-                args,
-                self._baseline_response_whitelist,
-            ),
-            "blacklist": lambda: self._handle_response_user_list(
-                "blacklist",
-                ConfigKeys.BOT_RESPONSE_BLACKLIST,
-                args,
-                self._baseline_response_blacklist,
-            ),
-            "dbstats": self._get_db_stats,
-            "dbclear": lambda: self._clear_plugin_data(args),
-        }
-        if command in commands:
-            try:
-                result = commands[command]()
-                return await result if asyncio.iscoroutine(result) else result
-            except Exception as e:
-                if isinstance(e, asyncio.CancelledError):
-                    raise
-                logger.error(f"Error executing command {command}: {e}")
-                return f"命令执行失败: {str(e)}"
-        return f"未知命令: {command}"
+        handler = self._command_handlers.get(command)
+        if not handler:
+            return f"未知命令: {command}"
+        try:
+            result = handler(args)
+            return await result if asyncio.iscoroutine(result) else result
+        except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
+            logger.error(f"Error executing command {command}: {e}")
+            return f"命令执行失败: {str(e)}"
 
     def _get_help_text(self) -> str:
         entries = []
@@ -374,27 +386,6 @@ class CmdPlugin(PluginBase):
         return f"已切换模型: {model}"
 
     @staticmethod
-    def _normalize_user_list(value: Any) -> list[str]:
-        if value is None or isinstance(value, bool):
-            return []
-        if isinstance(value, str):
-            tokens = [t.strip() for t in value.replace(",", " ").split() if t.strip()]
-        elif isinstance(value, list):
-            tokens = [str(v).strip() for v in value if v is not None and str(v).strip()]
-        else:
-            s = str(value).strip()
-            tokens = [s] if s else []
-        seen: set[str] = set()
-        result: list[str] = []
-        for t in tokens:
-            k = t.lower()
-            if k in seen:
-                continue
-            seen.add(k)
-            result.append(k)
-        return result
-
-    @staticmethod
     def _format_code_block(title: str, lines: list[str]) -> str:
         t = (title or "").strip()
         if not t:
@@ -420,7 +411,7 @@ class CmdPlugin(PluginBase):
             decoded = json.loads(saved)
         except json.JSONDecodeError:
             decoded = saved
-        normalized = self._normalize_user_list(decoded)
+        normalized = normalize_tokens(decoded, lower=True)
         self._set_global_config_value(key, normalized)
         self._log_plugin_action("applied config override", f"{key}={len(normalized)}")
 
@@ -444,7 +435,7 @@ class CmdPlugin(PluginBase):
         if not getattr(self, "global_config", None):
             return "全局配置未注入"
         raw = args.strip()
-        current = self._normalize_user_list(self.global_config.get(key))
+        current = normalize_tokens(self.global_config.get(key), lower=True)
         if not raw:
             return self._format_user_list(label, current)
         parts = raw.split(maxsplit=1)
@@ -459,7 +450,7 @@ class CmdPlugin(PluginBase):
             await self._reset_response_user_list(key, baseline)
             return f"已恢复 {label}\n" + self._format_user_list(label, list(baseline))
         if action in {"add", "+", "append"}:
-            items = self._normalize_user_list(rest)
+            items = normalize_tokens(rest, lower=True)
             if not items:
                 return f"用法: ^{label} add <username@host|userId>"
             s = set(current)
@@ -467,14 +458,14 @@ class CmdPlugin(PluginBase):
             await self._save_response_user_list(key, updated)
             return f"已更新 {label}\n" + self._format_user_list(label, updated)
         if action in {"del", "remove", "-"}:
-            items = set(self._normalize_user_list(rest))
+            items = set(normalize_tokens(rest, lower=True))
             if not items:
                 return f"用法: ^{label} del <username@host|userId>"
             updated = [i for i in current if i not in items]
             await self._save_response_user_list(key, updated)
             return f"已更新 {label}\n" + self._format_user_list(label, updated)
         if action in {"set", "="}:
-            items = self._normalize_user_list(rest)
+            items = normalize_tokens(rest, lower=True)
             await self._save_response_user_list(key, items)
             return f"已更新 {label}\n" + self._format_user_list(label, items)
         return (
@@ -559,19 +550,6 @@ class CmdPlugin(PluginBase):
         return "已更新时间线订阅\n" + self._format_timeline_status()
 
     @staticmethod
-    def _normalize_antenna_selectors(value: Any) -> list[str]:
-        if value is None or isinstance(value, bool):
-            return []
-        if isinstance(value, str):
-            tokens = [t.strip() for t in value.replace(",", " ").split() if t.strip()]
-            return list(dict.fromkeys(tokens))
-        if isinstance(value, list):
-            tokens = [str(v).strip() for v in value if v is not None and str(v).strip()]
-            return list(dict.fromkeys(tokens))
-        s = str(value).strip()
-        return [s] if s else []
-
-    @staticmethod
     def _build_antenna_index(
         antennas: Any,
     ) -> tuple[set[str], dict[str, list[str]], dict[str, str]]:
@@ -618,7 +596,7 @@ class CmdPlugin(PluginBase):
         bot = getattr(self, "bot", None)
         if not bot:
             return _MSG_BOT_NOT_INJECTED_ANTENNA
-        selectors = self._normalize_antenna_selectors(
+        selectors = normalize_tokens(
             bot.config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS)
         )
         desired_text = ", ".join(selectors) if selectors else "(空)"
@@ -712,10 +690,10 @@ class CmdPlugin(PluginBase):
         if not getattr(self, "global_config", None):
             return "全局配置未注入"
         raw = args.strip()
-        selectors = self._normalize_antenna_selectors(raw)
+        selectors = normalize_tokens(raw)
         if not selectors:
             return "请指定天线名称或 ID"
-        current_selectors = self._normalize_antenna_selectors(
+        current_selectors = normalize_tokens(
             self.global_config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS)
         )
         current_ids, _ = await self._resolve_antenna_selectors(

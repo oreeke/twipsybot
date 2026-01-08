@@ -2,13 +2,11 @@ import asyncio
 import importlib.util
 import sys
 from pathlib import Path
-from collections.abc import Callable
 from typing import Any
 
 import yaml
 from loguru import logger
 
-from . import utils
 from .config import Config
 from .utils import extract_user_handle, extract_user_id, extract_username
 
@@ -26,9 +24,7 @@ class PluginContext:
 
 
 class PluginBase:
-    def __init__(
-        self, config_or_context, utils_provider: dict[str, Callable] | None = None
-    ):
+    def __init__(self, config_or_context):
         self.persistence_manager = None
         self.plugin_manager = None
         self.global_config = None
@@ -38,7 +34,6 @@ class PluginBase:
         self.streaming = None
         self.runtime = None
         self.bot = None
-        self.utils_provider: dict[str, Callable] = {}
         if isinstance(config_or_context, PluginContext):
             context = config_or_context
             self.config = context.config
@@ -49,12 +44,9 @@ class PluginBase:
                     "config",
                 ):
                     setattr(self, attr_name, getattr(context, attr_name))
-            self._utils = self.utils_provider
         else:
             self.config = config_or_context
             self.name = self.__class__.__name__
-            self.utils_provider = utils_provider or {}
-            self._utils = self.utils_provider
         self.enabled = self.config.get("enabled", False)
         self.priority = self.config.get("priority", 0)
         self._initialized = False
@@ -284,14 +276,8 @@ class PluginManager:
         return None
 
     def _create_plugin_instance(self, plugin_class, plugin_name, plugin_config):
-        utils_provider = {
-            "extract_username": utils.extract_username,
-            "extract_user_handle": utils.extract_user_handle,
-            "extract_user_id": utils.extract_user_id,
-        }
         context_objects = {
             "persistence_manager": self.persistence,
-            "utils_provider": utils_provider,
             "plugin_manager": self,
             "global_config": self.config,
         }

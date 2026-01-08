@@ -35,6 +35,7 @@ from .utils import (
     extract_user_id,
     extract_username,
     get_memory_usage,
+    normalize_tokens,
 )
 
 __all__ = ("MisskeyBot",)
@@ -851,30 +852,11 @@ class MisskeyBot:
         return enabled
 
     def _load_antenna_selectors(self) -> list[str]:
-        value = self.config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS)
-        if value is None or isinstance(value, bool):
-            return []
-        if isinstance(value, str):
-            tokens = [t.strip() for t in value.replace(",", " ").split() if t.strip()]
-            return list(dict.fromkeys(tokens))
-        if isinstance(value, list):
-            tokens = [str(v).strip() for v in value if v is not None and str(v).strip()]
-            return list(dict.fromkeys(tokens))
-        s = str(value).strip()
-        return [s] if s else []
+        return normalize_tokens(self.config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS))
 
     @staticmethod
     def _parse_user_list(value: Any) -> set[str]:
-        if value is None or isinstance(value, bool):
-            return set()
-        if isinstance(value, str):
-            tokens = [t.strip() for t in value.replace(",", " ").split() if t.strip()]
-            return {t.lower() for t in tokens}
-        if isinstance(value, list):
-            tokens = [str(v).strip() for v in value if v is not None and str(v).strip()]
-            return {t.lower() for t in tokens}
-        s = str(value).strip()
-        return {s.lower()} if s else set()
+        return set(normalize_tokens(value, lower=True))
 
     def _canonicalize_user_handle(self, username: str) -> str | None:
         misskey = getattr(self, "misskey", None)

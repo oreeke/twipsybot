@@ -31,7 +31,7 @@ class OpenAIAPI:
     def __init__(
         self,
         api_key: str,
-        model: str = "deepseek-chat",
+        model: str = "gpt-5-mini",
         api_base: str = "https://api.openai.com/v1",
         api_mode: str | None = None,
     ):

@@ -40,7 +40,7 @@ class _ChatContext:
 
 
 class MentionHandler:
-    def __init__(self, bot: "MisskeyBot"):
+    def __init__(self, bot: MisskeyBot):
         self.bot = bot
 
     def _is_self_mention(self, mention: MentionContext) -> bool:
@@ -132,6 +132,30 @@ class MentionHandler:
             parts.append(t)
         return "\n\n".join(parts).strip()
 
+    async def _build_mention_prompt(
+        self, mention: MentionContext, note: dict[str, Any]
+    ) -> str:
+        note_data = self._note_payload(note)
+        base = mention.text.strip()
+        if not note_data:
+            return base
+        quoted_text = ""
+        quoted = note_data.get("renote")
+        if isinstance(quoted, dict):
+            quoted_text = self._effective_text(quoted)
+        elif isinstance((quoted_id := note_data.get("renoteId")), str) and quoted_id:
+            try:
+                quoted_note = await self.bot.misskey.get_note(quoted_id)
+            except Exception as e:
+                logger.debug(f"Failed to fetch quoted note: {quoted_id} - {e}")
+            else:
+                quoted_text = self._effective_text(quoted_note)
+        if not quoted_text:
+            return base
+        if base:
+            return f"{base}\n\nQuote:\n{quoted_text}".strip()
+        return f"Quote:\n{quoted_text}".strip()
+
     async def handle(self, note: dict[str, Any]) -> None:
         if not self.bot.config.get(ConfigKeys.BOT_RESPONSE_MENTION_ENABLED):
             return
@@ -152,7 +176,7 @@ class MentionHandler:
                     return
                 if await self._try_plugin_response(mention, note):
                     return
-                await self._generate_ai_response(mention)
+                await self._generate_ai_response(mention, note)
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise
@@ -238,9 +262,12 @@ class MentionHandler:
             if mention.user_id:
                 await self.bot.record_response(mention.user_id, count_turn=True)
 
-    async def _generate_ai_response(self, mention: MentionContext) -> None:
+    async def _generate_ai_response(
+        self, mention: MentionContext, note: dict[str, Any]
+    ) -> None:
+        prompt = await self._build_mention_prompt(mention, note)
         reply = await self.bot.openai.generate_text(
-            mention.text, self.bot.system_prompt, **self.bot.ai_config
+            prompt, self.bot.system_prompt, **self.bot.ai_config
         )
         logger.debug("Mention reply generated")
         formatted = f"@{mention.username}\n{reply}" if mention.username else reply
@@ -255,7 +282,7 @@ class MentionHandler:
 
 
 class ChatHandler:
-    def __init__(self, bot: "MisskeyBot"):
+    def __init__(self, bot: MisskeyBot):
         self.bot = bot
 
     def _is_bot_mentioned(self, text: str) -> bool:
@@ -559,7 +586,7 @@ class ChatHandler:
 
 
 class ReactionHandler:
-    def __init__(self, bot: "MisskeyBot"):
+    def __init__(self, bot: MisskeyBot):
         self.bot = bot
 
     async def handle(self, reaction: dict[str, Any]) -> None:
@@ -584,7 +611,7 @@ class ReactionHandler:
 
 
 class NotificationHandler:
-    def __init__(self, bot: "MisskeyBot"):
+    def __init__(self, bot: MisskeyBot):
         self.bot = bot
 
     async def handle(self, notification: dict[str, Any]) -> None:
@@ -602,7 +629,7 @@ class NotificationHandler:
 
 
 class BotHandlers:
-    def __init__(self, bot: "MisskeyBot"):
+    def __init__(self, bot: MisskeyBot):
         self.bot = bot
         self.mention = MentionHandler(bot)
         self.chat = ChatHandler(bot)

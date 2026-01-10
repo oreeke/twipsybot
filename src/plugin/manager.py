@@ -98,7 +98,7 @@ class PluginManager:
         if not config_file.exists():
             return {"enabled": False}
         try:
-            with open(config_file, "r", encoding="utf-8") as f:
+            with open(config_file, encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         except Exception as e:
             logger.error(f"Error loading plugin config for {plugin_dir.name}: {e}")

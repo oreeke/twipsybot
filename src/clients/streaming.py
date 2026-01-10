@@ -298,7 +298,7 @@ class StreamingClient:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     data = json.loads(msg.data)
                     await self._process_message(data, msg.data)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except (
                 aiohttp.ClientError,
@@ -487,7 +487,7 @@ class StreamingClient:
                 self._event_queue.put((channel_name, event_data)),
                 timeout=self._queue_put_timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             event_id = event_data.get("id", "unknown")
             event_type = event_data.get("type", "unknown")
             logger.warning(

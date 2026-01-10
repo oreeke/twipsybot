@@ -353,7 +353,7 @@ class Config:
                     f"Refusing to read config file outside project root: {file_path}"
                 )
                 return file_path
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 content = f.read().strip()
                 logger.debug(f"Loaded config value from file: {file_path}")
                 return content

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class AutoPostService:
-    def __init__(self, bot: "MisskeyBot"):
+    def __init__(self, bot: MisskeyBot):
         self.bot = bot
         self.posts_today = 0
         self.last_auto_post_time = bot.runtime.startup_time

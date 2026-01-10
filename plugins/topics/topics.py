@@ -24,9 +24,7 @@ class TopicsPlugin(PluginBase):
                 return False
             await self._load_topics()
             await self._initialize_plugin_data()
-            self._log_plugin_action(
-                "initialized", f"Custom topics: {len(self.topics)}"
-            )
+            self._log_plugin_action("initialized", f"Custom topics: {len(self.topics)}")
             return True
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
@@ -57,8 +55,11 @@ class TopicsPlugin(PluginBase):
                 "Topics", "last_used_line"
             )
             if last_used_line is None:
+                initial_index = max(0, self.start_line - 1)
+                if self.topics:
+                    initial_index %= len(self.topics)
                 await self.persistence_manager.set_plugin_data(
-                    "Topics", "last_used_line", str(max(0, self.start_line - 1))
+                    "Topics", "last_used_line", str(initial_index)
                 )
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
@@ -97,11 +98,10 @@ class TopicsPlugin(PluginBase):
             return "生活"
         try:
             last_used_line = await self._get_last_used_line()
-            topic = self.topics[last_used_line % len(self.topics)]
-            await self._update_last_used_line(last_used_line + 1)
-            self._log_plugin_action(
-                "selected topic", f"{topic} (line: {last_used_line + 1})"
-            )
+            index = last_used_line % len(self.topics)
+            topic = self.topics[index]
+            await self._update_last_used_line((index + 1) % len(self.topics))
+            self._log_plugin_action("selected topic", f"{topic} (line: {index + 1})")
             return topic
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
@@ -114,7 +114,7 @@ class TopicsPlugin(PluginBase):
             result = await self.persistence_manager.get_plugin_data(
                 "Topics", "last_used_line"
             )
-            return int(result) if result else 0
+            return max(0, int(result)) if result else 0
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise

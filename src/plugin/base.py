@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from typing import Any
 
 from loguru import logger
@@ -106,7 +107,7 @@ class PluginBase:
             try:
                 if hasattr(resource, cleanup_method):
                     method = getattr(resource, cleanup_method)
-                    if asyncio.iscoroutinefunction(method):
+                    if inspect.iscoroutinefunction(method):
                         await method()
                     else:
                         method()

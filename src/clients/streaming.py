@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import uuid
 from collections.abc import Awaitable, Callable
@@ -547,36 +548,58 @@ class StreamingClient:
     async def _handle_main_channel_event(
         self, event_type: str, event_data: dict[str, Any]
     ) -> None:
-        handler_map = {
-            "mention": "mention",
-            "reply": "mention",
-            "newChatMessage": "message",
-            "notification": "notification",
-        }
         if event_type == "newChatMessage":
-            await self._ensure_chat_user_stream(event_data)
+            await self._handle_main_new_chat_message(event_data)
+            return
         if event_type == "notification":
-            notification = self._extract_dict(event_data, "notification")
-            inner_type = notification.get("type") if notification else None
-            if inner_type in {"mention", "reply", "newChatMessage"}:
-                return
-            if (
-                isinstance(inner_type, str)
-                and inner_type
-                and inner_type in self.event_handlers
-            ):
-                await self._call_handlers(inner_type, notification)
-            else:
-                await self._call_handlers("notification", event_data)
-        elif event_type in handler_map:
-            await self._call_handlers(handler_map[event_type], event_data)
-        else:
-            logger.debug(f"Unknown main channel event type: {event_type}")
-            if self.log_dump_events:
-                logger.opt(lazy=True).debug(
-                    _EVENT_DATA_LOG_TEMPLATE,
-                    lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
-                )
+            await self._handle_main_notification(event_data)
+            return
+        handler_event_type = self._main_handler_event_type(event_type)
+        if handler_event_type:
+            await self._call_handlers(handler_event_type, event_data)
+            return
+        self._log_unknown_main_event(event_type, event_data)
+
+    async def _handle_main_new_chat_message(self, event_data: dict[str, Any]) -> None:
+        channel_id = await self._ensure_chat_user_stream(event_data)
+        if not channel_id:
+            return
+        message = dict(event_data)
+        message["streamingChannelId"] = channel_id
+        message["type"] = "message"
+        await self._handle_chat_channel_event(
+            ChannelType.CHAT_USER.value, "message", message
+        )
+
+    async def _handle_main_notification(self, event_data: dict[str, Any]) -> None:
+        notification = self._extract_dict(event_data, "notification")
+        inner_type = notification.get("type") if notification else None
+        if inner_type in {"mention", "reply", "newChatMessage"}:
+            return
+        if (
+            isinstance(inner_type, str)
+            and inner_type
+            and inner_type in self.event_handlers
+        ):
+            await self._call_handlers(inner_type, notification)
+            return
+        await self._call_handlers("notification", event_data)
+
+    @staticmethod
+    def _main_handler_event_type(event_type: str) -> str | None:
+        if event_type in {"mention", "reply"}:
+            return "mention"
+        return None
+
+    def _log_unknown_main_event(
+        self, event_type: str, event_data: dict[str, Any]
+    ) -> None:
+        logger.debug(f"Unknown main channel event type: {event_type}")
+        if self.log_dump_events:
+            logger.opt(lazy=True).debug(
+                _EVENT_DATA_LOG_TEMPLATE,
+                lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
+            )
 
     async def _handle_chat_channel_event(
         self, channel_name: str, event_type: str, event_data: dict[str, Any]
@@ -610,10 +633,10 @@ class StreamingClient:
             self._refresh_chat_channel_timer(channel_id)
         await self._call_handlers("message", message)
 
-    async def _ensure_chat_user_stream(self, message: dict[str, Any]) -> None:
+    async def _ensure_chat_user_stream(self, message: dict[str, Any]) -> str | None:
         other_id = message.get("fromUserId")
         if not isinstance(other_id, str) or not other_id:
-            return
+            return None
         from_user = message.get("fromUser")
         if isinstance(from_user, dict):
             self._chat_user_cache[other_id] = from_user
@@ -625,7 +648,7 @@ class StreamingClient:
             if isinstance(e, asyncio.CancelledError):
                 raise
             logger.debug(f"Failed to connect chatUser channel for {other_id}: {e}")
-            return
+            return None
         self._chat_user_channel_ids[other_id] = channel_id
         self._chat_channel_other_ids[channel_id] = other_id
         if task := self._chat_channel_tasks.get(channel_id):
@@ -634,6 +657,7 @@ class StreamingClient:
             self._disconnect_chat_channel_later(other_id, channel_id),
             name=f"chatUser-disconnect-{other_id}",
         )
+        return channel_id
 
     async def _disconnect_chat_channel_later(
         self, other_id: str, channel_id: str
@@ -703,7 +727,7 @@ class StreamingClient:
         handlers = self.event_handlers.get(event_type, [])
         for handler in handlers:
             try:
-                if asyncio.iscoroutinefunction(handler):
+                if inspect.iscoroutinefunction(handler):
                     await handler(data)
                 else:
                     handler(data)

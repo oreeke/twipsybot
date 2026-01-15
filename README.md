@@ -6,11 +6,11 @@
 正运行在：[oreeke.com/@ai](https://oreeke.com/@ai)
 
 <a href="https://www.python.org/downloads">
-    <img alt="python 3.11+" src="https://img.shields.io/badge/python-3.11+-3776ab.svg?style=for-the-badge&labelColor=303030"></a>
+    <img alt="python 3.11+" src="https://img.shields.io/badge/python-3.11+-4775b1.svg?style=for-the-badge&labelColor=303030&logo=python&logoColor=4775b1"></a>
+<a href="https://github.com/misskey-dev/misskey">
+    <img alt="misskey 2025+" src="https://img.shields.io/badge/misskey-2025+-acea31.svg?style=for-the-badge&labelColor=303030&logo=misskey&logoColor=acea31"></a>
 <a href="./LICENSE">
-    <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-603669.svg?style=for-the-badge&labelColor=303030"></a>
-<a href="https://oreeke.com">
-    <img alt="join the fediverse" src="https://img.shields.io/badge/join_the-fediverse-ce6641.svg?style=for-the-badge&labelColor=303030"></a>
+    <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-603669.svg?style=for-the-badge&labelColor=303030&logo=gnu&logoColor=ffffff"></a>
 
 </div>
 
@@ -30,7 +30,7 @@
 ### 克隆仓库
 
 ```bash
-git clone https://github.com/oreeke/misskey-ai.git
+git clone https://github.com/oreeke/misskey-ai
 cd misskey-ai
 ```
 

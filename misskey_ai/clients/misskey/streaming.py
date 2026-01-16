@@ -112,18 +112,16 @@ class StreamingClient(_StreamingEventsMixin):
             try:
                 await self._listen_messages()
                 return
-            except WebSocketConnectionError as e:
+            except WebSocketConnectionError:
                 if not reconnect:
                     raise
                 self.state = "reconnecting"
-                logger.debug(
-                    f"WebSocket disconnected; reconnecting in {retry_delay}s: {e}"
-                )
+                logger.debug(f"WebSocket disconnected; reconnecting in {retry_delay}s")
                 try:
                     await self._reconnect_with_backoff(retry_delay)
+                    retry_delay = 1.0
                 except WebSocketConnectionError:
-                    pass
-                retry_delay = min(retry_delay * 2, 30.0)
+                    retry_delay = min(retry_delay * 2, 30.0)
 
     async def disconnect(self) -> None:
         self.should_reconnect = False

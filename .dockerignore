@@ -1,14 +1,5 @@
-# Git and documentation
+# Git
 .git
-.gitignore
-README.md
-LICENSE
-
-# Docker files
-Dockerfile
-docker-compose.yml
-docker-compose.yaml
-.dockerignore
 
 # Python
 __pycache__/
@@ -28,7 +19,6 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
-tests/
 
 # IDE files
 .vscode/

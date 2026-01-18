@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import anyio
 from loguru import logger
@@ -13,7 +14,7 @@ class TopicsPlugin(PluginBase):
 
     def __init__(self, context):
         super().__init__(context)
-        self.prefix_template = self.config.get("prefix_template", "以{topic}为主题，")
+        self.prefix_template = self.config.get("prefix_template") or ""
         self.start_line = self.config.get("start_line", 1)
         self.topics = []
 
@@ -38,6 +39,9 @@ class TopicsPlugin(PluginBase):
     async def on_auto_post(self) -> dict[str, Any] | None:
         try:
             topic = await self._get_next_topic()
+            if self._is_pure_url(topic):
+                self._log_plugin_action("direct post", topic)
+                return {"content": topic, "plugin_name": self.name}
             return {
                 "modify_prompt": True,
                 "plugin_prompt": self.prefix_template.format(topic=topic),
@@ -48,6 +52,16 @@ class TopicsPlugin(PluginBase):
                 raise
             logger.error(f"Topics plugin auto-post hook failed: {e}")
             return None
+
+    @staticmethod
+    def _is_pure_url(text: str) -> bool:
+        s = text.strip()
+        if not s or s != text:
+            return False
+        parsed = urlparse(s)
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        return bool(parsed.netloc)
 
     async def _initialize_plugin_data(self) -> None:
         try:
@@ -66,7 +80,7 @@ class TopicsPlugin(PluginBase):
             raise
 
     def _use_default_topics(self) -> None:
-        self.topics = ["科技", "生活", "学习", "思考", "创新"]
+        self.topics = ["Technology", "Life", "Learning", "Reflection", "Innovation"]
         logger.info(f"Using default topics: {self.topics}")
 
     async def _load_topics(self) -> None:
@@ -92,8 +106,9 @@ class TopicsPlugin(PluginBase):
             self._use_default_topics()
 
     async def _get_next_topic(self) -> str:
+        fallback = self.topics[0] if self.topics else "Life"
         if not self.topics:
-            return "生活"
+            return fallback
         try:
             last_used_line = await self._get_last_used_line()
             index = last_used_line % len(self.topics)
@@ -105,7 +120,7 @@ class TopicsPlugin(PluginBase):
             if isinstance(e, asyncio.CancelledError):
                 raise
             logger.warning(f"Failed to get next topic: {e}")
-            return self.topics[0] if self.topics else "生活"
+            return fallback
 
     async def _get_last_used_line(self) -> int:
         try:

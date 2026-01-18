@@ -22,14 +22,14 @@ class RadarPlugin(PluginBase):
     def __init__(self, context):
         super().__init__(context)
         self.reaction = self._normalize_str(self.config.get("reaction"))
-        self.reply_enabled = self._parse_bool(self.config.get("reply_enabled"), False)
+        self.reply_enabled = self._parse_bool(self.config.get("reply"), False)
         self.reply_text = self._normalize_str(self.config.get("reply_text"))
         self.reply_ai = self._parse_bool(self.config.get("reply_ai"), False)
         self.reply_ai_prompt = self._normalize_str(self.config.get("reply_ai_prompt"))
         self.reply_local_only = self._parse_bool(
             self.config.get("reply_local_only"), False
         )
-        self.quote_enabled = self._parse_bool(self.config.get("quote_enabled"), False)
+        self.quote_enabled = self._parse_bool(self.config.get("quote"), False)
         self.quote_text = self._normalize_str(self.config.get("quote_text"))
         self.quote_ai = self._parse_bool(self.config.get("quote_ai"), False)
         self.quote_ai_prompt = self._normalize_str(self.config.get("quote_ai_prompt"))
@@ -39,7 +39,7 @@ class RadarPlugin(PluginBase):
         self.quote_local_only = self._parse_bool(
             self.config.get("quote_local_only"), False
         )
-        self.renote_enabled = self._parse_bool(self.config.get("renote_enabled"), False)
+        self.renote_enabled = self._parse_bool(self.config.get("renote"), False)
         self.renote_visibility = self._normalize_visibility(
             self.config.get("renote_visibility")
         )

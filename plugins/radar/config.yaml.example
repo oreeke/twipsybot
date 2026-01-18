@@ -5,17 +5,17 @@ priority: 50                     # 插件优先级（数字越大越先执行）
 
 reaction: ""                     # 反应（例如 "heart"/":emoji:"）；留空表示不反应
 
-reply_enabled: false             # 是否回复
+reply: false                     # 是否回复
 reply_text: ""                   # 自定义回复内容（可用 {username}）；留空可配合 reply_ai
 reply_ai: false                  # AI 自动回复（基于帖子内容生成；reply_text 为空时才生效）
 reply_ai_prompt: ""              # AI 回复提示词（可用 {content}）；留空使用内置默认提示词
 reply_local_only: false          # 回复是否禁用联合（仅本地可见）
 
-renote_enabled: false            # 是否转发
+renote: false                    # 是否转发
 renote_visibility: "home"        # 转发可见性：public/home/followers
 renote_local_only: false         # 转发是否禁用联合（仅本地可见）
 
-quote_enabled: false             # 是否引用
+quote: false                     # 是否引用
 quote_text: ""                   # 自定义引用内容（可用 {username}）；留空可配合 quote_ai
 quote_ai: false                  # AI 自动写一句引用感想（quote_text 为空时才生效）
 quote_ai_prompt: ""              # AI 引用提示词（可用 {content}）；留空使用内置默认提示词

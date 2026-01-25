@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import anyio
@@ -10,121 +10,7 @@ from ...shared.exceptions import APIConnectionError
 if TYPE_CHECKING:
     from .misskey_api import MisskeyAPI
 
-__all__ = ("MisskeyDrive", "DriveIO")
-
-
-class DriveIO(Protocol):
-    async def usage(self) -> dict[str, Any]: ...
-
-    async def list_files(
-        self,
-        *,
-        limit: int = 10,
-        since_id: str | None = None,
-        until_id: str | None = None,
-        since_date: int | None = None,
-        until_date: int | None = None,
-        folder_id: str | None = None,
-        file_type: str | None = None,
-        sort: str | None = None,
-    ) -> list[dict[str, Any]]: ...
-
-    async def show_file(self, file_id: str) -> dict[str, Any]: ...
-
-    async def find_files(
-        self, name: str, *, folder_id: str | None = None
-    ) -> list[dict[str, Any]]: ...
-
-    async def upload_bytes(
-        self,
-        data: bytes,
-        *,
-        name: str | None = None,
-        folder_id: str | None = None,
-        comment: str | None = None,
-        is_sensitive: bool = False,
-        force: bool = False,
-        content_type: str | None = None,
-    ) -> dict[str, Any]: ...
-
-    async def upload_path(
-        self,
-        path: str | Path,
-        *,
-        name: str | None = None,
-        folder_id: str | None = None,
-        comment: str | None = None,
-        is_sensitive: bool = False,
-        force: bool = False,
-        content_type: str | None = None,
-    ) -> dict[str, Any]: ...
-
-    async def upload_from_url(
-        self,
-        url: str,
-        *,
-        folder_id: str | None = None,
-        name: str | None = None,
-        comment: str | None = None,
-        is_sensitive: bool = False,
-        force: bool = False,
-    ) -> dict[str, Any]: ...
-
-    async def delete_file(self, file_id: str) -> dict[str, Any]: ...
-
-    async def update_file(
-        self,
-        file_id: str,
-        *,
-        name: str | None = None,
-        folder_id: str | None = None,
-        comment: str | None = None,
-        is_sensitive: bool | None = None,
-    ) -> dict[str, Any]: ...
-
-    async def download_bytes(
-        self, file_id: str, *, thumbnail: bool = False, max_bytes: int | None = None
-    ) -> bytes: ...
-
-    async def download_to_path(
-        self,
-        file_id: str,
-        path: str | Path,
-        *,
-        thumbnail: bool = False,
-        chunk_size: int = 1024 * 1024,
-    ) -> Path: ...
-
-    async def list_folders(
-        self,
-        *,
-        limit: int = 10,
-        since_id: str | None = None,
-        until_id: str | None = None,
-        since_date: int | None = None,
-        until_date: int | None = None,
-        folder_id: str | None = None,
-    ) -> list[dict[str, Any]]: ...
-
-    async def create_folder(
-        self, name: str, *, parent_id: str | None = None
-    ) -> dict[str, Any]: ...
-
-    async def find_folders(
-        self, name: str, *, parent_id: str | None = None
-    ) -> list[dict[str, Any]]: ...
-
-    async def show_folder(self, folder_id: str) -> dict[str, Any]: ...
-
-    async def update_folder(
-        self,
-        folder_id: str,
-        *,
-        name: str | None = None,
-        parent_id: str | None = None,
-    ) -> dict[str, Any]: ...
-
-    async def delete_folder(self, folder_id: str) -> dict[str, Any]: ...
+__all__ = ("MisskeyDrive",)
 
 
 class MisskeyDrive:

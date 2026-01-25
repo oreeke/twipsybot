@@ -15,7 +15,6 @@ __all__ = [
     "ConfigKeys",
     "MisskeyAPI",
     "MisskeyDrive",
-    "DriveIO",
     "OpenAIAPI",
     "StreamingClient",
     "ChannelType",
@@ -36,7 +35,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ConfigKeys": (".shared.config_keys", "ConfigKeys"),
     "MisskeyAPI": (_MISSKEY_API_MODULE, "MisskeyAPI"),
     "MisskeyDrive": (_MISSKEY_DRIVE_MODULE, "MisskeyDrive"),
-    "DriveIO": (_MISSKEY_DRIVE_MODULE, "DriveIO"),
     "OpenAIAPI": (".clients.openai.openai_api", "OpenAIAPI"),
     "StreamingClient": (".clients.misskey.streaming", "StreamingClient"),
     "ChannelType": (_CHANNELS_MODULE, "ChannelType"),
@@ -55,7 +53,7 @@ if TYPE_CHECKING:
     from .plugin import PluginBase, PluginContext, PluginManager
     from .bot.runtime import BotRuntime
     from .clients.misskey.misskey_api import MisskeyAPI
-    from .clients.misskey.drive import DriveIO, MisskeyDrive
+    from .clients.misskey.drive import MisskeyDrive
     from .clients.openai.openai_api import OpenAIAPI
     from .clients.misskey.channels import ChannelType
     from .clients.misskey.streaming import StreamingClient

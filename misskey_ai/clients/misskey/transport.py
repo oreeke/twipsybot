@@ -30,7 +30,7 @@ class TCPClient:
         if self.__session is None or self.__session.closed:
             self.__session = aiohttp.ClientSession(
                 headers=self._default_headers,
-                timeout=aiohttp.ClientTimeout(total=API_TIMEOUT, connect=API_TIMEOUT),
+                timeout=aiohttp.ClientTimeout(total=API_TIMEOUT),
                 connector=self._connector,
                 connector_owner=True,
             )
@@ -55,16 +55,9 @@ class TCPClient:
         if not silent:
             logger.debug("TCP session closed")
 
-    async def ws_connect(self, url: str, *, compress: int = 0) -> Any:
+    async def ws_connect(self, url: str) -> Any:
         try:
-            return await self.session.ws_connect(
-                url,
-                autoclose=False,
-                max_msg_size=0,
-                timeout=60,
-                headers={"User-Agent": self.user_agent},
-                compress=compress,
-            )
+            return await self.session.ws_connect(url)
         except aiohttp.ClientConnectorError as e:
             logger.error(f"TCP client connection failed: {e}")
             raise ClientConnectorError()

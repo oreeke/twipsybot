@@ -3,5 +3,14 @@
 enabled: false                         # 是否启用插件
 priority: 100                          # 插件优先级（数字越大越先执行）
 
-start_line: 1                          # 起始行数，仅在数据库表不存在时生效
-prefix_template: "以{topic}为主题，"    # 主题前缀模板，{topic}会被自动替换
+source: "txt"                          # 数据源：txt/rss
+
+txt_start_line: 1                      # TXT 起始行数，仅在插件数据不存在时生效
+txt_ai_prefix: "以{topic}为主题，"      # TXT 交给 AI 的提示模板，{topic} 为装载的主题
+
+rss_list:                              # RSS 订阅列表（source=rss 时生效）
+  - "https://example.com/feed.xml"
+  - "https://example.com/rss"
+
+rss_ai: false                          # RSS 是否交给 AI 处理
+rss_ai_prefix: ""                      # RSS 交给 AI 的提示模板；可用 {summary}/{title}/{link}；留空使用默认值

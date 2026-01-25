@@ -53,20 +53,60 @@ class AutoPostService:
         self, plugin_results: list[Any], max_posts: int, local_only: bool | None
     ) -> bool:
         for result in plugin_results:
-            if result and result.get("content"):
-                content = result.get("content")
-                visibility = result.get(
-                    "visibility",
-                    self.bot.config.get(ConfigKeys.BOT_AUTO_POST_VISIBILITY),
-                )
-                await self.bot.misskey.create_note(
-                    content, visibility=visibility, local_only=local_only
-                )
-                self.post_count()
-                logger.info(f"Auto-post succeeded: {self.bot.format_log_text(content)}")
-                logger.info(f"Daily post count: {self.posts_today}/{max_posts}")
+            extracted = self._extract_plugin_post_request(result)
+            if not extracted:
+                continue
+            visibility, contents = extracted
+            posted_any = await self._post_plugin_contents(
+                contents, visibility, max_posts, local_only
+            )
+            if posted_any:
                 return True
         return False
+
+    def _extract_plugin_post_request(
+        self, result: Any
+    ) -> tuple[str | None, list[str]] | None:
+        if not isinstance(result, dict):
+            return None
+        visibility = result.get(
+            "visibility",
+            self.bot.config.get(ConfigKeys.BOT_AUTO_POST_VISIBILITY),
+        )
+        contents = self._extract_plugin_contents(result)
+        if not contents:
+            return None
+        return visibility, contents
+
+    @staticmethod
+    def _extract_plugin_contents(result: dict[str, Any]) -> list[str]:
+        contents_value = result.get("contents")
+        if isinstance(contents_value, list):
+            return [c for c in contents_value if isinstance(c, str) and c]
+        content_value = result.get("content")
+        if isinstance(content_value, str) and content_value:
+            return [content_value]
+        return []
+
+    async def _post_plugin_contents(
+        self,
+        contents: list[str],
+        visibility: str | None,
+        max_posts: int,
+        local_only: bool | None,
+    ) -> bool:
+        posted_any = False
+        for content in contents:
+            if not self.bot.runtime.running or not self.check_post_counter(max_posts):
+                return posted_any
+            await self.bot.misskey.create_note(
+                content, visibility=visibility, local_only=local_only
+            )
+            self.post_count()
+            posted_any = True
+            logger.info(f"Auto-post succeeded: {self.bot.format_log_text(content)}")
+            logger.info(f"Daily post count: {self.posts_today}/{max_posts}")
+        return posted_any
 
     async def _generate_ai_post(
         self, plugin_results: list[Any], max_posts: int, local_only: bool | None

@@ -8,7 +8,6 @@ from misskey_ai.shared.config_keys import ConfigKeys
 from misskey_ai.shared.utils import (
     get_memory_usage,
     get_system_info,
-    health_check,
     normalize_tokens,
 )
 
@@ -42,9 +41,26 @@ class CmdHandlersMixin:
         return self._format_code_block("可用命令", help_lines)
 
     def _get_status_text(self) -> str:
-        status = "运行中" if health_check() else "异常"
+        bot = getattr(self, "bot", None)
         allowed_count = len(self.allowed_users)
-        return f"机器人状态: {status}\n授权用户数: {allowed_count}"
+        if not bot:
+            return f"机器人状态: 未注入\n授权用户数: {allowed_count}"
+
+        runtime_running = bool(getattr(getattr(bot, "runtime", None), "running", False))
+        status = "运行中" if runtime_running else "未运行"
+
+        streaming = getattr(bot, "streaming", None)
+        streaming_state = getattr(streaming, "state", None)
+        ws = getattr(streaming, "ws_connection", None)
+        ws_open = bool(ws and not getattr(ws, "closed", True))
+
+        parts = [f"机器人状态: {status}"]
+        if isinstance(streaming_state, str) and streaming_state:
+            parts.append(
+                f"Streaming: {streaming_state} ({'connected' if ws_open else 'disconnected'})"
+            )
+        parts.append(f"授权用户数: {allowed_count}")
+        return "\n".join(parts)
 
     @staticmethod
     def _get_system_info() -> str:

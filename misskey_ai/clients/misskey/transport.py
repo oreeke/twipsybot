@@ -7,7 +7,7 @@ from loguru import logger
 from ...shared.constants import API_TIMEOUT
 from ...shared.exceptions import ClientConnectorError
 
-__all__ = ("TCPClient", "client_session")
+__all__ = ("TCPClient",)
 
 
 class TCPClient:
@@ -61,6 +61,3 @@ class TCPClient:
         except aiohttp.ClientConnectorError as e:
             logger.error(f"TCP client connection failed: {e}")
             raise ClientConnectorError()
-
-
-client_session: TCPClient = TCPClient()

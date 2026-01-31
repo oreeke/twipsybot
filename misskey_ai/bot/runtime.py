@@ -18,13 +18,7 @@ class BotRuntime:
         loop: asyncio.AbstractEventLoop | None = None,
     ):
         self.bot = bot
-        if loop is not None:
-            self.loop = loop
-        else:
-            try:
-                self.loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self.loop = asyncio.get_event_loop()
+        self.loop = loop or asyncio.get_running_loop()
         self.startup_time = datetime.now(timezone.utc)
         self.running = False
         self.tasks: dict[str, asyncio.Task[Any]] = {}

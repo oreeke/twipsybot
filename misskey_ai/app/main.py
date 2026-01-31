@@ -28,7 +28,6 @@ class BotRunner:
         config = Config()
         await config.load()
         log_path = Path(config.get(ConfigKeys.LOG_PATH))
-        log_path.parent.mkdir(parents=True, exist_ok=True)
         logger.add(
             log_path,
             level=config.get(ConfigKeys.LOG_LEVEL),
@@ -43,7 +42,12 @@ class BotRunner:
             self._setup_monitoring_and_signals()
             await self.shutdown_event.wait()
         finally:
-            await self.shutdown()
+            try:
+                await asyncio.shield(self.shutdown())
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Error during shutdown")
 
     def _setup_monitoring_and_signals(self) -> None:
         signals = (
@@ -81,42 +85,23 @@ class BotRunner:
 
 
 def main() -> int:
-    runner = BotRunner()
     try:
-        asyncio.run(runner.run())
+        asyncio.run(BotRunner().run())
         logger.info("Bye")
         return 0
     except KeyboardInterrupt:
-        try:
-            asyncio.run(runner.shutdown())
-        except Exception:
-            logger.exception("Error during shutdown")
         return 130
-    except (
-        OSError,
-        ValueError,
-        TypeError,
-        KeyError,
-        RuntimeError,
-        ImportError,
-        ConfigurationError,
-        APIConnectionError,
-        AuthenticationError,
-    ) as e:
-        if isinstance(e, (ConfigurationError, AuthenticationError, APIConnectionError)):
-            logger.error(f"Startup error: {e}")
-        else:
-            logger.exception("Unhandled exception during startup")
-        try:
-            asyncio.run(runner.shutdown())
-        except Exception:
-            logger.exception("Error during shutdown")
-        if isinstance(e, ConfigurationError):
-            return 2
-        if isinstance(e, AuthenticationError):
-            return 3
-        if isinstance(e, APIConnectionError):
-            return 4
+    except ConfigurationError as e:
+        logger.error(f"Startup error: {e}")
+        return 2
+    except AuthenticationError as e:
+        logger.error(f"Startup error: {e}")
+        return 3
+    except APIConnectionError as e:
+        logger.error(f"Startup error: {e}")
+        return 4
+    except Exception:
+        logger.exception("Unhandled exception during startup")
         return 1
 
 

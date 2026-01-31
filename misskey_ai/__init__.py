@@ -24,7 +24,6 @@ __all__ = [
     "PluginContext",
     "PluginManager",
     "TCPClient",
-    "client_session",
 ]
 
 _EXPORTS: dict[str, tuple[str, str]] = {
@@ -44,7 +43,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "PluginContext": (_PLUGIN_MODULE, "PluginContext"),
     "PluginManager": (_PLUGIN_MODULE, "PluginManager"),
     "TCPClient": (".clients.misskey.transport", "TCPClient"),
-    "client_session": (".clients.misskey.transport", "client_session"),
 }
 
 if TYPE_CHECKING:
@@ -57,7 +55,7 @@ if TYPE_CHECKING:
     from .clients.openai.openai_api import OpenAIAPI
     from .clients.misskey.channels import ChannelType
     from .clients.misskey.streaming import StreamingClient
-    from .clients.misskey.transport import TCPClient, client_session
+    from .clients.misskey.transport import TCPClient
     from .shared.config import Config
     from .shared.config_keys import ConfigKeys
     from .db.sqlite import ConnectionPool, DBManager

@@ -1,10 +1,8 @@
 import asyncio
-import json
 import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any
-from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import aiohttp
 from cachetools import TTLCache
@@ -17,27 +15,28 @@ from ...shared.constants import (
     STREAM_QUEUE_PUT_TIMEOUT,
     STREAM_WORKERS,
 )
-from ...shared.exceptions import WebSocketConnectionError, WebSocketReconnectError
-from ...shared.utils import redact_misskey_access_token
+from ...shared.exceptions import WebSocketConnectionError
 from .channels import ChannelSpec, ChannelType
 from .events import _StreamingEventsMixin
-from .transport import client_session
+from .socket import _StreamingSocketMixin
+from .transport import TCPClient
 
 __all__ = ("StreamingClient",)
 
 
-class StreamingClient(_StreamingEventsMixin):
+class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
     def __init__(
         self,
         instance_url: str,
         access_token: str,
         *,
         log_dump_events: bool = False,
+        transport: TCPClient | None = None,
     ):
         self.instance_url = instance_url.rstrip("/")
         self.access_token = access_token
         self.ws_connection: aiohttp.ClientWebSocketResponse | None = None
-        self.transport = client_session
+        self.transport = transport or TCPClient()
         self.log_dump_events = log_dump_events
         self.state = "initializing"
         self.channels: dict[str, dict[str, Any]] = {}
@@ -136,57 +135,6 @@ class StreamingClient(_StreamingEventsMixin):
         self.processed_events.clear()
         self._send_buffer.clear()
         self.state = "disconnected"
-
-    @property
-    def _ws_available(self) -> bool:
-        return self.ws_connection and not self.ws_connection.closed
-
-    def _buffer_outgoing(self, message: dict[str, Any]) -> None:
-        if len(self._send_buffer) >= STREAM_QUEUE_MAX:
-            try:
-                self._send_buffer.popleft()
-            except IndexError:
-                pass
-        self._send_buffer.append(message)
-
-    async def _send_or_buffer(self, message: dict[str, Any]) -> None:
-        async with self._send_lock:
-            if not self._ws_available:
-                self._buffer_outgoing(message)
-                return
-            try:
-                await self.ws_connection.send_json(message)
-            except (aiohttp.ClientError, OSError) as e:
-                self._buffer_outgoing(message)
-                await self._close_websocket()
-                error_msg = redact_misskey_access_token(str(e))
-                logger.debug(f"WebSocket send failed; reconnecting: {error_msg}")
-                return
-
-    async def _send_control(self, message: dict[str, Any]) -> None:
-        async with self._send_lock:
-            if not self._ws_available:
-                raise WebSocketReconnectError()
-            try:
-                await self.ws_connection.send_json(message)
-            except (aiohttp.ClientError, OSError) as e:
-                await self._close_websocket()
-                error_msg = redact_misskey_access_token(str(e))
-                logger.debug(f"WebSocket send failed; reconnecting: {error_msg}")
-                raise WebSocketReconnectError()
-
-    async def _flush_send_buffer(self) -> None:
-        while self._send_buffer and self._ws_available:
-            message = self._send_buffer.popleft()
-            await self._send_control(message)
-
-    async def _reconnect_with_backoff(self, delay_seconds: float) -> None:
-        await self._close_websocket()
-        await asyncio.sleep(delay_seconds)
-        await self._connect_websocket()
-        await self._resubscribe_channels()
-        await self._flush_send_buffer()
-        self.state = "connected"
 
     async def connect_channel(
         self, channel: ChannelType | str, params: dict[str, Any] | None = None
@@ -315,69 +263,6 @@ class StreamingClient(_StreamingEventsMixin):
             logger.info("Streaming client started")
             self._first_connection = False
 
-    async def _connect_websocket(self) -> None:
-        async with self._ws_lock:
-            if self._ws_available:
-                return
-        raw = self.instance_url.strip().rstrip("/")
-        if "://" not in raw:
-            raw = f"https://{raw}"
-        parsed = urlsplit(raw)
-        scheme = (parsed.scheme or "").lower()
-        if scheme not in {"https", "http"}:
-            raise ValueError("Unsupported instance URL scheme")
-        ws_scheme = "wss" if scheme == "https" else "ws"
-        base_ws_url = urlunsplit(
-            (ws_scheme, parsed.netloc, parsed.path.rstrip("/"), "", "")
-        ).rstrip("/")
-        qs = urlencode({"i": self.access_token})
-        ws_url = f"{base_ws_url}/streaming?{qs}"
-        safe_url = f"{base_ws_url}/streaming"
-        try:
-            self.ws_connection = await self.transport.ws_connect(ws_url)
-            logger.debug(f"WebSocket connected: {safe_url}")
-        except (aiohttp.ClientError, OSError) as e:
-            await self._cleanup_failed_connection()
-            error_msg = redact_misskey_access_token(str(e))
-            logger.error(f"WebSocket connection failed: {error_msg}")
-            raise WebSocketConnectionError()
-
-    async def _listen_messages(self) -> None:
-        while self.running:
-            if not self._ws_available:
-                raise WebSocketReconnectError()
-            try:
-                msg = await asyncio.wait_for(self.ws_connection.receive(), timeout=10)
-                if msg.type in (
-                    aiohttp.WSMsgType.CLOSED,
-                    aiohttp.WSMsgType.CLOSING,
-                    aiohttp.WSMsgType.ERROR,
-                ):
-                    raise WebSocketReconnectError()
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    data = json.loads(msg.data)
-                    await self._process_message(data, msg.data)
-            except TimeoutError:
-                continue
-            except (
-                aiohttp.ClientError,
-                json.JSONDecodeError,
-                OSError,
-            ):
-                raise WebSocketReconnectError()
-            except (ValueError, TypeError, AttributeError, KeyError) as e:
-                logger.error(f"Failed to parse message: {e}")
-                continue
-
-    async def _close_websocket(self) -> None:
-        async with self._ws_lock:
-            if self.ws_connection and not self.ws_connection.closed:
-                try:
-                    await self.ws_connection.close()
-                except Exception:
-                    pass
-            self.ws_connection = None
-
     async def _resubscribe_channels(self) -> None:
         for channel_id, info in self.channels.items():
             channel_name = info.get("name")
@@ -394,12 +279,6 @@ class StreamingClient(_StreamingEventsMixin):
                     },
                 }
             )
-
-    async def _cleanup_failed_connection(self) -> None:
-        try:
-            await self._close_websocket()
-        except Exception as e:
-            logger.error(f"Error cleaning up failed connection: {e}")
 
     async def _disconnect_all_channels(self) -> None:
         for channel_id in self.channels:

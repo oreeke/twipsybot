@@ -14,6 +14,7 @@ from ..clients.misskey.misskey_api import MisskeyAPI
 from ..clients.openai import OpenAIAPI
 from ..clients.misskey.channels import ChannelSpec, ChannelType
 from ..clients.misskey.streaming import StreamingClient
+from ..clients.misskey.transport import TCPClient
 from ..shared.config import Config
 from ..shared.config_keys import ConfigKeys
 from ..shared.constants import (
@@ -54,11 +55,15 @@ class MisskeyBot:
         try:
             instance_url = config.get_required(ConfigKeys.MISSKEY_INSTANCE_URL)
             access_token = config.get_required(ConfigKeys.MISSKEY_ACCESS_TOKEN)
-            self.misskey = MisskeyAPI(instance_url, access_token)
+            self._misskey_transport = TCPClient()
+            self.misskey = MisskeyAPI(
+                instance_url, access_token, transport=self._misskey_transport
+            )
             self.streaming = StreamingClient(
                 instance_url,
                 access_token,
                 log_dump_events=bool(config.get(ConfigKeys.LOG_DUMP_EVENTS)),
+                transport=self._misskey_transport,
             )
             self.openai = OpenAIAPI(
                 config.get_required(ConfigKeys.OPENAI_API_KEY),

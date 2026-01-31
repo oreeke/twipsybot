@@ -21,7 +21,6 @@ __all__ = (
     "extract_username",
     "extract_user_handle",
     "redact_misskey_access_token",
-    "health_check",
 )
 
 _MISSKEY_I_PARAM_RE = re.compile(r"([?&]i=)[^&#\s]+")
@@ -115,11 +114,3 @@ def extract_user_handle(message: dict[str, Any]) -> str | None:
     if isinstance(host, str) and (h := host.strip()):
         return f"{u}@{h}"
     return u
-
-
-def health_check() -> bool:
-    try:
-        return psutil.Process().is_running()
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return False

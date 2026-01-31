@@ -22,7 +22,4 @@ RUN useradd -r -u 10001 -m -U -s /usr/sbin/nologin appuser && \
 
 USER appuser
 
-HEALTHCHECK --interval=60s --timeout=10s --retries=3 --start-period=30s \
-    CMD python -c "from misskey_ai.shared.utils import health_check; exit(0 if health_check() else 1)"
-
 CMD ["python", "run.py"]

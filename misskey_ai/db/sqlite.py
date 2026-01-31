@@ -68,7 +68,6 @@ class DBManager:
         if db_path is None:
             db_path = self.config.get(ConfigKeys.DB_PATH)
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(exist_ok=True)
         self._pool = ConnectionPool(str(self.db_path), max_connections)
         self._initialized = False
 

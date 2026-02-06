@@ -1,30 +1,7 @@
-from __future__ import annotations
+from importlib import import_module
+from typing import Any
 
-from typing import TYPE_CHECKING, Any
-
-_MISSKEY_API_MODULE = ".clients.misskey.misskey_api"
-_MISSKEY_DRIVE_MODULE = ".clients.misskey.drive"
-_CHANNELS_MODULE = ".clients.misskey.channels"
 _PLUGIN_MODULE = ".plugin"
-
-__all__ = [
-    "MisskeyBot",
-    "BotRunner",
-    "BotRuntime",
-    "Config",
-    "ConfigKeys",
-    "MisskeyAPI",
-    "MisskeyDrive",
-    "OpenAIAPI",
-    "StreamingClient",
-    "ChannelType",
-    "DBManager",
-    "ConnectionPool",
-    "PluginBase",
-    "PluginContext",
-    "PluginManager",
-    "TCPClient",
-]
 
 _EXPORTS: dict[str, tuple[str, str]] = {
     "MisskeyBot": (".bot.core", "MisskeyBot"),
@@ -32,11 +9,11 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "BotRuntime": (".bot.runtime", "BotRuntime"),
     "Config": (".shared.config", "Config"),
     "ConfigKeys": (".shared.config_keys", "ConfigKeys"),
-    "MisskeyAPI": (_MISSKEY_API_MODULE, "MisskeyAPI"),
-    "MisskeyDrive": (_MISSKEY_DRIVE_MODULE, "MisskeyDrive"),
+    "MisskeyAPI": (".clients.misskey.misskey_api", "MisskeyAPI"),
+    "MisskeyDrive": (".clients.misskey.drive", "MisskeyDrive"),
     "OpenAIAPI": (".clients.openai.openai_api", "OpenAIAPI"),
     "StreamingClient": (".clients.misskey.streaming", "StreamingClient"),
-    "ChannelType": (_CHANNELS_MODULE, "ChannelType"),
+    "ChannelType": (".clients.misskey.channels", "ChannelType"),
     "DBManager": (".db.sqlite", "DBManager"),
     "ConnectionPool": (".db.sqlite", "ConnectionPool"),
     "PluginBase": (_PLUGIN_MODULE, "PluginBase"),
@@ -45,32 +22,18 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "TCPClient": (".clients.misskey.transport", "TCPClient"),
 }
 
-if TYPE_CHECKING:
-    from .app.main import BotRunner
-    from .bot.core import MisskeyBot
-    from .plugin import PluginBase, PluginContext, PluginManager
-    from .bot.runtime import BotRuntime
-    from .clients.misskey.misskey_api import MisskeyAPI
-    from .clients.misskey.drive import MisskeyDrive
-    from .clients.openai.openai_api import OpenAIAPI
-    from .clients.misskey.channels import ChannelType
-    from .clients.misskey.streaming import StreamingClient
-    from .clients.misskey.transport import TCPClient
-    from .shared.config import Config
-    from .shared.config_keys import ConfigKeys
-    from .db.sqlite import ConnectionPool, DBManager
+__all__ = list(_EXPORTS)
 
 
 def __getattr__(name: str) -> Any:
-    if name not in _EXPORTS:
-        raise AttributeError(name)
-    module_name, attr_name = _EXPORTS[name]
-    from importlib import import_module
-
+    try:
+        module_name, attr_name = _EXPORTS[name]
+    except KeyError:
+        raise AttributeError(name) from None
     value = getattr(import_module(module_name, __name__), attr_name)
     globals()[name] = value
     return value
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()).union(_EXPORTS))
+    return sorted(set(globals()) | set(_EXPORTS))

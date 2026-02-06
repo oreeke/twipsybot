@@ -387,10 +387,6 @@ class Config:
             raise ConfigurationError(f"missing required config: {desc or key}")
         return value
 
-    @staticmethod
-    def _get_builtin_default(key: str) -> Any:
-        return _CONFIG_DEFAULTS.get(key)
-
     def _validate_config(self) -> None:
         self._validate_required_configs()
         self._validate_types_and_ranges()

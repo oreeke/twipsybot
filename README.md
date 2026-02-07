@@ -105,7 +105,7 @@ log:
 </details>
 
 ```bash
-pip install -e .    # 安装依赖
+pip install -e .
 
 twipsybot up        # 启动
 twipsybot status    # 状态
@@ -127,10 +127,12 @@ After=network.target
 [Service]
 Type=exec
 WorkingDirectory=/path/to/twipsybot
-Environment=TWIPSYBOT_UP_MODE=foreground
 ExecStart=/path/to/envs/twipsybot/bin/twipsybot up
 KillMode=control-group
 TimeoutStopSec=5
+Environment=TWIPSYBOT_UP_MODE=foreground \
+            PYTHONUNBUFFERED=1 \
+            PYTHONIOENCODING=utf-8
 
 [Install]
 WantedBy=multi-user.target
@@ -209,11 +211,11 @@ docker compose up -d
 
 | 供应商 | OpenAI-SDK | 多模态 |
 | :---: | :---: | --- |
-| [OpenAI](https://platform.openai.com/docs/overview) | ✅ | 📝 👁️ |
+| [OpenAI](https://platform.openai.com/docs/quickstart) | ✅ | 📝 👁️ |
 | [DeepSeek](https://api-docs.deepseek.com/) | ✅ | 📝 |
-| [xAI](https://docs.x.ai/docs/guides/migration) | ✅ | 📝 👁️ |
+| [xAI](https://docs.x.ai/developers/api-reference) | ✅ | 📝 👁️ |
 | [Gemini](https://ai.google.dev/gemini-api/docs/openai) | ✅ | 📝 👁️ |
-| [Claude](https://docs.anthropic.com/en/api/openai-sdk) | ✅ | 📝 👁️ |
+| [Claude](https://platform.claude.com/docs/en/api/openai-sdk) | ✅ | 📝 👁️ |
 | [Ollama](https://ollama.com/blog/openai-compatibility) | ✅ | 📝 👁️ |
 
 ### 插件系统

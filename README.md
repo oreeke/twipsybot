@@ -119,7 +119,7 @@ twipsybot help      # 帮助
 
 ```ini
 [Unit]
-Description=Misskey AI Service
+Description=TwipsyBot Service
 After=network.target
 
 [Service]

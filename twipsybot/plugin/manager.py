@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import inspect
 import re
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from .context import PluginContext
 __all__ = ("PluginManager",)
 
 _PLUGIN_CONFIG_FILENAME = "config.yaml"
+_PLUGIN_HOOK_TIMEOUT_SECONDS = 60.0
 
 
 class PluginManager:
@@ -101,10 +103,16 @@ class PluginManager:
             return {"enabled": False}
         try:
             with open(config_file, encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
+                loaded = yaml.safe_load(f) or {}
+            if not isinstance(loaded, dict):
+                logger.error(
+                    f"Error loading plugin config for {plugin_dir.name}: root node must be an object"
+                )
+                return {"enabled": False}
+            return loaded
         except Exception as e:
             logger.error(f"Error loading plugin config for {plugin_dir.name}: {e}")
-            return {}
+            return {"enabled": False}
 
     def _load_plugin(self, plugin_dir: Path, plugin_config: dict[str, Any]) -> None:
         try:
@@ -240,34 +248,70 @@ class PluginManager:
     async def on_shutdown(self) -> None:
         await self.call_plugin_hook("on_shutdown")
 
-    async def call_plugin_hook(self, hook_name: str, *args, **kwargs) -> list[Any]:
-        results = []
-        enabled_plugins = sorted(
-            [p for p in self.plugins.values() if p.enabled],
+    @staticmethod
+    async def _await_maybe(call: Any) -> Any:
+        if not inspect.isawaitable(call):
+            return call
+        return await call
+
+    def _iter_enabled_plugins(self):
+        yield from sorted(
+            (p for p in self.plugins.values() if p.enabled),
             key=lambda x: x.priority,
             reverse=True,
         )
+
+    async def _call_single_plugin_hook(
+        self, plugin: PluginBase, hook_name: str, *, args, kwargs
+    ) -> Any | None:
+        method = getattr(plugin, hook_name, None)
+        if method is None:
+            return None
+        timeout = (
+            _PLUGIN_HOOK_TIMEOUT_SECONDS
+            if hook_name in {"on_message", "on_mention"}
+            else None
+        )
+        try:
+            call = method(*args, **kwargs)
+            if timeout is None:
+                result = await self._await_maybe(call)
+            else:
+                async with asyncio.timeout(timeout):
+                    result = await self._await_maybe(call)
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            logger.warning(
+                f"Plugin hook timeout: plugin={plugin.name} hook={hook_name} timeout={timeout:g}s"
+            )
+            return None
+        except Exception as e:
+            logger.exception(
+                f"Unhandled exception in plugin {plugin.name} hook {hook_name}: {e}"
+            )
+            return None
+        if result is None:
+            return None
+        if not plugin._validate_plugin_response(result):
+            logger.warning(
+                f"Ignoring invalid plugin result: plugin={plugin.name} hook={hook_name} type={type(result).__name__}"
+            )
+            return None
+        return result
+
+    async def call_plugin_hook(self, hook_name: str, *args, **kwargs) -> list[Any]:
+        results: list[Any] = []
         stop_on_handled = hook_name in {"on_message", "on_mention"}
-        for plugin in enabled_plugins:
-            if not hasattr(plugin, hook_name):
+        for plugin in self._iter_enabled_plugins():
+            result = await self._call_single_plugin_hook(
+                plugin, hook_name, args=args, kwargs=kwargs
+            )
+            if result is None:
                 continue
-            try:
-                if (
-                    result := await getattr(plugin, hook_name)(*args, **kwargs)
-                ) is not None:
-                    results.append(result)
-                    if (
-                        stop_on_handled
-                        and isinstance(result, dict)
-                        and result.get("handled") is True
-                    ):
-                        break
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.exception(
-                    f"Unhandled exception in plugin {plugin.name} hook {hook_name}: {e}"
-                )
+            results.append(result)
+            if stop_on_handled and result.get("handled") is True:
+                break
         return results
 
     def get_plugin_info(self) -> list[dict[str, Any]]:

@@ -48,15 +48,8 @@ class ResponseLimiter:
     def _parse_user_list(value: Any) -> set[str]:
         return set(normalize_tokens(value, lower=True))
 
-    def _load_response_whitelist_users(self) -> set[str]:
-        return self._parse_user_list(
-            self._config.get(ConfigKeys.BOT_RESPONSE_WHITELIST)
-        )
-
-    def _load_response_blacklist_users(self) -> set[str]:
-        return self._parse_user_list(
-            self._config.get(ConfigKeys.BOT_RESPONSE_BLACKLIST)
-        )
+    def _load_response_user_set(self, key: str) -> set[str]:
+        return self._parse_user_list(self._config.get(key))
 
     def _canonicalize_user_handle(self, username: str) -> str | None:
         if not isinstance(self._instance_url, str) or not self._instance_url:
@@ -81,7 +74,7 @@ class ResponseLimiter:
     def _is_response_whitelisted_user(
         self, *, user_id: str, handle: str | None
     ) -> bool:
-        whitelist = self._load_response_whitelist_users()
+        whitelist = self._load_response_user_set(ConfigKeys.BOT_RESPONSE_WHITELIST)
         if not whitelist:
             return False
         return any(
@@ -90,7 +83,7 @@ class ResponseLimiter:
         )
 
     def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
-        blacklist = self._load_response_blacklist_users()
+        blacklist = self._load_response_user_set(ConfigKeys.BOT_RESPONSE_BLACKLIST)
         if not blacklist:
             return False
         return any(

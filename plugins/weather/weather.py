@@ -6,6 +6,7 @@ import aiohttp
 from loguru import logger
 
 from twipsybot.plugin import PluginBase
+from twipsybot.shared.utils import extract_username
 
 
 class WeatherPlugin(PluginBase):
@@ -52,7 +53,7 @@ class WeatherPlugin(PluginBase):
         text = data.get("text") or ""
         if "天气" not in text and "weather" not in text:
             return None
-        username = self._extract_username(data)
+        username = extract_username(data)
         cleaned_text = self.MENTION_PATTERN.sub("", text)
         location_match = self.LOCATION_BEFORE_KEYWORD_PATTERN.search(
             cleaned_text

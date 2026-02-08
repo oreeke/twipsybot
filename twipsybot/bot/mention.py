@@ -1,12 +1,18 @@
 import asyncio
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from ..shared.config_keys import ConfigKeys
-from ..shared.utils import extract_user_handle, extract_user_id, extract_username
+from ..shared.utils import (
+    extract_note_text,
+    extract_user_handle,
+    extract_user_id,
+    extract_username,
+    maybe_log_event_dump,
+    normalize_payload,
+)
 
 if TYPE_CHECKING:
     from .core import MisskeyBot
@@ -63,22 +69,6 @@ class MentionHandler:
             return reply_to_bot
         return self._is_bot_mentioned(text) or self._mentions_bot(note_data)
 
-    @staticmethod
-    def _effective_text(note_data: Any) -> str:
-        if not isinstance(note_data, dict):
-            return ""
-        parts: list[str] = []
-        for k in ("cw", "text"):
-            v = note_data.get(k)
-            if isinstance(v, str) and (s := v.strip()):
-                parts.append(s)
-        return "\n\n".join(parts).strip()
-
-    @staticmethod
-    def _note_payload(note: dict[str, Any]) -> dict[str, Any] | None:
-        payload = note.get("note")
-        return payload if isinstance(payload, dict) else None
-
     def _is_reply_to_bot(self, note_data: dict[str, Any]) -> bool:
         replied = note_data.get("reply")
         if not isinstance(replied, dict):
@@ -96,30 +86,30 @@ class MentionHandler:
 
     def _parse_reply_text(self, note_data: dict[str, Any]) -> str:
         parts: list[str] = []
-        if t := self._effective_text(note_data.get("reply")):
+        if t := extract_note_text(note_data.get("reply"), include_cw=True):
             parts.append(t)
-        if t := self._effective_text(note_data):
+        if t := extract_note_text(note_data, include_cw=True):
             parts.append(t)
         return "\n\n".join(parts).strip()
 
     async def _build_mention_prompt(
         self, mention: MentionContext, note: dict[str, Any]
     ) -> str:
-        note_data = self._note_payload(note)
+        note_data = normalize_payload(note, kind="mention")
         base = mention.text.strip()
         if not note_data:
             return base
         quoted_text = ""
         quoted = note_data.get("renote")
         if isinstance(quoted, dict):
-            quoted_text = self._effective_text(quoted)
+            quoted_text = extract_note_text(quoted, include_cw=True)
         elif isinstance((quoted_id := note_data.get("renoteId")), str) and quoted_id:
             try:
                 quoted_note = await self.bot.misskey.get_note(quoted_id)
             except Exception as e:
                 logger.debug(f"Failed to fetch quoted note: {quoted_id} - {e}")
             else:
-                quoted_text = self._effective_text(quoted_note)
+                quoted_text = extract_note_text(quoted_note, include_cw=True)
         if not quoted_text:
             return base
         if base:
@@ -166,7 +156,9 @@ class MentionHandler:
                 handle=mention.username,
                 log_incoming=log_incoming,
                 send_reply=send_reply,
-                plugin_call=lambda: self.bot.plugin_manager.on_mention(note),
+                plugin_call=lambda: self.bot.plugin_manager.call_plugin_hook(
+                    "on_mention", note
+                ),
                 plugin_kind="Mention",
                 plugin_log_sent=log_plugin_sent,
                 ai_generate=lambda: self._generate_ai_reply(mention, note),
@@ -179,12 +171,12 @@ class MentionHandler:
 
     def _parse(self, note: dict[str, Any]) -> MentionContext:
         try:
-            if self.bot.config.get(ConfigKeys.LOG_DUMP_EVENTS):
-                logger.opt(lazy=True).debug(
-                    "Mention data: {}",
-                    lambda: json.dumps(note, ensure_ascii=False, indent=2),
-                )
-            note_data = self._note_payload(note)
+            maybe_log_event_dump(
+                bool(self.bot.config.get(ConfigKeys.LOG_DUMP_EVENTS)),
+                kind="Mention",
+                payload=note,
+            )
+            note_data = normalize_payload(note, kind="mention")
             if not note_data:
                 return MentionContext(None, None, "", None, None)
             note_type = note.get("type")
@@ -198,7 +190,7 @@ class MentionHandler:
             if is_reply_event:
                 text = self._parse_reply_text(note_data)
             else:
-                text = self._effective_text(note_data)
+                text = extract_note_text(note_data, include_cw=True)
             reply_to_bot = self._is_reply_to_bot(note_data)
             should_handle = self._should_handle_note(
                 note_type=note_type,

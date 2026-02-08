@@ -1,5 +1,4 @@
 import asyncio
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -7,10 +6,13 @@ from loguru import logger
 
 from ..shared.config_keys import ConfigKeys
 from ..shared.utils import (
+    extract_chat_text,
+    extract_first_text,
     extract_user_handle,
     extract_user_id,
     extract_username,
-    get_first_truthy,
+    maybe_log_event_dump,
+    resolve_history_limit,
 )
 
 if TYPE_CHECKING:
@@ -49,11 +51,11 @@ class ChatHandler:
             return
         if self.bot.bot_user_id and extract_user_id(message) == self.bot.bot_user_id:
             return
-        if self.bot.config.get(ConfigKeys.LOG_DUMP_EVENTS):
-            logger.opt(lazy=True).debug(
-                "Chat data: {}",
-                lambda: json.dumps(message, ensure_ascii=False, indent=2),
-            )
+        maybe_log_event_dump(
+            bool(self.bot.config.get(ConfigKeys.LOG_DUMP_EVENTS)),
+            kind="Chat",
+            payload=message,
+        )
         try:
             await self._process(message)
         except asyncio.CancelledError:
@@ -127,7 +129,7 @@ class ChatHandler:
             )
 
         def plugin_after_sent(text: str) -> None:
-            user_text = get_first_truthy(message, "text", "content", default="")
+            user_text = extract_first_text(message, "text", "content")
             if not user_text:
                 return
             user_content = f"{ctx.username}: {user_text}" if ctx.room_id else user_text
@@ -162,7 +164,9 @@ class ChatHandler:
             handle=ctx.handle or ctx.mention_to,
             log_incoming=log_incoming,
             send_reply=send_reply,
-            plugin_call=lambda: self.bot.plugin_manager.on_message(message),
+            plugin_call=lambda: self.bot.plugin_manager.call_plugin_hook(
+                "on_message", message
+            ),
             plugin_kind="Chat",
             plugin_log_sent=log_plugin_sent,
             plugin_after_sent=plugin_after_sent,
@@ -172,7 +176,7 @@ class ChatHandler:
         )
 
     def _parse_chat_context(self, message: dict[str, Any]) -> _ChatContext | None:
-        text = get_first_truthy(message, "text", "content", "body", default="")
+        text = extract_chat_text(message)
         user_id = extract_user_id(message)
         if not isinstance(user_id, str) or not user_id:
             logger.debug("Chat missing required info: user_id is empty")
@@ -194,7 +198,7 @@ class ChatHandler:
         actor_id = room_id or user_id
         room_label = room_name or room_id
         return _ChatContext(
-            text=str(text or ""),
+            text=str(text),
             user_id=user_id,
             username=username,
             handle=handle,
@@ -264,10 +268,9 @@ class ChatHandler:
         limit: int | None = None,
     ) -> list[dict[str, str]]:
         try:
-            config_limit = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
-            limit_value = limit if isinstance(limit, int) else config_limit
-            if not isinstance(limit_value, int):
-                limit_value = 0
+            limit_value = resolve_history_limit(
+                self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
+            )
             if room_id:
                 return await self._get_room_chat_history(room_id, limit_value)
             if user_id:
@@ -290,7 +293,7 @@ class ChatHandler:
             is_assistant = bool(
                 bot_user_id and isinstance(sender_id, str) and sender_id == bot_user_id
             )
-            content = get_first_truthy(msg, "text", "content", "body", default="")
+            content = extract_chat_text(msg)
             if not is_assistant:
                 content = f"{extract_username(msg)}: {content}"
             history.append(
@@ -305,6 +308,6 @@ class ChatHandler:
         history: list[dict[str, str]] = []
         for msg in reversed(messages):
             role = "user" if extract_user_id(msg) == user_id else "assistant"
-            content = get_first_truthy(msg, "text", "content", "body", default="")
+            content = extract_chat_text(msg)
             history.append({"role": role, "content": content})
         return history

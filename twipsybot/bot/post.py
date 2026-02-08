@@ -40,7 +40,9 @@ class AutoPostService:
         if not self.bot.runtime.running or not self.check_post_counter(max_posts):
             return
         try:
-            plugin_results = await self.bot.plugin_manager.on_auto_post()
+            plugin_results = await self.bot.plugin_manager.call_plugin_hook(
+                "on_auto_post"
+            )
             if await self._try_plugin_post(plugin_results, max_posts, local_only):
                 return
             await self._generate_ai_post(plugin_results, max_posts, local_only)

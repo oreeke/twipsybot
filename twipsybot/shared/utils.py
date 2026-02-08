@@ -1,3 +1,4 @@
+import json
 import os
 import platform
 import re
@@ -16,11 +17,17 @@ __all__ = (
     "extract_user_handle",
     "extract_user_id",
     "extract_username",
+    "extract_chat_text",
+    "extract_first_text",
+    "extract_note_text",
     "get_first_truthy",
     "get_memory_usage",
     "get_system_info",
+    "maybe_log_event_dump",
     "normalize_tokens",
+    "normalize_payload",
     "redact_misskey_access_token",
+    "resolve_history_limit",
     "retry_async",
 )
 
@@ -95,6 +102,63 @@ def get_first_truthy(data: dict[str, Any], *keys: str, default: Any = "") -> Any
         if value := data.get(key):
             return value
     return default
+
+
+def extract_first_text(data: Any, *keys: str) -> str:
+    if not isinstance(data, dict):
+        return ""
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and (s := value.strip()):
+            return s
+    return ""
+
+
+def extract_chat_text(data: Any) -> str:
+    return extract_first_text(data, "text", "content", "body")
+
+
+def extract_note_text(
+    data: Any, *, include_cw: bool = True, allow_body_fallback: bool = False
+) -> str:
+    if not isinstance(data, dict):
+        return ""
+    parts: list[str] = []
+    if include_cw:
+        if isinstance((cw := data.get("cw")), str) and (s := cw.strip()):
+            parts.append(s)
+    if isinstance((text := data.get("text")), str) and (s := text.strip()):
+        parts.append(s)
+    elif allow_body_fallback:
+        if isinstance((body := data.get("body")), str) and (s := body.strip()):
+            parts.append(s)
+    return "\n\n".join(parts).strip()
+
+
+def normalize_payload(data: Any, *, kind: str) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {}
+    if kind != "chat" and isinstance(data.get("note"), dict):
+        return data["note"]
+    return data
+
+
+def maybe_log_event_dump(enabled: bool, *, kind: str, payload: Any) -> None:
+    if not enabled:
+        return
+    logger.opt(lazy=True).debug(
+        "{} data: {}",
+        lambda: kind,
+        lambda: json.dumps(payload, ensure_ascii=False, indent=2),
+    )
+
+
+def resolve_history_limit(config_value: Any, limit: int | None) -> int:
+    if isinstance(limit, int):
+        return limit
+    if isinstance(config_value, int):
+        return config_value
+    return 0
 
 
 def extract_user_id(message: dict[str, Any]) -> str | None:

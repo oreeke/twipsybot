@@ -5,7 +5,12 @@ from loguru import logger
 from twipsybot.clients.misskey.channels import ChannelType
 from twipsybot.plugin import PluginBase
 from twipsybot.shared.config_keys import ConfigKeys
-from twipsybot.shared.utils import normalize_tokens
+from twipsybot.shared.utils import (
+    extract_user_handle,
+    extract_user_id,
+    extract_username,
+    normalize_tokens,
+)
 
 
 class RadarPlugin(PluginBase):
@@ -206,7 +211,8 @@ class RadarPlugin(PluginBase):
         if not self.skip_self or not bot:
             return False
         bot_id = getattr(bot, "bot_user_id", None)
-        if bot_id and note.get("userId") == bot_id:
+        note_user_id = extract_user_id(note)
+        if bot_id and note_user_id == bot_id:
             return True
         bot_name = getattr(bot, "bot_username", None)
         return isinstance(bot_name, str) and bot_name and bot_name.lower() in variants
@@ -215,11 +221,7 @@ class RadarPlugin(PluginBase):
     def _format_reply_text(template: str, note: dict[str, Any]) -> str:
         if "{username}" not in template:
             return template
-        user = note.get("user")
-        if isinstance(user, dict) and isinstance(user.get("username"), str):
-            username = user["username"].strip() or "unknown"
-        else:
-            username = "unknown"
+        username = extract_username(note)
         return template.replace("{username}", username)
 
     async def _generate_ai_reply(self, note: dict[str, Any]) -> str | None:
@@ -272,15 +274,12 @@ class RadarPlugin(PluginBase):
         variants = self._extract_user_variants(note_data)
         if self._should_skip_self(note_data, variants):
             return None
-        username = (
-            str((note_data.get("user", {}) or {}).get("username", "unknown")).strip()
-            or "unknown"
-        )
+        username = extract_user_handle(note_data) or extract_username(note_data)
         try:
             bot = getattr(self, "bot", None)
             lock_ctx = None
             if bot:
-                lock_ctx = bot.lock_actor(note_data.get("userId"), username)
+                lock_ctx = bot.lock_actor(extract_user_id(note_data), username)
             if lock_ctx:
                 async with lock_ctx:
                     await self._act(note_data, note_id, channel)

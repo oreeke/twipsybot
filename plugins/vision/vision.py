@@ -6,7 +6,11 @@ from loguru import logger
 
 from twipsybot.plugin import PluginBase
 from twipsybot.shared.config_keys import ConfigKeys
-from twipsybot.shared.utils import get_first_truthy
+from twipsybot.shared.utils import (
+    extract_chat_text,
+    extract_note_text,
+    normalize_payload,
+)
 
 
 class VisionPlugin(PluginBase):
@@ -20,6 +24,18 @@ class VisionPlugin(PluginBase):
         self.default_prompt = str(
             self.config.get("default_prompt", "请描述图片内容并回答用户的问题。")
         )
+
+    def _use_responses_api(self) -> bool:
+        mode = self.global_config.get(ConfigKeys.OPENAI_API_MODE, "auto")
+        if not isinstance(mode, str):
+            return True
+        return mode.strip().lower() != "chat"
+
+    @staticmethod
+    def _make_text_part(text: str, *, use_responses: bool) -> dict[str, Any]:
+        if use_responses:
+            return {"type": "input_text", "text": text}
+        return {"type": "text", "text": text}
 
     @staticmethod
     def _normalize_image_mime(value: Any) -> str | None:
@@ -63,9 +79,14 @@ class VisionPlugin(PluginBase):
             return None
 
     @staticmethod
-    def _make_image_part(mime: str, data: bytes) -> dict[str, Any]:
+    def _make_image_part(
+        mime: str, data: bytes, *, use_responses: bool
+    ) -> dict[str, Any]:
         b64 = base64.b64encode(data).decode("ascii")
-        return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+        url = f"data:{mime};base64,{b64}"
+        if use_responses:
+            return {"type": "input_image", "image_url": url}
+        return {"type": "image_url", "image_url": {"url": url}}
 
     @staticmethod
     def _normalize_url(value: Any) -> str | None:
@@ -73,12 +94,6 @@ class VisionPlugin(PluginBase):
             return None
         url = value.strip().replace("`", "").strip()
         return url or None
-
-    @staticmethod
-    def _normalize_payload(data: dict[str, Any], *, kind: str) -> dict[str, Any]:
-        if kind != "chat" and isinstance(data.get("note"), dict):
-            return data["note"]
-        return data
 
     @staticmethod
     def _parse_size(value: Any, default: int) -> int:
@@ -123,19 +138,14 @@ class VisionPlugin(PluginBase):
 
     @staticmethod
     def _extract_text(data: dict[str, Any], *, kind: str) -> str:
-        data = VisionPlugin._normalize_payload(data, kind=kind)
+        data = normalize_payload(data, kind=kind)
         if kind == "chat":
-            raw = get_first_truthy(data, "text", "content", "body", default="")
-            return raw.strip() if isinstance(raw, str) else ""
-        parts: list[str] = []
-        for v in (data.get("cw"), data.get("text") or data.get("body")):
-            if isinstance(v, str) and (s := v.strip()):
-                parts.append(s)
-        return "\n\n".join(parts).strip()
+            return extract_chat_text(data)
+        return extract_note_text(data, include_cw=True, allow_body_fallback=True)
 
     @staticmethod
     def _extract_files(data: dict[str, Any], *, kind: str) -> list[dict[str, Any]]:
-        data = VisionPlugin._normalize_payload(data, kind=kind)
+        data = normalize_payload(data, kind=kind)
         files: list[dict[str, Any]] = []
         if kind == "chat":
             if isinstance(data.get("file"), dict):
@@ -168,19 +178,22 @@ class VisionPlugin(PluginBase):
     ) -> list[dict[str, Any]]:
         if not getattr(self, "drive", None) or not getattr(self, "openai", None):
             return []
+        use_responses = self._use_responses_api()
         text = self._extract_text(data, kind=kind)
         files = self._extract_files(data, kind=kind)[: self.max_images]
         images: list[dict[str, Any]] = []
         for f in files:
-            if not (item := await self._to_image_part(f)):
+            if not (item := await self._to_image_part(f, use_responses=use_responses)):
                 continue
             images.append(item)
         if not images:
             return []
         prompt = text or self.default_prompt
-        return [{"type": "text", "text": prompt}, *images]
+        return [self._make_text_part(prompt, use_responses=use_responses), *images]
 
-    async def _to_image_part(self, file_like: dict[str, Any]) -> dict[str, Any] | None:
+    async def _to_image_part(
+        self, file_like: dict[str, Any], *, use_responses: bool
+    ) -> dict[str, Any] | None:
         fid = file_like.get("id")
         if not isinstance(fid, str):
             return None
@@ -197,7 +210,7 @@ class VisionPlugin(PluginBase):
                 return None
         if not mime or data is None:
             return None
-        return self._make_image_part(mime, data)
+        return self._make_image_part(mime, data, use_responses=use_responses)
 
     async def _call_vision(
         self, user_content: list[dict[str, Any]], *, call_type: str
@@ -207,7 +220,17 @@ class VisionPlugin(PluginBase):
         ).strip()
         messages: list[dict[str, Any]] = []
         if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
+            if self._use_responses_api():
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": [
+                            self._make_text_part(system_prompt, use_responses=True)
+                        ],
+                    }
+                )
+            else:
+                messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": user_content})
         reply = await self.openai.generate_chat(
             messages,

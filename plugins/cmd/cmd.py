@@ -6,7 +6,13 @@ from loguru import logger
 
 from twipsybot.plugin import PluginBase
 from twipsybot.shared.config_keys import ConfigKeys
-from twipsybot.shared.utils import get_first_truthy, normalize_tokens
+from twipsybot.shared.utils import (
+    extract_user_handle,
+    extract_user_id,
+    extract_username,
+    get_first_truthy,
+    normalize_tokens,
+)
 
 from .handlers import CmdHandlersMixin
 
@@ -238,11 +244,9 @@ class CmdPlugin(CmdHandlersMixin, PluginBase):
         if not text.startswith("^"):
             return None
         try:
-            user_id = self._extract_user_id(message_data)
-            username = self._extract_username(message_data)
-            handle = self._canonical_handle(
-                username, self._extract_user_handle(message_data)
-            )
+            user_id = extract_user_id(message_data)
+            username = extract_username(message_data)
+            handle = self._canonical_handle(username, extract_user_handle(message_data))
             if not user_id:
                 return None
             if not self._is_authorized(user_id, handle):

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from twipsybot.plugin import PluginBase
-from twipsybot.shared.utils import get_first_truthy
+from twipsybot.shared.utils import extract_first_text, normalize_payload
 
 _MENTION_TOKEN_RE = re.compile(r"@[\w.@-]+\s*")
 
@@ -34,16 +34,9 @@ class KeyActPlugin(PluginBase):
         )
         return True
 
-    @staticmethod
-    def _normalize_payload(data: dict[str, Any], *, kind: str) -> dict[str, Any]:
-        if kind == "mention" and isinstance(data.get("note"), dict):
-            return data["note"]
-        return data
-
     def _get_text(self, data: dict[str, Any], *, kind: str) -> str:
-        data = self._normalize_payload(data, kind=kind)
-        text = get_first_truthy(data, "text", "content", "body", default="")
-        return text.strip() if isinstance(text, str) else ""
+        data = normalize_payload(data, kind=kind)
+        return extract_first_text(data, "text", "content", "body")
 
     def _clean_text(self, text: str, *, case_sensitive: bool) -> str:
         text = _MENTION_TOKEN_RE.sub("", text).strip()

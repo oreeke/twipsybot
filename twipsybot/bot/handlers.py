@@ -27,7 +27,7 @@ class BotHandlers:
         await self.notification.handle(notification)
 
     async def on_timeline_note(self, note: dict[str, Any]) -> None:
-        await self.bot.plugin_manager.on_timeline_note(note)
+        await self.bot.plugin_manager.call_plugin_hook("on_timeline_note", note)
 
     async def on_auto_post(self) -> None:
         await self.auto_post.run()

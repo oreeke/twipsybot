@@ -23,7 +23,7 @@ from ..shared.constants import (
     USER_LOCK_TTL,
 )
 from ..shared.exceptions import ConfigurationError
-from ..shared.utils import get_memory_usage
+from ..shared.utils import get_memory_usage, resolve_history_limit
 from .connect import StreamingConnector
 from .handlers import BotHandlers
 from .limits import ResponseLimiter
@@ -232,10 +232,9 @@ class MisskeyBot:
         user_id: str | None = None,
         room_id: str | None = None,
     ) -> list[dict[str, str]]:
-        config_limit = self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
-        limit_value = limit if isinstance(limit, int) else config_limit
-        if not isinstance(limit_value, int):
-            limit_value = 0
+        limit_value = resolve_history_limit(
+            self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
+        )
         if (cached := self._chat_histories.get(conversation_id)) is not None:
             return list(cached)[-max(0, limit_value * 2) :]
         if conversation_id.startswith("room:"):
@@ -250,10 +249,9 @@ class MisskeyBot:
     def append_chat_turn(
         self, user_id: str, user_text: str, assistant_text: str, limit: int | None
     ) -> None:
-        config_limit = self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
-        limit_value = limit if isinstance(limit, int) else config_limit
-        if not isinstance(limit_value, int):
-            limit_value = 0
+        limit_value = resolve_history_limit(
+            self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
+        )
         history = list(self._chat_histories.get(user_id) or [])
         last = next(reversed(history), None)
         if user_text and not (
@@ -302,7 +300,7 @@ class MisskeyBot:
             f"Connected to Misskey instance: bot_id={self.bot_user_id}, @{self.bot_username}"
         )
         await self.plugin_manager.load_plugins()
-        await self.plugin_manager.on_startup()
+        await self.plugin_manager.call_plugin_hook("on_startup")
 
     def _setup_scheduler(self) -> None:
         cron_jobs = [
@@ -337,7 +335,7 @@ class MisskeyBot:
         logger.info("Stopping services...")
         self.runtime.running = False
         try:
-            await self.plugin_manager.on_shutdown()
+            await self.plugin_manager.call_plugin_hook("on_shutdown")
             await self.plugin_manager.cleanup_plugins()
             if self.scheduler.running:
                 self.scheduler.shutdown(wait=False)

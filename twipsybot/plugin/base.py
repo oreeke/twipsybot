@@ -4,7 +4,6 @@ from typing import Any, TypedDict
 
 from loguru import logger
 
-from ..shared.utils import extract_user_handle, extract_user_id, extract_username
 from .context import PluginContext
 
 __all__ = ("PluginBase", "PluginHookResult")
@@ -78,18 +77,6 @@ class PluginBase:
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
         logger.info(f"Plugin {self.name} {'enabled' if enabled else 'disabled'}")
-
-    @staticmethod
-    def _extract_username(data: dict[str, Any]) -> str:
-        return extract_username(data)
-
-    @staticmethod
-    def _extract_user_handle(data: dict[str, Any]) -> str | None:
-        return extract_user_handle(data)
-
-    @staticmethod
-    def _extract_user_id(data: dict[str, Any]) -> str | None:
-        return extract_user_id(data)
 
     def _log_plugin_action(self, action: str, details: str = "") -> None:
         logger.info(f"Plugin {self.name} {action}{': ' + details if details else ''}")

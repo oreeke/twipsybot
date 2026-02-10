@@ -1,7 +1,7 @@
 [project]
 name = "twipsybot"
 version = "0.1.0"
-description = "AI-powered Misskey bot using any OpenAI-SDK compatible LLM."
+description = "AI-powered Misskey bot with OpenAI-compatible LLMs."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"

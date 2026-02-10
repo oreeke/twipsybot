@@ -208,7 +208,7 @@ docker compose up -d
 
 ### 模型兼容
 
-| 供应商 | OpenAI-SDK | 多模态 |
+| 提供商 | 兼容性 | 多模态 |
 | :---: | :---: | --- |
 | [OpenAI](https://platform.openai.com/docs/quickstart) | ✅ | 📝 👁️ |
 | [DeepSeek](https://api-docs.deepseek.com/) | ✅ | 📝 |
@@ -216,6 +216,7 @@ docker compose up -d
 | [Gemini](https://ai.google.dev/gemini-api/docs/openai) | ✅ | 📝 👁️ |
 | [Claude](https://platform.claude.com/docs/en/api/openai-sdk) | ✅ | 📝 👁️ |
 | [Ollama](https://ollama.com/blog/openai-compatibility) | ✅ | 📝 👁️ |
+| [Perplexity](https://docs.perplexity.ai/docs/agentic-research/openai-compatibility) | ✅ | 📝 👁️ |
 
 ### 插件系统
 

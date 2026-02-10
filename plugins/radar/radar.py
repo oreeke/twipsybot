@@ -215,7 +215,9 @@ class RadarPlugin(PluginBase):
         if bot_id and note_user_id == bot_id:
             return True
         bot_name = getattr(bot, "bot_username", None)
-        return isinstance(bot_name, str) and bot_name and bot_name.lower() in variants
+        if not isinstance(bot_name, str) or not bot_name:
+            return False
+        return bot_name.lower() in variants
 
     @staticmethod
     def _format_reply_text(template: str, note: dict[str, Any]) -> str:

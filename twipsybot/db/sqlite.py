@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,8 @@ from ..shared.config import Config
 from ..shared.config_keys import ConfigKeys
 
 __all__ = ("ConnectionPool", "DBManager")
+
+Row = Sequence[Any]
 
 
 class ConnectionPool:
@@ -65,9 +68,12 @@ class DBManager:
         config: Config | None = None,
     ):
         self.config = config or Config()
-        if db_path is None:
-            db_path = self.config.get(ConfigKeys.DB_PATH)
-        self.db_path = Path(db_path)
+        resolved_db_path = (
+            db_path if db_path is not None else self.config.get(ConfigKeys.DB_PATH)
+        )
+        if not isinstance(resolved_db_path, str) or not resolved_db_path.strip():
+            resolved_db_path = "data/twipsybot.db"
+        self.db_path = Path(resolved_db_path)
         self._pool = ConnectionPool(str(self.db_path), max_connections)
         self._initialized = False
 
@@ -131,46 +137,52 @@ class DBManager:
                 await conn.execute(index_sql)
             await conn.commit()
 
-    async def _execute(self, query: str, params: tuple = (), fetch_type: str = "one"):
+    async def _fetch_one(self, query: str, params: tuple[Any, ...] = ()) -> Row | None:
         conn = await self._pool.get_connection()
         try:
             async with conn.execute(query, params) as cursor:
-                if fetch_type == "all":
-                    return await cursor.fetchall()
-                if fetch_type == "one":
-                    return await cursor.fetchone()
-                if fetch_type == "insert":
-                    await conn.commit()
-                    return cursor.lastrowid
-                if fetch_type == "update":
-                    await conn.commit()
-                    return cursor.rowcount
+                return await cursor.fetchone()
+        finally:
+            await self._pool.return_connection(conn)
+
+    async def _fetch_all(self, query: str, params: tuple[Any, ...] = ()) -> list[Row]:
+        conn = await self._pool.get_connection()
+        try:
+            async with conn.execute(query, params) as cursor:
+                return list(await cursor.fetchall())
+        finally:
+            await self._pool.return_connection(conn)
+
+    async def _execute_write(self, query: str, params: tuple[Any, ...] = ()) -> int:
+        conn = await self._pool.get_connection()
+        try:
+            async with conn.execute(query, params) as cursor:
+                await conn.commit()
+                return cursor.rowcount
         except aiosqlite.Error as e:
-            if fetch_type in ("insert", "update"):
-                await conn.rollback()
-                logger.error(f"Database {fetch_type} operation failed: {e}")
+            await conn.rollback()
+            logger.error(f"Database write operation failed: {e}")
             raise
         finally:
             await self._pool.return_connection(conn)
 
     async def get_plugin_data(self, plugin_name: str, key: str) -> str | None:
-        result = await self._execute(
+        result = await self._fetch_one(
             "SELECT value FROM plugin_data WHERE plugin_name = ? AND key = ?",
             (plugin_name, key),
         )
         return result[0] if result else None
 
     async def set_plugin_data(self, plugin_name: str, key: str, value: str) -> None:
-        await self._execute(
+        await self._execute_write(
             "INSERT OR REPLACE INTO plugin_data (plugin_name, key, value, updated_at) VALUES (?, ?, ?, ?)",
             (plugin_name, key, value, datetime.now()),
-            "update",
         )
 
     async def get_response_limit_state(
         self, user_id: str
     ) -> tuple[float | None, int, float | None] | None:
-        result = await self._execute(
+        result = await self._fetch_one(
             "SELECT last_reply_ts, turns, blocked_until_ts FROM response_limit_state WHERE user_id = ?",
             (user_id,),
         )
@@ -188,14 +200,13 @@ class DBManager:
         turns: int,
         blocked_until_ts: float | None,
     ) -> None:
-        await self._execute(
+        await self._execute_write(
             """
             INSERT OR REPLACE INTO response_limit_state
                 (user_id, last_reply_ts, turns, blocked_until_ts, updated_at)
             VALUES (?, ?, ?, ?, ?)
             """,
             (user_id, last_reply_ts, int(turns), blocked_until_ts, datetime.now()),
-            "update",
         )
 
     async def cleanup_response_limit_state(
@@ -208,12 +219,11 @@ class DBManager:
         if max_age_days < 0:
             return 0
         if max_age_days == 0:
-            return await self._execute("DELETE FROM response_limit_state", (), "update")
+            return await self._execute_write("DELETE FROM response_limit_state")
         cutoff = int(datetime.now().timestamp() - (max_age_days * 86400))
-        return await self._execute(
+        return await self._execute_write(
             "DELETE FROM response_limit_state WHERE CAST(strftime('%s', updated_at) AS INTEGER) < ?",
             (cutoff,),
-            "update",
         )
 
     async def delete_plugin_data(self, plugin_name: str, key: str | None = None) -> int:
@@ -223,23 +233,30 @@ class DBManager:
         else:
             query = "DELETE FROM plugin_data WHERE plugin_name = ?"
             params = (plugin_name,)
-        return await self._execute(query, params, "update")
+        return await self._execute_write(query, params)
 
     async def get_table_stats(self) -> dict[str, Any]:
         tables_query = "SELECT name FROM sqlite_master WHERE type='table'"
-        tables_result = await self._execute(tables_query, (), "all")
-        table_stats = {}
+        tables_result = await self._fetch_all(tables_query)
+        table_stats: dict[str, Any] = {}
         for table_row in tables_result:
-            table_name = table_row[0]
+            table_name = table_row[0] if table_row else None
+            if not isinstance(table_name, str):
+                continue
             if not table_name.replace("_", "").isalnum():
                 continue
             count_query = f'SELECT COUNT(*) FROM "{table_name}"'
-            count_result = await self._execute(count_query)
+            count_result = await self._fetch_one(count_query)
             size_query = "SELECT SUM(pgsize) FROM dbstat WHERE name = ?"
-            size_result = await self._execute(size_query, (table_name,))
-            size_bytes = size_result[0] if size_result[0] else 0
+            size_result = await self._fetch_one(size_query, (table_name,))
+            size_bytes = 0
+            if size_result and size_result[0]:
+                size_bytes = int(size_result[0])
+            row_count = 0
+            if count_result and count_result[0] is not None:
+                row_count = int(count_result[0])
             table_stats[table_name] = {
-                "row_count": count_result[0],
+                "row_count": row_count,
                 "size_bytes": size_bytes,
                 "size_kb": round(size_bytes / 1024, 2),
                 "size_mb": round(size_bytes / 1024 / 1024, 2),

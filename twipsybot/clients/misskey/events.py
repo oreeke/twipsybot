@@ -237,7 +237,8 @@ class _StreamingEventsMixin:
         if inner_type in {"mention", "reply", "newChatMessage"}:
             return
         if (
-            isinstance(inner_type, str)
+            notification is not None
+            and isinstance(inner_type, str)
             and inner_type
             and inner_type in self.event_handlers
         ):

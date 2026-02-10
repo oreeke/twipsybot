@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 from loguru import logger
 
-from twipsybot.plugin import PluginBase
+from twipsybot.plugin import PluginBase, PluginHookResult
 from twipsybot.shared.config_keys import ConfigKeys
 from twipsybot.shared.utils import (
     extract_first_text,
@@ -236,7 +236,7 @@ class CmdPlugin(CmdHandlersMixin, PluginBase):
             logger.error(f"Error executing command {command}: {e}")
             return f"命令执行失败: {e!s}"
 
-    async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
+    async def on_message(self, message_data: dict[str, Any]) -> PluginHookResult | None:
         text = extract_first_text(message_data, "text", "content")
         if not text.startswith("^"):
             return None

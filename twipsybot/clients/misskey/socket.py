@@ -28,11 +28,12 @@ class _StreamingSocketMixin:
 
     async def _send_or_buffer(self, message: dict[str, Any]) -> None:
         async with self._send_lock:
-            if not self._ws_available:
+            ws = self.ws_connection
+            if ws is None or ws.closed:
                 self._buffer_outgoing(message)
                 return
             try:
-                await self.ws_connection.send_json(message)
+                await ws.send_json(message)
             except (aiohttp.ClientError, OSError) as e:
                 self._buffer_outgoing(message)
                 await self._close_websocket()
@@ -41,10 +42,11 @@ class _StreamingSocketMixin:
 
     async def _send_control(self, message: dict[str, Any]) -> None:
         async with self._send_lock:
-            if not self._ws_available:
+            ws = self.ws_connection
+            if ws is None or ws.closed:
                 raise WebSocketReconnectError()
             try:
-                await self.ws_connection.send_json(message)
+                await ws.send_json(message)
             except (aiohttp.ClientError, OSError) as e:
                 await self._close_websocket()
                 error_msg = redact_misskey_access_token(str(e))
@@ -117,10 +119,11 @@ class _StreamingSocketMixin:
 
     async def _listen_messages(self) -> None:
         while self.running:
-            if not self._ws_available:
+            ws = self.ws_connection
+            if ws is None or ws.closed:
                 raise WebSocketReconnectError()
             try:
-                msg = await asyncio.wait_for(self.ws_connection.receive(), timeout=10)
+                msg = await asyncio.wait_for(ws.receive(), timeout=10)
                 if msg.type in (
                     aiohttp.WSMsgType.CLOSED,
                     aiohttp.WSMsgType.CLOSING,

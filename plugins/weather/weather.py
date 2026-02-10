@@ -5,7 +5,7 @@ from typing import Any
 import aiohttp
 from loguru import logger
 
-from twipsybot.plugin import PluginBase
+from twipsybot.plugin import PluginBase, PluginHookResult
 from twipsybot.shared.utils import extract_username
 
 
@@ -44,18 +44,18 @@ class WeatherPlugin(PluginBase):
             return None
         return session
 
-    async def on_mention(self, data: dict[str, Any]) -> dict[str, Any] | None:
+    async def on_mention(self, data: dict[str, Any]) -> PluginHookResult | None:
         note_data = (
             data.get("note", data) if "note" in data and "type" in data else data
         )
         return await self._process_weather_message(note_data)
 
-    async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
+    async def on_message(self, message_data: dict[str, Any]) -> PluginHookResult | None:
         return await self._process_weather_message(message_data)
 
     async def _process_weather_message(
         self, data: dict[str, Any]
-    ) -> dict[str, Any] | None:
+    ) -> PluginHookResult | None:
         text = data.get("text") or ""
         if "天气" not in text and "weather" not in text:
             return None
@@ -68,7 +68,7 @@ class WeatherPlugin(PluginBase):
 
     async def _handle_weather_request(
         self, username: str, location_match
-    ) -> dict[str, Any] | None:
+    ) -> PluginHookResult | None:
         location = location_match.group("loc").strip() if location_match else ""
         if not location:
             return self.handled("请指定要查询的城市，例如：北京天气 或 天气上海")

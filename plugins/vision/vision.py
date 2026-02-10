@@ -4,7 +4,7 @@ from typing import Any
 
 from loguru import logger
 
-from twipsybot.plugin import PluginBase
+from twipsybot.plugin import PluginBase, PluginHookResult
 from twipsybot.shared.config_keys import ConfigKeys
 from twipsybot.shared.utils import (
     extract_chat_text,
@@ -124,13 +124,13 @@ class VisionPlugin(PluginBase):
         self._log_plugin_action("initialized")
         return True
 
-    async def on_mention(self, mention_data: dict[str, Any]) -> dict[str, Any] | None:
+    async def on_mention(self, mention_data: dict[str, Any]) -> PluginHookResult | None:
         if not (parts := await self._build_user_content(mention_data, kind="mention")):
             return None
         reply = await self._call_vision(parts, call_type="mention image")
         return self.handled(reply)
 
-    async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
+    async def on_message(self, message_data: dict[str, Any]) -> PluginHookResult | None:
         if not (parts := await self._build_user_content(message_data, kind="chat")):
             return None
         reply = await self._call_vision(parts, call_type="chat image")

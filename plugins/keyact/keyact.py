@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from twipsybot.plugin import PluginBase
+from twipsybot.plugin import PluginBase, PluginHookResult
 from twipsybot.shared.utils import extract_chat_text, normalize_payload
 
 _MENTION_TOKEN_RE = re.compile(r"@[\w.@-]+\s*")
@@ -86,7 +86,7 @@ class KeyActPlugin(PluginBase):
                 return True
         return False
 
-    def _handle(self, data: dict[str, Any], *, kind: str) -> dict[str, Any] | None:
+    def _handle(self, data: dict[str, Any], *, kind: str) -> PluginHookResult | None:
         if not self.rules:
             return None
         text_raw = self._get_text(data, kind=kind)
@@ -103,12 +103,12 @@ class KeyActPlugin(PluginBase):
                 return self.handled(rule.response)
         return None
 
-    async def on_mention(self, mention_data: dict[str, Any]) -> dict[str, Any] | None:
+    async def on_mention(self, mention_data: dict[str, Any]) -> PluginHookResult | None:
         if not self.mention_enabled:
             return None
         return self._handle(mention_data, kind="mention")
 
-    async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
+    async def on_message(self, message_data: dict[str, Any]) -> PluginHookResult | None:
         if not self.chat_enabled:
             return None
         return self._handle(message_data, kind="chat")

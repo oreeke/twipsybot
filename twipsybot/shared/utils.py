@@ -20,7 +20,6 @@ __all__ = (
     "extract_chat_text",
     "extract_first_text",
     "extract_note_text",
-    "get_first_truthy",
     "get_memory_usage",
     "get_system_info",
     "maybe_log_event_dump",
@@ -95,13 +94,6 @@ def normalize_tokens(value: Any, *, lower: bool = False) -> list[str]:
         seen.add(k)
         out.append(k if lower else t)
     return out
-
-
-def get_first_truthy(data: dict[str, Any], *keys: str, default: Any = "") -> Any:
-    for key in keys:
-        if value := data.get(key):
-            return value
-    return default
 
 
 def extract_first_text(data: Any, *keys: str) -> str:

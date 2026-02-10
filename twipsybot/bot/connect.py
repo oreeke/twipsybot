@@ -37,16 +37,13 @@ class StreamingConnector:
     def _load_timeline_channels(self) -> set[str]:
         if not self._config.get(ConfigKeys.BOT_TIMELINE_ENABLED):
             return set()
-        enabled: set[str] = set()
-        if self._config.get(ConfigKeys.BOT_TIMELINE_HOME):
-            enabled.add(ChannelType.HOME_TIMELINE.value)
-        if self._config.get(ConfigKeys.BOT_TIMELINE_LOCAL):
-            enabled.add(ChannelType.LOCAL_TIMELINE.value)
-        if self._config.get(ConfigKeys.BOT_TIMELINE_HYBRID):
-            enabled.add(ChannelType.HYBRID_TIMELINE.value)
-        if self._config.get(ConfigKeys.BOT_TIMELINE_GLOBAL):
-            enabled.add(ChannelType.GLOBAL_TIMELINE.value)
-        return enabled
+        mapping = {
+            ConfigKeys.BOT_TIMELINE_HOME: ChannelType.HOME_TIMELINE.value,
+            ConfigKeys.BOT_TIMELINE_LOCAL: ChannelType.LOCAL_TIMELINE.value,
+            ConfigKeys.BOT_TIMELINE_HYBRID: ChannelType.HYBRID_TIMELINE.value,
+            ConfigKeys.BOT_TIMELINE_GLOBAL: ChannelType.GLOBAL_TIMELINE.value,
+        }
+        return {channel for key, channel in mapping.items() if self._config.get(key)}
 
     def _load_antenna_selectors(self) -> list[str]:
         return normalize_tokens(self._config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS))
@@ -74,14 +71,7 @@ class StreamingConnector:
 
     @staticmethod
     def _dedupe_non_empty(values: list[str]) -> list[str]:
-        seen: set[str] = set()
-        result: list[str] = []
-        for value in values:
-            if not value or value in seen:
-                continue
-            seen.add(value)
-            result.append(value)
-        return result
+        return list(dict.fromkeys(v for v in values if v))
 
     @staticmethod
     def _resolve_antenna_selector(

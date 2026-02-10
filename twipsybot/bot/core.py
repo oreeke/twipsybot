@@ -351,6 +351,9 @@ class MisskeyBot:
         finally:
             logger.info("Services stopped")
 
+    def is_bot_mentioned(self, text: str) -> bool:
+        return bool(text and self.bot_username and f"@{self.bot_username}" in text)
+
     @staticmethod
     def format_log_text(text: str, max_length: int = 50) -> str:
         if not text:

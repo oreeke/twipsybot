@@ -67,22 +67,6 @@ class MisskeyAPI:
         return self._semaphore
 
     @staticmethod
-    def handle_response_status(response, endpoint: str):
-        status = response.status
-        if status == HTTP_BAD_REQUEST:
-            logger.error(f"API bad request: {endpoint}")
-            raise APIBadRequestError()
-        if status == HTTP_UNAUTHORIZED:
-            logger.error(f"API authentication failed: {endpoint}")
-            raise AuthenticationError()
-        if status == HTTP_FORBIDDEN:
-            logger.error(f"API forbidden: {endpoint}")
-            raise AuthenticationError()
-        if status == HTTP_TOO_MANY_REQUESTS:
-            logger.warning(f"API rate limited: {endpoint}")
-            raise APIRateLimitError()
-
-    @staticmethod
     def _format_error_text(error_text: str) -> str:
         s = error_text.strip()
         if not s:

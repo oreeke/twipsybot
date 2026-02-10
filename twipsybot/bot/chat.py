@@ -38,11 +38,6 @@ class ChatHandler:
     def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
 
-    def _is_bot_mentioned(self, text: str) -> bool:
-        return bool(
-            text and self.bot.bot_username and f"@{self.bot.bot_username}" in text
-        )
-
     async def handle(self, message: dict[str, Any]) -> None:
         if not self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT):
             return
@@ -189,7 +184,7 @@ class ChatHandler:
         if not text and not has_media:
             logger.debug("Chat missing required info: empty text and no media")
             return None
-        if room_id and not self._is_bot_mentioned(text):
+        if room_id and not self.bot.is_bot_mentioned(text):
             logger.debug(
                 f"Room chat from @{username} does not mention the bot; skipping"
             )

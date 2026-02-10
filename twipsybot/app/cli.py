@@ -13,9 +13,26 @@ from . import main as app_main
 
 
 def _pid_file_path() -> Path:
-    if value := os.environ.get("TWIPSYBOT_PID_FILE"):
-        return Path(value)
     return Path("data") / "twipsybot.pid"
+
+
+def _stop_file_path() -> Path:
+    return Path("data") / "twipsybot.stop"
+
+
+def _remove_stop_file(stop_file: Path) -> None:
+    try:
+        stop_file.unlink(missing_ok=True)
+    except OSError:
+        return
+
+
+def _write_stop_file(stop_file: Path) -> None:
+    try:
+        stop_file.parent.mkdir(parents=True, exist_ok=True)
+        stop_file.write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        return
 
 
 def _read_pid(pid_file: Path) -> int | None:
@@ -110,6 +127,7 @@ def _run_up_daemon(pid_file: Path) -> int:
 def _cmd_up() -> int:
     pid_file = _pid_file_path()
     pid_file.parent.mkdir(parents=True, exist_ok=True)
+    _remove_stop_file(_stop_file_path())
     if pid_file.exists():
         pid = _read_pid(pid_file)
         if pid and psutil.pid_exists(pid):
@@ -126,9 +144,9 @@ def _cmd_up() -> int:
                 f"twipsybot started (pid={pid_text})\n"
                 f"pid_file={pid_file}\n"
                 "next:\n"
-                "  twipsybot status    watch\n"
-                "  twipsybot down      stop\n"
-                "  twipsybot restart   restart",
+                "  twipsybot status\n"
+                "  twipsybot down\n"
+                "  twipsybot restart",
                 file=sys.stdout,
             )
         return code
@@ -139,6 +157,37 @@ def _cmd_up() -> int:
         file=sys.stdout,
     )
     return _run_up_foreground(pid_file)
+
+
+def _stop_process(pid_file: Path, pid: int) -> None:
+    stop_file = _stop_file_path()
+    _write_stop_file(stop_file)
+    try:
+        proc = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        _remove_stop_file(stop_file)
+        _remove_pid_file(pid_file)
+        return
+
+    try:
+        proc.wait(timeout=5)
+        _remove_stop_file(stop_file)
+        _remove_pid_file(pid_file)
+        return
+    except psutil.TimeoutExpired:
+        pass
+
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except psutil.TimeoutExpired:
+            proc.kill()
+    except psutil.NoSuchProcess:
+        return
+    finally:
+        _remove_stop_file(stop_file)
+        _remove_pid_file(pid_file)
 
 
 def _cmd_down() -> int:
@@ -154,13 +203,7 @@ def _cmd_down() -> int:
         return 2
 
     try:
-        proc = psutil.Process(pid)
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except psutil.TimeoutExpired:
-            proc.kill()
-        _remove_pid_file(pid_file)
+        _stop_process(pid_file, pid)
         print(f"twipsybot stopped (pid={pid})", file=sys.stdout)
         return 0
     except psutil.NoSuchProcess:
@@ -180,19 +223,13 @@ def _cmd_restart() -> int:
         if pid and psutil.pid_exists(pid):
             print(f"stopping twipsybot (pid={pid})...", file=sys.stdout)
             try:
-                proc = psutil.Process(pid)
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except psutil.TimeoutExpired:
-                    proc.kill()
+                _stop_process(pid_file, pid)
             except psutil.NoSuchProcess:
                 pass
             except Exception as e:
                 print(f"failed to stop twipsybot: {e}", file=sys.stderr)
                 return 1
             print(f"twipsybot stopped (pid={pid})", file=sys.stdout)
-        _remove_pid_file(pid_file)
     else:
         print("twipsybot is not running; starting...", file=sys.stdout)
     return _cmd_up()

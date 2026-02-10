@@ -224,31 +224,13 @@ class RadarPlugin(PluginBase):
         username = extract_username(note)
         return template.replace("{username}", username)
 
-    async def _generate_ai_reply(self, note: dict[str, Any]) -> str | None:
+    async def _generate_ai(
+        self, note: dict[str, Any], prompt_template: str
+    ) -> str | None:
         openai = getattr(self, "openai", None)
         if not openai or not (content := self._effective_text(note)):
             return None
-        prompt = (self.reply_ai_prompt or self.DEFAULT_REPLY_AI_PROMPT).format(
-            content=content
-        )
-        system_prompt = (
-            self.global_config.get(ConfigKeys.BOT_SYSTEM_PROMPT, "") or ""
-        ).strip()
-        reply = await openai.generate_text(
-            prompt,
-            system_prompt or None,
-            max_tokens=self.global_config.get(ConfigKeys.OPENAI_MAX_TOKENS),
-            temperature=self.global_config.get(ConfigKeys.OPENAI_TEMPERATURE),
-        )
-        return reply.strip() or None
-
-    async def _generate_ai_quote(self, note: dict[str, Any]) -> str | None:
-        openai = getattr(self, "openai", None)
-        if not openai or not (content := self._effective_text(note)):
-            return None
-        prompt = (self.quote_ai_prompt or self.DEFAULT_QUOTE_AI_PROMPT).format(
-            content=content
-        )
+        prompt = prompt_template.format(content=content)
         system_prompt = (
             self.global_config.get(ConfigKeys.BOT_SYSTEM_PROMPT, "") or ""
         ).strip()
@@ -308,7 +290,9 @@ class RadarPlugin(PluginBase):
         if not self.reply_ai:
             return None
         try:
-            return await self._generate_ai_reply(note_data)
+            return await self._generate_ai(
+                note_data, self.reply_ai_prompt or self.DEFAULT_REPLY_AI_PROMPT
+            )
         except Exception as e:
             logger.error(f"Radar AI reply failed: {e!r}")
             return None
@@ -336,7 +320,9 @@ class RadarPlugin(PluginBase):
         if not self.quote_ai:
             return None
         try:
-            return await self._generate_ai_quote(note_data)
+            return await self._generate_ai(
+                note_data, self.quote_ai_prompt or self.DEFAULT_QUOTE_AI_PROMPT
+            )
         except Exception as e:
             logger.error(f"Radar AI quote failed: {e!r}")
             return None

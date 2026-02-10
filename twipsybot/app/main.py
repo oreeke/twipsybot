@@ -16,10 +16,15 @@ from ..shared.exceptions import (
 )
 
 
+def _stop_file_path() -> Path:
+    return Path("data") / "twipsybot.stop"
+
+
 class BotRunner:
     def __init__(self):
         self.bot: MisskeyBot | None = None
         self.shutdown_event: asyncio.Event | None = None
+        self._stop_file_task: asyncio.Task[None] | None = None
         self._shutdown_called = False
 
     async def run(self) -> None:
@@ -35,6 +40,13 @@ class BotRunner:
             compression="zip",
             enqueue=True,
         )
+        stop_file = _stop_file_path()
+        stop_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            stop_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+        self._stop_file_task = asyncio.create_task(self._watch_stop_file(stop_file))
         logger.info("Starting bot...")
         try:
             self.bot = MisskeyBot(config)
@@ -48,6 +60,24 @@ class BotRunner:
                 raise
             except Exception:
                 logger.exception("Error during shutdown")
+
+    async def _watch_stop_file(self, stop_file: Path) -> None:
+        while True:
+            if self.shutdown_event and self.shutdown_event.is_set():
+                return
+            try:
+                should_stop = stop_file.exists()
+            except OSError:
+                should_stop = False
+            if should_stop:
+                try:
+                    stop_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                if self.shutdown_event and not self.shutdown_event.is_set():
+                    self.shutdown_event.set()
+                return
+            await asyncio.sleep(1.0)
 
     def _setup_monitoring_and_signals(self) -> None:
         signals = (
@@ -78,6 +108,9 @@ class BotRunner:
         if self._shutdown_called:
             return
         self._shutdown_called = True
+        if self._stop_file_task:
+            self._stop_file_task.cancel()
+            self._stop_file_task = None
         logger.info("Shutting down bot...")
         if self.bot:
             await self.bot.stop()

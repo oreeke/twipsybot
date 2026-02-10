@@ -187,7 +187,7 @@ class MisskeyDrive:
             session: aiohttp.ClientSession = self._api.session
             async with self._api.semaphore, session.get(url) as response:
                 if response.status != HTTP_OK:
-                    self._api.handle_response_status(response, "drive/files/download")
+                    await self._api._process_response(response, "drive/files/download")
                     raise APIConnectionError()
                 if max_bytes is None:
                     return await response.read()
@@ -230,7 +230,7 @@ class MisskeyDrive:
             session: aiohttp.ClientSession = self._api.session
             async with self._api.semaphore, session.get(url) as response:
                 if response.status != HTTP_OK:
-                    self._api.handle_response_status(response, "drive/files/download")
+                    await self._api._process_response(response, "drive/files/download")
                     raise APIConnectionError()
                 async with await anyio.open_file(dest, "wb") as f:
                     async for chunk in response.content.iter_chunked(chunk_size):

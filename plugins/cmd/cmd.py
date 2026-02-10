@@ -7,10 +7,10 @@ from loguru import logger
 from twipsybot.plugin import PluginBase
 from twipsybot.shared.config_keys import ConfigKeys
 from twipsybot.shared.utils import (
+    extract_first_text,
     extract_user_handle,
     extract_user_id,
     extract_username,
-    get_first_truthy,
     normalize_tokens,
 )
 
@@ -237,10 +237,7 @@ class CmdPlugin(CmdHandlersMixin, PluginBase):
             return f"命令执行失败: {e!s}"
 
     async def on_message(self, message_data: dict[str, Any]) -> dict[str, Any] | None:
-        raw = get_first_truthy(message_data, "text", "content", default="")
-        if not isinstance(raw, str):
-            return None
-        text = raw.strip()
+        text = extract_first_text(message_data, "text", "content")
         if not text.startswith("^"):
             return None
         try:

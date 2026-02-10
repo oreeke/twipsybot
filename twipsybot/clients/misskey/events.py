@@ -1,15 +1,13 @@
 import asyncio
 import inspect
-import json
 from typing import Any
 
 from loguru import logger
 
+from ...shared.utils import maybe_log_event_dump
 from .channels import CHAT_CHANNELS, NOTE_CHANNELS, ChannelType
 
 __all__ = ("_StreamingEventsMixin",)
-
-_EVENT_DATA_LOG_TEMPLATE = "Event data: {}"
 
 
 class _StreamingEventsMixin:
@@ -26,11 +24,7 @@ class _StreamingEventsMixin:
             logger.debug(
                 f"Received {channel_name} data without standard event type; skipping (channel_id={channel_id})"
             )
-            if self.log_dump_events:
-                logger.opt(lazy=True).debug(
-                    _EVENT_DATA_LOG_TEMPLATE,
-                    lambda: json.dumps(body, ensure_ascii=False, indent=2),
-                )
+            maybe_log_event_dump(self.log_dump_events, kind=channel_name, payload=body)
             return
         if event_body is None:
             event_body = {}
@@ -192,11 +186,9 @@ class _StreamingEventsMixin:
         logger.debug(
             f"Received data without event type - channel: {channel_name}, event_id={event_id}"
         )
-        if self.log_dump_events:
-            logger.opt(lazy=True).debug(
-                _EVENT_DATA_LOG_TEMPLATE,
-                lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
-            )
+        maybe_log_event_dump(
+            self.log_dump_events, kind=channel_name, payload=event_data
+        )
 
     async def _handle_typed_event(
         self,
@@ -263,22 +255,16 @@ class _StreamingEventsMixin:
         self, event_type: str, event_data: dict[str, Any]
     ) -> None:
         logger.debug(f"Unknown main channel event type: {event_type}")
-        if self.log_dump_events:
-            logger.opt(lazy=True).debug(
-                _EVENT_DATA_LOG_TEMPLATE,
-                lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
-            )
+        maybe_log_event_dump(self.log_dump_events, kind=event_type, payload=event_data)
 
     async def _handle_chat_channel_event(
         self, channel_name: str, event_type: str, event_data: dict[str, Any]
     ) -> None:
         if event_type != "message":
             logger.debug(f"Unknown {channel_name} channel event type: {event_type}")
-            if self.log_dump_events:
-                logger.opt(lazy=True).debug(
-                    _EVENT_DATA_LOG_TEMPLATE,
-                    lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
-                )
+            maybe_log_event_dump(
+                self.log_dump_events, kind=event_type, payload=event_data
+            )
             return
         message = dict(event_data)
         from_user_id = message.get("fromUserId")
@@ -368,11 +354,9 @@ class _StreamingEventsMixin:
     ) -> None:
         if event_type != "note":
             logger.debug(f"Unknown {channel_name} channel event type: {event_type}")
-            if self.log_dump_events:
-                logger.opt(lazy=True).debug(
-                    _EVENT_DATA_LOG_TEMPLATE,
-                    lambda: json.dumps(event_data, ensure_ascii=False, indent=2),
-                )
+            maybe_log_event_dump(
+                self.log_dump_events, kind=event_type, payload=event_data
+            )
             return
         payload = event_data.get("body")
         if not isinstance(payload, dict):
@@ -384,11 +368,7 @@ class _StreamingEventsMixin:
         logger.debug(f"Received {channel_name} note")
         if channel_name == ChannelType.ANTENNA.value:
             logger.debug(f"Antenna note received: {payload.get('id', 'unknown')}")
-        if self.log_dump_events:
-            logger.opt(lazy=True).debug(
-                _EVENT_DATA_LOG_TEMPLATE,
-                lambda: json.dumps(payload, ensure_ascii=False, indent=2),
-            )
+        maybe_log_event_dump(self.log_dump_events, kind=channel_name, payload=payload)
         await self._call_handlers("note", payload)
 
     async def _call_handlers(self, event_type: str, data: dict[str, Any]) -> None:

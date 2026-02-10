@@ -67,7 +67,7 @@ class MentionHandler:
             return False
         if is_reply_event:
             return reply_to_bot
-        return self._is_bot_mentioned(text) or self._mentions_bot(note_data)
+        return self.bot.is_bot_mentioned(text) or self._mentions_bot(note_data)
 
     def _is_reply_to_bot(self, note_data: dict[str, Any]) -> bool:
         replied = note_data.get("reply")
@@ -216,11 +216,6 @@ class MentionHandler:
         if not self.bot.bot_user_id or not isinstance(mentions, list):
             return False
         return self.bot.bot_user_id in mentions
-
-    def _is_bot_mentioned(self, text: str) -> bool:
-        return bool(
-            text and self.bot.bot_username and f"@{self.bot.bot_username}" in text
-        )
 
     async def _generate_ai_reply(
         self, mention: MentionContext, note: dict[str, Any]

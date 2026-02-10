@@ -1,6 +1,6 @@
 import asyncio
 import re
-from typing import Any, cast
+from typing import Any
 
 import aiohttp
 from loguru import logger
@@ -38,6 +38,12 @@ class WeatherPlugin(PluginBase):
         self._log_plugin_action("initialized")
         return True
 
+    def _get_session(self) -> aiohttp.ClientSession | None:
+        session = self.session
+        if session is None or session.closed:
+            return None
+        return session
+
     async def on_mention(self, data: dict[str, Any]) -> dict[str, Any] | None:
         note_data = (
             data.get("note", data) if "note" in data and "type" in data else data
@@ -74,10 +80,9 @@ class WeatherPlugin(PluginBase):
 
     async def _get_weather(self, city: str) -> str | None:
         try:
-            session = self.session
-            if session is None or session.closed:
+            session = self._get_session()
+            if session is None:
                 return None
-            session = cast("aiohttp.ClientSession", session)
             coordinates = await self._get_coordinates(city)
             if not coordinates:
                 return f"抱歉，找不到城市 '{city}' 的位置信息。"
@@ -105,10 +110,9 @@ class WeatherPlugin(PluginBase):
 
     async def _get_coordinates(self, city: str) -> tuple[float, float, str] | None:
         try:
-            session = self.session
-            if session is None or session.closed:
+            session = self._get_session()
+            if session is None:
                 return None
-            session = cast("aiohttp.ClientSession", session)
             params = {"q": city, "limit": 1, "appid": self.api_key}
             async with session.get(self.geocoding_url, params=params) as response:
                 if response.status != 200:

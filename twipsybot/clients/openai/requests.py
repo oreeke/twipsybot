@@ -2,6 +2,8 @@ import asyncio
 from typing import Any
 from urllib.parse import urlparse
 
+import openai
+
 from ...shared.constants import REQUEST_TIMEOUT
 
 
@@ -14,7 +16,7 @@ def should_use_responses(*, api_mode: str, api_base: str) -> bool:
 
 async def make_responses_request(
     *,
-    client: Any,
+    client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
     model: str,
     messages: list[dict[str, Any]],
@@ -40,7 +42,7 @@ async def make_responses_request(
 
 async def make_chat_completions_request(
     *,
-    client: Any,
+    client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
     model: str,
     api_base: str,

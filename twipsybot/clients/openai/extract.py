@@ -62,9 +62,7 @@ def coerce_json_substring(text: str) -> str | None:
     return None
 
 
-def parse_json(text: Any) -> Any:
-    if not isinstance(text, str):
-        raise ValueError()
+def parse_json(text: str) -> Any:
     if (sub := coerce_json_substring(text)) is None:
         raise ValueError()
     return json.loads(sub)

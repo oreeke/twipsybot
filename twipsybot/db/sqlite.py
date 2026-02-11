@@ -130,12 +130,16 @@ class DBManager:
             "CREATE INDEX IF NOT EXISTS idx_plugin_data_name_key ON plugin_data(plugin_name, key)",
             "CREATE INDEX IF NOT EXISTS idx_response_limit_state_updated ON response_limit_state(updated_at)",
         ]
-        async with conn.execute("BEGIN TRANSACTION"):
+        await conn.execute("BEGIN")
+        try:
             for statement in schema_statements:
                 await conn.execute(statement)
             for index_sql in index_statements:
                 await conn.execute(index_sql)
             await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
 
     async def _fetch_one(self, query: str, params: tuple[Any, ...] = ()) -> Row | None:
         conn = await self._pool.get_connection()

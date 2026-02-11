@@ -1,5 +1,4 @@
 import asyncio
-from typing import Any
 
 import aiohttp
 from loguru import logger
@@ -55,7 +54,7 @@ class TCPClient:
         if not silent:
             logger.debug("TCP session closed")
 
-    async def ws_connect(self, url: str) -> Any:
+    async def ws_connect(self, url: str) -> aiohttp.ClientWebSocketResponse:
         try:
             return await self.session.ws_connect(url)
         except aiohttp.ClientConnectorError as e:

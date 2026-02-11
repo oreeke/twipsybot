@@ -58,13 +58,13 @@ class OpenAIAPI:
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-5-mini",
-        api_base: str = "https://api.openai.com/v1",
+        model: str | None = None,
+        api_base: str | None = None,
         api_mode: str | None = None,
     ):
         self.api_key = api_key
-        self.model = model
-        self.api_base = api_base.strip().strip("`")
+        self.model = model or "gpt-5-mini"
+        self.api_base = (api_base or "https://api.openai.com/v1").strip().strip("`")
         self.api_mode = (api_mode or "auto").strip().lower()
         self._responses_disabled = False
         self._semaphore = asyncio.Semaphore(OPENAI_MAX_CONCURRENCY)

@@ -145,7 +145,7 @@ def maybe_log_event_dump(enabled: bool, *, kind: str, payload: Any) -> None:
     )
 
 
-def resolve_history_limit(config_value: Any, limit: int | None) -> int:
+def resolve_history_limit(config_value: int | None, limit: int | None) -> int:
     if isinstance(limit, int):
         return limit
     if isinstance(config_value, int):

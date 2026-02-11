@@ -46,3 +46,6 @@ data/
 *.pem
 *.key
 *.crt
+
+# GitHub
+.github/*.md

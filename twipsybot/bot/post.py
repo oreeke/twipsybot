@@ -81,7 +81,7 @@ class AutoPostService:
         return visibility, contents
 
     @staticmethod
-    def _extract_plugin_contents(result: dict[str, Any]) -> list[str]:
+    def _extract_plugin_contents(result: Any) -> list[str]:
         contents_value = result.get("contents")
         if isinstance(contents_value, list):
             return [c for c in contents_value if isinstance(c, str) and c]

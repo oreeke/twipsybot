@@ -56,7 +56,7 @@ openai:
   temperature: 0.8                                  # 温度参数
 
 bot:
-  system_prompt: |                                  # 系统提示词（支持文件导入："prompts/*.txt"，"file://path/to/*.txt"）
+  system_prompt: |                                  # 系统提示词（支持文件导入："prompts/*.txt"）
     你是一个可爱的AI助手，运行在Misskey平台上。
     请用简短、友好的方式发帖和回答问题。
 
@@ -158,7 +158,7 @@ OPENAI_API_BASE=https://api.deepseek.com/v1                # OpenAI API 端点
 OPENAI_API_MODE=auto                                       # auto/chat/responses
 OPENAI_MAX_TOKENS=1000                                     # OpenAI 最大生成 token 数
 OPENAI_TEMPERATURE=0.8                                     # OpenAI 温度参数
-BOT_SYSTEM_PROMPT=你是一个可爱的AI助手...                    # 系统提示词（支持文件导入："prompts/*.txt"，"file://path/to/*.txt"）
+BOT_SYSTEM_PROMPT=你是一个可爱的AI助手...                    # 系统提示词（支持文件导入："prompts/*.txt"）
 BOT_AUTO_POST_ENABLED=true                                 # 是否启用自动发帖
 BOT_AUTO_POST_INTERVAL=180                                 # 发帖间隔（分钟）
 BOT_AUTO_POST_MAX_PER_DAY=8                                # 每日最大发帖数量（凌晨 0 点重置计数器）

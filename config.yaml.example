@@ -14,7 +14,7 @@ openai:
   temperature: 0.8                                  # 温度参数
 
 bot:
-  system_prompt: |                                  # 系统提示词（支持文件导入："prompts/*.txt"，"file://path/to/*.txt"）
+  system_prompt: |                                  # 系统提示词（支持文件导入："prompts/*.txt"）
     你是一个可爱的AI助手，运行在Misskey平台上。
     请用简短、友好的方式发帖和回答问题。
 

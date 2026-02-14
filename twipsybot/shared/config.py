@@ -80,26 +80,20 @@ def _get_dotted(config: dict[str, Any], dotted: str) -> Any:
 def _maybe_load_text_file(
     value: str,
     *,
-    config_dir: Path,
     project_root: Path,
 ) -> str:
     s = value.strip()
     if not s:
         return ""
-    file_path = s.removeprefix("file://") if s.startswith("file://") else s
-    path = Path(file_path)
-    if not path.is_absolute():
-        path = config_dir / path
-    try:
-        resolved = path.resolve()
-    except OSError:
+    path = Path(s)
+    if path.is_absolute() or path.suffix.lower() != ".txt" or ".." in path.parts:
         return value
-    if not resolved.is_file() or not resolved.is_relative_to(project_root):
+    if not path.parts or path.parts[0] != "prompts":
         return value
-    try:
-        return resolved.read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeDecodeError):
+    resolved = (project_root / path).resolve()
+    if not resolved.is_file() or not resolved.is_relative_to(project_root / "prompts"):
         return value
+    return resolved.read_text(encoding="utf-8").strip()
 
 
 class MisskeyConfig(BaseModel):
@@ -290,7 +284,6 @@ class Config:
 
     @staticmethod
     def _expand_prompt_files(config: dict[str, Any], config_path: Path) -> None:
-        config_dir = config_path.parent if config_path.parent else Path(".")
         project_root = _project_root()
         for key in (ConfigKeys.BOT_SYSTEM_PROMPT, ConfigKeys.BOT_AUTO_POST_PROMPT):
             value = _get_dotted(config, key)
@@ -299,9 +292,7 @@ class Config:
             _set_dotted(
                 config,
                 key,
-                _maybe_load_text_file(
-                    value, config_dir=config_dir, project_root=project_root
-                ),
+                _maybe_load_text_file(value, project_root=project_root),
             )
 
     @staticmethod

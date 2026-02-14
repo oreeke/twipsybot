@@ -1,24 +1,18 @@
-import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from urllib.parse import urlparse
 
 from cachetools import TTLCache
+from pytimeparse2 import parse as parse_duration
 
 from ..db.sqlite import DBManager
 from ..shared.config import Config
 from ..shared.config_keys import ConfigKeys
 from ..shared.constants import RESPONSE_LIMIT_CACHE_MAX, RESPONSE_LIMIT_CACHE_TTL
 from ..shared.utils import normalize_tokens
-
-_DURATION_PART_RE = re.compile(r"\s*(\d+(?:\.\d+)?)\s*([a-z]+)?", re.IGNORECASE)
-_DURATION_UNITS: dict[str, int] = {
-    "h": 3600,
-    "m": 60,
-    "s": 1,
-}
 
 
 @dataclass(slots=True)
@@ -103,7 +97,17 @@ class ResponseLimiter:
             return None
         if s in {"-1", "unlimited", "none", "off"}:
             return -1
-        return ResponseLimiter._parse_duration_string(s)
+        try:
+            seconds = parse_duration(s, as_timedelta=False)
+        except Exception:
+            return None
+        if seconds is None:
+            return None
+        if isinstance(seconds, (int, float)):
+            return int(seconds)
+        if isinstance(seconds, timedelta):
+            return int(seconds.total_seconds())
+        return None
 
     @staticmethod
     def _parse_duration_number(value: Any) -> int | None:
@@ -114,26 +118,6 @@ class ResponseLimiter:
         if isinstance(value, float):
             return int(value)
         return None
-
-    @staticmethod
-    def _parse_duration_string(s: str) -> int | None:
-        total = 0
-        pos = 0
-        while pos < len(s):
-            m = _DURATION_PART_RE.match(s, pos)
-            if not m:
-                return None
-            num = float(m.group(1))
-            unit = (m.group(2) or "").lower()
-            end = m.end()
-            if not unit:
-                return int(num) if end == len(s) and total == 0 else None
-            mul = _DURATION_UNITS.get(unit)
-            if not mul:
-                return None
-            total += int(num * mul)
-            pos = end
-        return total
 
     def _duration_config_seconds(self, key: str) -> int:
         seconds = self._parse_duration_seconds(self._config.get(key))

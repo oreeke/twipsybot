@@ -6,9 +6,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+import click
 import psutil
 
 from ..shared.exceptions import ConfigurationError
+from ..shared.utils import format_duration_hms
 from . import main as app_main
 
 
@@ -57,19 +59,6 @@ def _remove_pid_file(pid_file: Path, *, expected_pid: int | None = None) -> None
         pid_file.unlink(missing_ok=True)
     except OSError:
         return
-
-
-def _print_help() -> None:
-    help_text = (
-        "Usage: twipsybot <command>\n\n"
-        "Commands:\n"
-        "  up      Run bot\n"
-        "  status  Show runtime status\n"
-        "  down    Stop bot\n"
-        "  restart Restart bot\n"
-        "  help    Show help"
-    )
-    print(help_text, file=sys.stdout)
 
 
 def _should_daemonize() -> bool:
@@ -235,16 +224,6 @@ def _cmd_restart() -> int:
     return _cmd_up()
 
 
-def _format_duration(seconds: float) -> str:
-    s = int(max(0, seconds))
-    h = s // 3600
-    m = (s % 3600) // 60
-    ss = s % 60
-    if h > 0:
-        return f"{h}:{m:02d}:{ss:02d}"
-    return f"{m}:{ss:02d}"
-
-
 def _cmd_status() -> int:
     pid_file = _pid_file_path()
     if not pid_file.exists():
@@ -273,7 +252,7 @@ def _cmd_status() -> int:
             try:
                 mem = proc.memory_info().rss / (1024 * 1024)
                 cpu = proc.cpu_percent(interval=None)
-                uptime = _format_duration(time.time() - proc.create_time())
+                uptime = format_duration_hms(time.time() - proc.create_time())
                 line = (
                     f"running pid={pid} uptime={uptime} cpu={cpu:.1f}% rss={mem:.1f}MB"
                 )
@@ -295,31 +274,53 @@ def _cmd_status() -> int:
         return 130
 
 
-def _dispatch(argv: list[str]) -> int:
-    if not argv:
-        _print_help()
-        return 0
+@click.group(
+    invoke_without_command=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+@click.pass_context
+def app(ctx: click.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+        raise click.exceptions.Exit(0)
 
-    cmd = argv[0].strip().lower()
-    if cmd in {"help", "-h", "--help"}:
-        _print_help()
-        return 0
-    if cmd == "up":
-        return _cmd_up()
-    if cmd == "down":
-        return _cmd_down()
-    if cmd == "restart":
-        return _cmd_restart()
-    if cmd == "status":
-        return _cmd_status()
 
-    print(f"unknown command: {argv[0]}", file=sys.stderr)
-    _print_help()
-    return 2
+@app.command()
+def up() -> None:
+    raise click.exceptions.Exit(_cmd_up())
+
+
+@app.command()
+def down() -> None:
+    raise click.exceptions.Exit(_cmd_down())
+
+
+@app.command()
+def restart() -> None:
+    raise click.exceptions.Exit(_cmd_restart())
+
+
+@app.command()
+def status() -> None:
+    raise click.exceptions.Exit(_cmd_status())
+
+
+@app.command()
+@click.pass_context
+def help(ctx: click.Context) -> None:
+    click.echo(ctx.parent.get_help() if ctx.parent else ctx.get_help())
+    raise click.exceptions.Exit(0)
 
 
 def main() -> int:
-    return _dispatch(sys.argv[1:])
+    try:
+        app.main(prog_name="twipsybot", standalone_mode=False)
+        return 0
+    except click.exceptions.Exit as e:
+        return int(e.exit_code)
+    except ConfigurationError as e:
+        click.echo(f"Startup error: {e}", err=True)
+        return 2
 
 
 if __name__ == "__main__":

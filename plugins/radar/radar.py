@@ -9,7 +9,6 @@ from twipsybot.shared.utils import (
     extract_user_handle,
     extract_user_id,
     extract_username,
-    normalize_tokens,
 )
 
 
@@ -57,50 +56,20 @@ class RadarPlugin(PluginBase):
         return True
 
     async def _format_antenna_sources(self) -> str:
-        bot = self._get_bot_with_config()
-        if not bot:
-            return "Antenna: (unknown)"
-        selectors = self._get_antenna_selectors(bot)
+        bot = self.bot
+        selectors = bot.connect._load_antenna_selectors()
         if not selectors:
             return "Antenna: (empty)"
         id_to_name = await self._get_antenna_name_map()
-        resolved_ids = await self._resolve_antenna_ids_safe(bot, selectors)
+        resolved_ids = await self._resolve_antenna_ids(bot, selectors)
         return self._format_antenna_source_display(selectors, resolved_ids, id_to_name)
-
-    def _get_bot_with_config(self):
-        bot = getattr(self, "bot", None)
-        if not bot or not getattr(bot, "config", None):
-            return None
-        return bot
 
     @staticmethod
     def _dedupe(items: list[str]) -> list[str]:
         return list(dict.fromkeys(items))
 
-    def _get_antenna_selectors(self, bot) -> list[str]:
-        selectors = self._get_selectors_from_bot(bot)
-        if selectors:
-            return selectors
-        return self._get_selectors_from_config(bot)
-
-    def _get_selectors_from_bot(self, bot) -> list[str]:
-        if not hasattr(bot, "_load_antenna_selectors"):
-            return []
-        try:
-            raw = bot._load_antenna_selectors() or []
-        except Exception:
-            return []
-        selectors = [str(v).strip() for v in raw if v is not None and str(v).strip()]
-        return self._dedupe(selectors)
-
-    def _get_selectors_from_config(self, bot) -> list[str]:
-        return normalize_tokens(bot.config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS))
-
     async def _get_antenna_name_map(self) -> dict[str, str]:
-        misskey = getattr(self, "misskey", None)
-        if not misskey:
-            return {}
-        antennas = await misskey.list_antennas()
+        antennas = await self.misskey.list_antennas()
         return self._build_antenna_id_name_map(antennas)
 
     @staticmethod
@@ -120,11 +89,9 @@ class RadarPlugin(PluginBase):
             mapping[antenna_id] = name.strip()
         return mapping
 
-    async def _resolve_antenna_ids_safe(self, bot, selectors: list[str]) -> list[str]:
-        if not hasattr(bot, "_resolve_antenna_ids"):
-            return []
+    async def _resolve_antenna_ids(self, bot, selectors: list[str]) -> list[str]:
         try:
-            ids = await bot._resolve_antenna_ids(selectors)
+            ids = await bot.connect._resolve_antenna_ids(selectors)
         except Exception:
             return []
         ids = [v.strip() for v in ids if isinstance(v, str) and v.strip()]
@@ -207,14 +174,14 @@ class RadarPlugin(PluginBase):
         return "\n".join(p for p in parts if p).strip()
 
     def _should_skip_self(self, note: dict[str, Any], variants: set[str]) -> bool:
-        bot = getattr(self, "bot", None)
-        if not self.skip_self or not bot:
+        if not self.skip_self:
             return False
-        bot_id = getattr(bot, "bot_user_id", None)
+        bot = self.bot
+        bot_id = bot.bot_user_id
         note_user_id = extract_user_id(note)
         if bot_id and note_user_id == bot_id:
             return True
-        bot_name = getattr(bot, "bot_username", None)
+        bot_name = bot.bot_username
         if not isinstance(bot_name, str) or not bot_name:
             return False
         return bot_name.lower() in variants
@@ -229,14 +196,13 @@ class RadarPlugin(PluginBase):
     async def _generate_ai(
         self, note: dict[str, Any], prompt_template: str
     ) -> str | None:
-        openai = getattr(self, "openai", None)
-        if not openai or not (content := self._effective_text(note)):
+        if not (content := self._effective_text(note)):
             return None
         prompt = prompt_template.format(content=content)
         system_prompt = (
             self.global_config.get(ConfigKeys.BOT_SYSTEM_PROMPT, "") or ""
         ).strip()
-        reply = await openai.generate_text(
+        reply = await self.openai.generate_text(
             prompt,
             system_prompt or None,
             max_tokens=self.global_config.get(ConfigKeys.OPENAI_MAX_TOKENS),
@@ -247,8 +213,6 @@ class RadarPlugin(PluginBase):
     async def on_timeline_note(
         self, note_data: dict[str, Any]
     ) -> dict[str, Any] | None:
-        if not getattr(self, "misskey", None):
-            return None
         channel = note_data.get("streamingChannel")
         if not isinstance(channel, str) or channel != ChannelType.ANTENNA.value:
             return None
@@ -260,14 +224,7 @@ class RadarPlugin(PluginBase):
             return None
         username = extract_user_handle(note_data) or extract_username(note_data)
         try:
-            bot = getattr(self, "bot", None)
-            lock_ctx = None
-            if bot:
-                lock_ctx = bot.lock_actor(extract_user_id(note_data), username)
-            if lock_ctx:
-                async with lock_ctx:
-                    await self._act(note_data, note_id, channel)
-            else:
+            async with self.bot.lock_actor(extract_user_id(note_data), username):
                 await self._act(note_data, note_id, channel)
         except Exception as e:
             logger.error(f"Radar interaction failed: {e!r}")

@@ -316,18 +316,6 @@ class PluginManager:
             (p for n, p in self.plugins.items() if n.lower() == name.lower()), None
         )
 
-    def enable_plugin(self, name: str) -> bool:
-        if plugin := self._find_plugin_by_name(name):
-            plugin.set_enabled(True)
-            return True
-        return False
-
-    def disable_plugin(self, name: str) -> bool:
-        if plugin := self._find_plugin_by_name(name):
-            plugin.set_enabled(False)
-            return True
-        return False
-
     def _find_plugin_dir(self, name: str) -> Path | None:
         if not self.plugins_dir.exists():
             return None

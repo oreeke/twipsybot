@@ -1,7 +1,7 @@
 import base64
-import re
 from typing import Any
 
+import humanfriendly
 from loguru import logger
 
 from twipsybot.plugin import PluginBase, PluginHookResult
@@ -50,11 +50,12 @@ class VisionPlugin(PluginBase):
         )
 
     async def _try_fetch_bytes_by_url(self, direct_url: str | None) -> bytes | None:
-        misskey = getattr(self, "misskey", None)
-        if not direct_url or not misskey:
+        if not direct_url:
             return None
         try:
-            return await misskey.drive.fetch_bytes(direct_url, max_bytes=self.max_bytes)
+            return await self.misskey.drive.fetch_bytes(
+                direct_url, max_bytes=self.max_bytes
+            )
         except Exception as e:
             logger.error(f"Vision failed to download image: {e!r}")
             return None
@@ -101,24 +102,14 @@ class VisionPlugin(PluginBase):
             return default
         if isinstance(value, bool):
             return default
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            return int(value)
+        if isinstance(value, (int, float)):
+            return max(0, int(value))
         if not isinstance(value, str):
             return default
-        s = value.strip().lower().replace("_", "")
-        if not s:
+        try:
+            return max(0, int(humanfriendly.parse_size(value)))
+        except Exception:
             return default
-        if s.isdigit():
-            return int(s)
-        if not (m := re.fullmatch(r"(\d+(?:\.\d+)?)\s*([kmgt]?b?)", s)):
-            return default
-        n = float(m.group(1))
-        u = m.group(2) or "b"
-        unit = u[0] if u[0] in {"k", "m", "g", "t"} else "b"
-        mul = {"b": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}[unit]
-        return max(0, int(n * mul))
 
     async def initialize(self) -> bool:
         self._log_plugin_action("initialized")
@@ -176,8 +167,6 @@ class VisionPlugin(PluginBase):
     async def _build_user_content(
         self, data: dict[str, Any], *, kind: str
     ) -> list[dict[str, Any]]:
-        if not getattr(self, "drive", None) or not getattr(self, "openai", None):
-            return []
         use_responses = self._use_responses_api()
         text = self._extract_text(data, kind=kind)
         files = self._extract_files(data, kind=kind)[: self.max_images]

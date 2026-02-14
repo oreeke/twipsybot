@@ -31,7 +31,7 @@ class BotRunner:
         self.shutdown_event = asyncio.Event()
         load_dotenv()
         config = Config()
-        await config.load()
+        config.load()
         log_path = Path(config.get(ConfigKeys.LOG_PATH))
         logger.add(
             log_path,

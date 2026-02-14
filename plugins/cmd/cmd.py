@@ -162,14 +162,11 @@ class CmdPlugin(CmdHandlersMixin, PluginBase):
         return True
 
     async def on_startup(self) -> None:
-        if not getattr(self, "db", None):
-            return
-        if getattr(self, "openai", None):
-            model = await self.db.get_plugin_data(self.name, ConfigKeys.OPENAI_MODEL)
-            if model:
-                self.openai.model = model
-                self._set_global_config_value(ConfigKeys.OPENAI_MODEL, model)
-                self._log_plugin_action("applied model override", model)
+        model = await self.db.get_plugin_data(self.name, ConfigKeys.OPENAI_MODEL)
+        if model:
+            self.openai.model = model
+            self._set_global_config_value(ConfigKeys.OPENAI_MODEL, model)
+            self._log_plugin_action("applied model override", model)
         await self._apply_saved_response_user_list(ConfigKeys.BOT_RESPONSE_WHITELIST)
         await self._apply_saved_response_user_list(ConfigKeys.BOT_RESPONSE_BLACKLIST)
 

@@ -11,11 +11,16 @@ dependencies = [
     "aiosqlite==0.22.1",
     "anyio==4.12.0",
     "apscheduler==3.11.2",
+    "beautifulsoup4==4.14.3",
     "cachetools==6.2.4",
+    "click==8.3.1",
     "feedparser==6.0.11",
+    "humanfriendly==10.0",
     "loguru==0.7.3",
     "openai==2.14.0",
+    "pydantic==2.12.5",
     "psutil==7.2.1",
+    "pytimeparse2==1.7.1",
     "pyyaml==6.0.3",
     "python-dotenv==1.2.1",
     "tenacity==9.1.2",
@@ -52,7 +57,6 @@ include = ["twipsybot", "plugins"]
 exclude = ["data", "logs"]
 reportUnsupportedDunderAll = "none"
 reportAttributeAccessIssue = "error"
-
 executionEnvironments = [
     { root = "plugins", reportAttributeAccessIssue = "none" },
     { root = "twipsybot/clients/misskey", reportAttributeAccessIssue = "none" },

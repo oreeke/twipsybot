@@ -20,10 +20,7 @@ class _StreamingSocketMixin:
 
     def _buffer_outgoing(self, message: dict[str, Any]) -> None:
         if len(self._send_buffer) >= STREAM_QUEUE_MAX:
-            try:
-                self._send_buffer.popleft()
-            except IndexError:
-                pass
+            self._send_buffer.popleft()
         self._send_buffer.append(message)
 
     async def _send_or_buffer(self, message: dict[str, Any]) -> None:

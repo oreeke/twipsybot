@@ -20,6 +20,7 @@ __all__ = (
     "extract_chat_text",
     "extract_first_text",
     "extract_note_text",
+    "format_duration_hms",
     "get_memory_usage",
     "get_system_info",
     "maybe_log_event_dump",
@@ -143,6 +144,15 @@ def maybe_log_event_dump(enabled: bool, *, kind: str, payload: Any) -> None:
         lambda: kind,
         lambda: json.dumps(payload, ensure_ascii=False, indent=2),
     )
+
+
+def format_duration_hms(seconds: float) -> str:
+    total = int(max(0, seconds))
+    hours, rem = divmod(total, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
 
 
 def resolve_history_limit(config_value: int | None, limit: int | None) -> int:

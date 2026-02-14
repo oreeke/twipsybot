@@ -13,8 +13,6 @@ from twipsybot.shared.utils import (
 )
 
 _MSG_SPECIFY_PLUGIN_NAME = "请指定插件名称"
-_MSG_BOT_NOT_INJECTED_ANTENNA = "Bot 未注入，无法管理天线订阅"
-_MSG_GLOBAL_CONFIG_NOT_INJECTED = "全局配置未注入"
 
 
 class CmdHandlersMixin:
@@ -28,28 +26,19 @@ class CmdHandlersMixin:
         return f"{days}d {base}" if days else base
 
     def _get_uptime_text(self, bot: Any) -> str | None:
-        runtime = getattr(bot, "runtime", None)
-        if runtime is None:
-            return None
-        started_at = getattr(runtime, "startup_time", None)
-        if not isinstance(started_at, datetime):
-            return None
+        started_at = bot.runtime.startup_time
         seconds = (datetime.now(UTC) - started_at).total_seconds()
         return self._format_duration(seconds)
 
     def _get_feature_toggle_text(self) -> str:
-        cfg = getattr(self, "global_config", None)
-        cfg_get = cfg.get if cfg else (lambda k, d=None: d)
-        chat_on = "on" if bool(cfg_get(ConfigKeys.BOT_RESPONSE_CHAT)) else "off"
-        mention_on = "on" if bool(cfg_get(ConfigKeys.BOT_RESPONSE_MENTION)) else "off"
-        autopost_on = "on" if bool(cfg_get(ConfigKeys.BOT_AUTO_POST_ENABLED)) else "off"
+        cfg = self.global_config
+        chat_on = "on" if bool(cfg.get(ConfigKeys.BOT_RESPONSE_CHAT)) else "off"
+        mention_on = "on" if bool(cfg.get(ConfigKeys.BOT_RESPONSE_MENTION)) else "off"
+        autopost_on = "on" if bool(cfg.get(ConfigKeys.BOT_AUTO_POST_ENABLED)) else "off"
         return f"开关: chat={chat_on} mention={mention_on} autopost={autopost_on}"
 
     def _get_plugin_status_text(self) -> str | None:
-        plugin_manager = getattr(self, "plugin_manager", None)
-        if plugin_manager is None or not hasattr(plugin_manager, "get_plugin_info"):
-            return None
-        plugins = plugin_manager.get_plugin_info()
+        plugins = self.plugin_manager.get_plugin_info()
         if not plugins:
             return None
         plugin_enabled = sum(1 for p in plugins if p.get("enabled") is True)
@@ -70,8 +59,6 @@ class CmdHandlersMixin:
         return f"模型: {model}" if model else None
 
     def _handle_set_bool(self, label: str, key: str, args: str) -> str:
-        if not getattr(self, "global_config", None):
-            return _MSG_GLOBAL_CONFIG_NOT_INJECTED
         action = (args or "").strip().lower()
         if action not in {"on", "off"}:
             return f"用法: ^{label} on|off"
@@ -93,12 +80,9 @@ class CmdHandlersMixin:
         return "\n".join(help_lines)
 
     def _get_status_text(self) -> str:
-        bot = getattr(self, "bot", None)
+        bot = self.bot
         allowed_count = len(self.allowed_users)
-        if not bot:
-            return f"机器人状态: 未注入\n授权用户数: {allowed_count}"
-
-        runtime_running = bool(getattr(getattr(bot, "runtime", None), "running", False))
+        runtime_running = bot.runtime.running
         status = "运行中" if runtime_running else "未运行"
 
         parts = [f"机器人状态: {status}"]
@@ -134,10 +118,7 @@ class CmdHandlersMixin:
 
     def _clear_memory_caches(self, args: str) -> str:
         target = (args or "").strip().lower()
-        bot = getattr(self, "bot", None)
-        if not bot:
-            return "Bot 未注入，无法清理缓存"
-
+        bot = self.bot
         cleared = []
         getters = {
             "chat": lambda b: getattr(b, "_chat_histories", None),
@@ -182,16 +163,7 @@ class CmdHandlersMixin:
         name = plugin_name.strip()
         action = "启用" if enable else "禁用"
         past_action = "已启用" if enable else "已禁用"
-        if hasattr(self.plugin_manager, "set_plugin_enabled"):
-            if await self.plugin_manager.set_plugin_enabled(name, enable):
-                return f"插件 {name} {past_action}"
-            return f"插件 {name} 不存在或{action}失败"
-        method = (
-            self.plugin_manager.enable_plugin
-            if enable
-            else self.plugin_manager.disable_plugin
-        )
-        if method(name):
+        if await self.plugin_manager.set_plugin_enabled(name, enable):
             return f"插件 {name} {past_action}"
         return f"插件 {name} 不存在或{action}失败"
 
@@ -204,10 +176,6 @@ class CmdHandlersMixin:
     async def _reload_plugin(self, plugin_name: str) -> str:
         if not plugin_name.strip():
             return _MSG_SPECIFY_PLUGIN_NAME
-        if not getattr(self, "plugin_manager", None) or not hasattr(
-            self.plugin_manager, "reload_plugin"
-        ):
-            return "插件管理器不支持重启插件"
         name = plugin_name.strip()
         if await self.plugin_manager.reload_plugin(name):
             return f"插件 {name} 已重启并重读配置"
@@ -253,8 +221,6 @@ class CmdHandlersMixin:
 
     async def _handle_model(self, args: str) -> str:
         arg = args.strip()
-        if not getattr(self, "openai", None):
-            return "OpenAI 客户端未初始化"
         if not arg:
             saved = await self.db.get_plugin_data(self.name, ConfigKeys.OPENAI_MODEL)
             return (
@@ -264,7 +230,7 @@ class CmdHandlersMixin:
             )
         if arg.lower() in {"reset", "default"}:
             await self.db.delete_plugin_data(self.name, ConfigKeys.OPENAI_MODEL)
-            await self.global_config.load()
+            self.global_config.load()
             model = self.global_config.get(ConfigKeys.OPENAI_MODEL)
             self.openai.model = model
             self._set_global_config_value(ConfigKeys.OPENAI_MODEL, model)
@@ -297,8 +263,6 @@ class CmdHandlersMixin:
         return "\n".join(body)
 
     async def _apply_saved_response_user_list(self, key: str) -> None:
-        if not getattr(self, "db", None):
-            return
         saved = await self.db.get_plugin_data(self.name, key)
         if not saved:
             return
@@ -312,23 +276,17 @@ class CmdHandlersMixin:
 
     async def _save_response_user_list(self, key: str, items: list[str]) -> None:
         self._set_global_config_value(key, items)
-        if not getattr(self, "db", None):
-            return
         await self.db.set_plugin_data(
             self.name, key, json.dumps(items, ensure_ascii=False, separators=(",", ":"))
         )
 
     async def _reset_response_user_list(self, key: str, baseline: list[str]) -> None:
         self._set_global_config_value(key, list(baseline))
-        if not getattr(self, "db", None):
-            return
         await self.db.delete_plugin_data(self.name, key)
 
     async def _handle_response_user_list(
         self, label: str, key: str, args: str, baseline: list[str]
     ) -> str:
-        if not getattr(self, "global_config", None):
-            return _MSG_GLOBAL_CONFIG_NOT_INJECTED
         raw = args.strip()
         current = normalize_tokens(self.global_config.get(key), lower=True)
         if not raw:
@@ -382,9 +340,7 @@ class CmdHandlersMixin:
         return mapped
 
     def _format_timeline_status(self) -> str:
-        bot = getattr(self, "bot", None)
-        if not bot:
-            return "Bot 未注入，无法管理时间线订阅"
+        bot = self.bot
         desired = getattr(bot, "timeline_channels", set()) or set()
         desired_text = ", ".join(sorted(desired)) if desired else "(空)"
         connected = getattr(bot, "streaming", None)
@@ -402,9 +358,7 @@ class CmdHandlersMixin:
         return f"期望订阅: {desired_text}\n当前连接: {connected_text}"
 
     async def _handle_timeline(self, args: str) -> str:
-        bot = getattr(self, "bot", None)
-        if not bot:
-            return "Bot 未注入，无法管理时间线订阅"
+        bot = self.bot
         tokens = args.strip().split()
         if not tokens or tokens[0].lower() in {"status", "show"}:
             return self._format_timeline_status()
@@ -488,9 +442,7 @@ class CmdHandlersMixin:
         return candidates[0], selector, None
 
     async def _format_antenna_status(self) -> str:
-        bot = getattr(self, "bot", None)
-        if not bot:
-            return _MSG_BOT_NOT_INJECTED_ANTENNA
+        bot = self.bot
         selectors = normalize_tokens(
             bot.config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS)
         )
@@ -516,18 +468,13 @@ class CmdHandlersMixin:
     async def _format_connected_antenna(self, antenna_id: str | None) -> str:
         if not antenna_id:
             return "(空)"
-        misskey = getattr(self, "misskey", None)
-        if not misskey:
-            return antenna_id
-        antennas = await misskey.list_antennas()
+        antennas = await self.misskey.list_antennas()
         _, _, id_to_name = self._build_antenna_index(antennas)
         if name := id_to_name.get(antenna_id):
             return f"{name} ({antenna_id})"
         return antenna_id
 
     async def _list_antennas(self) -> str:
-        if not getattr(self, "misskey", None):
-            return "Misskey 客户端未注入，无法获取天线列表"
         antennas = await self.misskey.list_antennas()
         _, _, id_to_name = self._build_antenna_index(antennas)
         if not id_to_name:
@@ -540,11 +487,7 @@ class CmdHandlersMixin:
     async def _resolve_antenna_selectors(
         self, selectors: list[str], *, strict: bool
     ) -> tuple[list[str], str | None]:
-        misskey = getattr(self, "misskey", None)
-        if not misskey:
-            deduped = [s.strip() for s in selectors if s.strip()]
-            return list(dict.fromkeys(deduped)), None
-        antennas = await misskey.list_antennas()
+        antennas = await self.misskey.list_antennas()
         antenna_ids, name_to_ids, _ = self._build_antenna_index(antennas)
         error_templates = {
             "not_found": "未知天线: {selector}\n使用 ^antenna list 查看可选天线",
@@ -566,9 +509,7 @@ class CmdHandlersMixin:
         return list(dict.fromkeys(resolved)), None
 
     async def _apply_antenna_selectors(self, selectors: list[str], message: str) -> str:
-        bot = getattr(self, "bot", None)
-        if not bot:
-            return _MSG_BOT_NOT_INJECTED_ANTENNA
+        bot = self.bot
         self._set_global_config_value(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS, selectors)
         await bot.restart_streaming()
         return message + "\n" + await self._format_antenna_status()
@@ -579,11 +520,6 @@ class CmdHandlersMixin:
         return await self._apply_antenna_selectors(resolved, "已重置天线订阅")
 
     async def _update_antenna_selectors(self, args: str, *, mode: str) -> str:
-        bot = getattr(self, "bot", None)
-        if not bot:
-            return _MSG_BOT_NOT_INJECTED_ANTENNA
-        if not getattr(self, "global_config", None):
-            return _MSG_GLOBAL_CONFIG_NOT_INJECTED
         raw = args.strip()
         selectors = normalize_tokens(raw)
         if not selectors:
@@ -606,27 +542,22 @@ class CmdHandlersMixin:
         return await self._apply_antenna_selectors(target_ids, "已设置天线订阅")
 
     async def _set_antenna_selector(self, selector: str) -> str:
-        bot = getattr(self, "bot", None)
-        if not bot:
-            return _MSG_BOT_NOT_INJECTED_ANTENNA
+        bot = self.bot
         selector = selector.strip()
         if not selector:
             return "请指定天线名称或 ID"
-        if getattr(self, "misskey", None):
-            antennas = await self.misskey.list_antennas()
-            antenna_ids, name_to_ids, id_to_name = self._build_antenna_index(antennas)
-            resolved_id, _, err = self._resolve_antenna_selector(
-                selector, antenna_ids, name_to_ids
-            )
-            if err == "not_found":
-                return f"未知天线: {selector}\n使用 ^antenna list 查看可选天线"
-            if err == "ambiguous":
-                return f"天线名称不唯一: {selector}\n请使用天线 ID"
-            if resolved_id:
-                selector = resolved_id
-                display = id_to_name.get(resolved_id, "")
-            else:
-                display = ""
+        antennas = await self.misskey.list_antennas()
+        antenna_ids, name_to_ids, id_to_name = self._build_antenna_index(antennas)
+        resolved_id, _, err = self._resolve_antenna_selector(
+            selector, antenna_ids, name_to_ids
+        )
+        if err == "not_found":
+            return f"未知天线: {selector}\n使用 ^antenna list 查看可选天线"
+        if err == "ambiguous":
+            return f"天线名称不唯一: {selector}\n请使用天线 ID"
+        if resolved_id:
+            selector = resolved_id
+            display = id_to_name.get(resolved_id, "")
         else:
             display = ""
         self._set_global_config_value(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS, [selector])
@@ -639,9 +570,6 @@ class CmdHandlersMixin:
         return f"已切换天线: {selector}\n" + await self._format_antenna_status()
 
     async def _clear_antenna(self) -> str:
-        bot = getattr(self, "bot", None)
-        if not bot:
-            return _MSG_BOT_NOT_INJECTED_ANTENNA
         return await self._apply_antenna_selectors([], "已清空天线订阅")
 
     async def _handle_antenna(self, args: str) -> str:

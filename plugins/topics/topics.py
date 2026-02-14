@@ -2,8 +2,6 @@ import asyncio
 import calendar
 import hashlib
 import json
-from html import unescape
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -11,6 +9,7 @@ from urllib.parse import urlparse
 import aiohttp
 import anyio
 import feedparser
+from bs4 import BeautifulSoup
 from loguru import logger
 
 from twipsybot.plugin import PluginBase
@@ -40,9 +39,6 @@ class TopicsPlugin(PluginBase):
 
     async def initialize(self) -> bool:
         try:
-            if not self.db:
-                logger.error("Topics plugin missing db instance")
-                return False
             if self.source == "rss":
                 await self._initialize_rss_data()
             else:
@@ -321,28 +317,13 @@ class TopicsPlugin(PluginBase):
             )
         return out
 
-    class _HTMLTextExtractor(HTMLParser):
-        def __init__(self) -> None:
-            super().__init__(convert_charrefs=True)
-            self._parts: list[str] = []
-
-        def handle_data(self, data: str) -> None:
-            if data:
-                self._parts.append(data)
-
-        def get_text(self) -> str:
-            return " ".join(self._parts)
-
     @classmethod
     def _strip_html(cls, text: str) -> str:
         if not text:
             return ""
         if "<" not in text and "&" not in text:
             return text.strip()
-        parser = cls._HTMLTextExtractor()
-        parser.feed(text)
-        parser.close()
-        return unescape(parser.get_text()).strip()
+        return BeautifulSoup(text, "html.parser").get_text(" ", strip=True)
 
     @classmethod
     def _normalize_entry_text(cls, text: str, *, max_len: int) -> str:

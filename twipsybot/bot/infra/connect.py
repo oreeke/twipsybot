@@ -3,12 +3,12 @@ from typing import Any
 
 from loguru import logger
 
-from ..clients.misskey.channels import ChannelSpec, ChannelType
-from ..clients.misskey.misskey_api import MisskeyAPI
-from ..clients.misskey.streaming import StreamingClient
-from ..shared.config import Config
-from ..shared.config_keys import ConfigKeys
-from ..shared.utils import normalize_tokens
+from ...clients.misskey.channels import ChannelSpec, ChannelType
+from ...clients.misskey.misskey_api import MisskeyAPI
+from ...clients.misskey.streaming import StreamingClient
+from ...shared.config import Config
+from ...shared.config_keys import ConfigKeys
+from ...shared.utils import normalize_tokens
 from .handlers import BotHandlers
 from .runtime import BotRuntime
 

@@ -8,11 +8,11 @@ from urllib.parse import urlparse
 from cachetools import TTLCache
 from pytimeparse2 import parse as parse_duration
 
-from ..db.sqlite import DBManager
-from ..shared.config import Config
-from ..shared.config_keys import ConfigKeys
-from ..shared.constants import RESPONSE_LIMIT_CACHE_MAX, RESPONSE_LIMIT_CACHE_TTL
-from ..shared.utils import normalize_tokens
+from ...db.sqlite import DBManager
+from ...shared.config import Config
+from ...shared.config_keys import ConfigKeys
+from ...shared.constants import RESPONSE_LIMIT_CACHE_MAX, RESPONSE_LIMIT_CACHE_TTL
+from ...shared.utils import normalize_tokens
 
 
 @dataclass(slots=True)

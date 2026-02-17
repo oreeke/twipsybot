@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from ..shared.config_keys import ConfigKeys
+from ...shared.config_keys import ConfigKeys
 
 if TYPE_CHECKING:
-    from .core import MisskeyBot
+    from ..infra.core import MisskeyBot
 
 
 class AutoPostService:

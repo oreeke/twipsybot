@@ -4,9 +4,9 @@ from typing import Any
 _PLUGIN_MODULE = ".plugin"
 
 _EXPORTS: dict[str, tuple[str, str]] = {
-    "MisskeyBot": (".bot.core", "MisskeyBot"),
+    "MisskeyBot": (".bot.infra.core", "MisskeyBot"),
     "BotRunner": (".app.main", "BotRunner"),
-    "BotRuntime": (".bot.runtime", "BotRuntime"),
+    "BotRuntime": (".bot.infra.runtime", "BotRuntime"),
     "Config": (".shared.config", "Config"),
     "ConfigKeys": (".shared.config_keys", "ConfigKeys"),
     "MisskeyAPI": (".clients.misskey.misskey_api", "MisskeyAPI"),

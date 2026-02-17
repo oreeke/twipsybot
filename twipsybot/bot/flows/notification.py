@@ -3,11 +3,11 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from ..shared.config_keys import ConfigKeys
-from ..shared.utils import maybe_log_event_dump
+from ...shared.config_keys import ConfigKeys
+from ...shared.utils import maybe_log_event_dump
 
 if TYPE_CHECKING:
-    from .core import MisskeyBot
+    from ..infra.core import MisskeyBot
 
 
 class NotificationHandler:

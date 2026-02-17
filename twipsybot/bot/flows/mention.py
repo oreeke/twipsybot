@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from ..shared.config_keys import ConfigKeys
-from ..shared.utils import (
+from ...shared.config_keys import ConfigKeys
+from ...shared.utils import (
     extract_note_text,
     extract_user_handle,
     extract_user_id,
@@ -15,7 +15,7 @@ from ..shared.utils import (
 )
 
 if TYPE_CHECKING:
-    from .core import MisskeyBot
+    from ..infra.core import MisskeyBot
 
 
 @dataclass(slots=True)

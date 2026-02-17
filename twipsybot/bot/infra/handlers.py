@@ -1,9 +1,9 @@
 from typing import TYPE_CHECKING, Any
 
-from .chat import ChatHandler
-from .mention import MentionHandler
-from .notification import NotificationHandler
-from .post import AutoPostService
+from ..flows.chat import ChatHandler
+from ..flows.mention import MentionHandler
+from ..flows.notification import NotificationHandler
+from ..flows.post import AutoPostService
 
 if TYPE_CHECKING:
     from .core import MisskeyBot

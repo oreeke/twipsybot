@@ -12,12 +12,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-COPY pyproject.toml README.md LICENSE ./
-RUN uv pip install --system -r pyproject.toml
+COPY pyproject.toml uv.lock README.md LICENSE ./
+RUN uv export --frozen --no-emit-project -o requirements.lock.txt && \
+    uv pip install --system --no-build --require-hashes -r requirements.lock.txt
 
 COPY twipsybot /app/twipsybot
 COPY plugins /app/plugins
-RUN uv pip install --system --no-deps . && \
+RUN uv build --wheel -o dist && \
+    uv pip install --system --no-build --no-deps dist/*.whl && \
     useradd -r -u 10001 -m -U -s /usr/sbin/nologin appuser && \
     mkdir -p /app/logs /app/data && \
     chown -R appuser:appuser /app/logs /app/data

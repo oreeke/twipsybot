@@ -12,14 +12,11 @@ import psutil
 from ..shared.exceptions import ConfigurationError
 from ..shared.utils import format_duration_hms
 from . import main as app_main
+from .main import _stop_file_path
 
 
 def _pid_file_path() -> Path:
     return Path("data") / "twipsybot.pid"
-
-
-def _stop_file_path() -> Path:
-    return Path("data") / "twipsybot.stop"
 
 
 def _remove_stop_file(stop_file: Path) -> None:

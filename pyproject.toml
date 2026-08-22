@@ -1,6 +1,6 @@
 [project]
 name = "twipsybot"
-version = "0.1.1"
+version = "0.1.2"
 description = "AI-powered Misskey bot with OpenAI-compatible LLMs."
 readme = "README.md"
 license = { file = "LICENSE" }

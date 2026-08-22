@@ -1,6 +1,6 @@
 # Radar 插件配置文件
 
-enabled: false                   # 插件总开关
+enabled: false                   # 插件开关
 priority: 50                     # 插件优先级（数字越大越先执行）
 
 reaction: ""                     # 反应（例如 "heart"/":emoji:"）；留空表示不反应

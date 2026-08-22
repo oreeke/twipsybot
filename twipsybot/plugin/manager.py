@@ -33,6 +33,7 @@ class PluginManager:
         self.discovered_plugins: dict[str, dict[str, Any]] = {}
         self.db = db
         self.context_objects = context_objects or {}
+        self._master_config: dict[str, Any] = {}
 
     async def __aenter__(self):
         return self
@@ -54,7 +55,7 @@ class PluginManager:
     def _discover_plugin_dir(
         self, plugin_dir: Path, plugin_config: dict[str, Any]
     ) -> tuple[bool, bool]:
-        configured = (plugin_dir / _PLUGIN_CONFIG_FILENAME).exists()
+        configured = self._is_plugin_configured(plugin_dir)
         enabled = bool(plugin_config.get("enabled", False))
         key = plugin_dir.name
         name = self._camelize(key)
@@ -84,6 +85,7 @@ class PluginManager:
         if not self.plugins_dir.exists():
             logger.info(f"Plugins directory not found: {self.plugins_dir}")
             return
+        self._master_config = self._load_master_config()
         for plugin_dir in self._iter_plugin_dirs():
             plugin_config = self._load_plugin_config(plugin_dir)
             configured, enabled = self._discover_plugin_dir(plugin_dir, plugin_config)
@@ -96,8 +98,33 @@ class PluginManager:
             f"Found {len(self.discovered_plugins)} plugins; {enabled_count} enabled"
         )
 
-    @staticmethod
-    def _load_plugin_config(plugin_dir: Path) -> dict[str, Any]:
+    def _load_master_config(self) -> dict[str, Any]:
+        master_file = self.plugins_dir / _PLUGIN_CONFIG_FILENAME
+        if not master_file.exists():
+            return {}
+        try:
+            with open(master_file, encoding="utf-8") as f:
+                loaded = yaml.safe_load(f) or {}
+            if not isinstance(loaded, dict):
+                logger.error(
+                    "Error loading plugins config: root node must be an object"
+                )
+                return {}
+            return loaded
+        except Exception as e:
+            logger.error(f"Error loading plugins config: {e}")
+            return {}
+
+    def _is_plugin_configured(self, plugin_dir: Path) -> bool:
+        return (
+            plugin_dir.name in self._master_config
+            or (plugin_dir / _PLUGIN_CONFIG_FILENAME).exists()
+        )
+
+    def _load_plugin_config(self, plugin_dir: Path) -> dict[str, Any]:
+        master_entry = self._master_config.get(plugin_dir.name)
+        if isinstance(master_entry, dict):
+            return master_entry
         config_file = plugin_dir / _PLUGIN_CONFIG_FILENAME
         if not config_file.exists():
             return {"enabled": False}
@@ -373,7 +400,8 @@ class PluginManager:
     async def set_plugin_enabled(self, name: str, enabled: bool) -> bool:
         if not (plugin_dir := self._find_plugin_dir(name)):
             return False
-        if not (plugin_dir / _PLUGIN_CONFIG_FILENAME).exists():
+        self._master_config = self._load_master_config()
+        if not self._is_plugin_configured(plugin_dir):
             return False
         key = plugin_dir.name
         if enabled:
@@ -399,6 +427,7 @@ class PluginManager:
     async def reload_plugin(self, name: str) -> bool:
         if not (plugin_dir := self._find_plugin_dir(name)):
             return False
+        self._master_config = self._load_master_config()
         key = plugin_dir.name
         await self._cleanup_plugin_instance(self._find_plugin_by_name(key))
         self.plugins.pop(key, None)

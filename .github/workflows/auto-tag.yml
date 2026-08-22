@@ -1,0 +1,43 @@
+name: Auto Tag
+on:
+  push:
+    branches: [main]
+    paths:
+      - pyproject.toml
+jobs:
+  auto-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.RELEASE_TOKEN }}
+      - name: Check version bump
+        id: check
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          current=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          previous=$(git show "$BEFORE_SHA:pyproject.toml" 2>/dev/null | python3 -c "import sys, tomllib; print(tomllib.load(sys.stdin.buffer)['project']['version'])" 2>/dev/null || echo "")
+          if [ "$current" = "$previous" ]; then
+            echo "Version unchanged ($current), skipping"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version bumped: ${previous:-<none>} -> $current"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "tag=v$current" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create and push tag
+        if: steps.check.outputs.changed == 'true'
+        env:
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists, skipping"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"

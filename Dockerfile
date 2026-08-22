@@ -26,5 +26,8 @@ RUN uv build --wheel -o dist && \
 
 USER appuser
 
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
+    CMD pid=$(cat data/twipsybot.pid 2>/dev/null) && test -n "$pid" && test -e "/proc/$pid"
+
 ENTRYPOINT ["twipsybot"]
 CMD ["up"]

@@ -1,6 +1,6 @@
 # Topics 插件配置文件
 
-enabled: false                         # 是否启用插件
+enabled: false                         # 插件开关
 priority: 100                          # 插件优先级（数字越大越先执行）
 
 source: "txt"                          # 数据源：txt/rss

@@ -1,6 +1,6 @@
 # KeyAct 插件配置文件
 
-enabled: false                     # 是否启用插件
+enabled: false                     # 插件开关
 priority: 990                      # 插件优先级（数字越大越先执行）
 
 mention_enabled: true              # 是否处理提及（@）

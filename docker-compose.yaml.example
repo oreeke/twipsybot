@@ -1,16 +1,18 @@
 services:
   twipsybot:
-    build: .
+    image: ghcr.io/oreeke/twipsybot:latest
+    # build: .                                                     # 本地构建
     container_name: twipsybot
     restart: unless-stopped
 
     volumes:
-      # 挂载插件配置
-      # - ./plugins/your_plugin/config.yaml:/app/plugins/your_plugin/config.yaml:ro
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - twipsybot:/app/data
+      - twipsybot:/app/logs
+      - ./plugins/config.yaml:/app/plugins/config.yaml:ro          # 插件总配置，需提前从 plugins/config.yaml.example 复制创建
+      - ./prompts:/app/prompts:ro                                  # 可选，BOT_SYSTEM_PROMPT/BOT_AUTO_POST_PROMPT 引用 prompts/*.txt 时需要
 
     environment:
+      - TZ=Asia/Shanghai                                           # 时区，影响自动发帖计数每日重置等时间相关逻辑
       - MISSKEY_INSTANCE_URL=https://misskey.example.com           # Misskey 实例 URL（本地：http://localhost:port）
       - MISSKEY_ACCESS_TOKEN=your_access_token_here                # Misskey 访问令牌
       - OPENAI_API_KEY=your_api_key_here                           # OpenAI API 密钥
@@ -46,3 +48,6 @@ services:
       - DB_CLEAR=30                                                # SQLite 数据保留天数（不含插件）；-1 不清理
       - LOG_LEVEL=INFO                                             # 日志级别 (DEBUG/INFO/WARNING/ERROR)
       - LOG_DUMP_EVENTS=false                                      # 是否输出事件原始数据（DEBUG）
+
+volumes:
+  twipsybot:

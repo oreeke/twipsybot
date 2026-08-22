@@ -4,7 +4,6 @@
 # Python
 __pycache__/
 *.py[cod]
-*.so
 build/
 dist/
 *.egg-info/
@@ -13,7 +12,6 @@ dist/
 .env
 .venv/
 venv/
-ENV/
 
 # Testing
 .pytest_cache/
@@ -30,9 +28,9 @@ htmlcov/
 logs/
 *.log
 
-# Config (keep examples)
+# Config
 config.yaml
-!config.yaml.example
+config.yaml.example
 
 # Temporary files
 *.tmp

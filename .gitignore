@@ -19,6 +19,7 @@ htmlcov/
 .idea/
 .vscode/
 *.swp
+*.swo
 
 # Config files
 config.yaml

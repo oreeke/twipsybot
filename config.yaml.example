@@ -19,7 +19,7 @@ bot:
     请用简短、友好的方式发帖和回答问题。
 
   timeline:
-    enabled: false                                  # 是否订阅时间线
+    enabled: false                                  # 是否订阅时间线，一般不需要，即使启用 Radar 插件也仅需 antenna ID
     home: false                                     # homeTimeline
     local: false                                    # localTimeline
     hybrid: false                                   # hybridTimeline
@@ -57,4 +57,4 @@ db:
 
 log:
   level: "INFO"                                     # 日志级别 (DEBUG/INFO/WARNING/ERROR)
-  dump_events: false                                # 是否输出事件原始数据（DEBUG）
+  dump_events: false                                # 是否输出事件原始数据（仅用于 DEBUG 数据分析）

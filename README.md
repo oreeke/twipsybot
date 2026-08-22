@@ -70,7 +70,7 @@ BOT_RESPONSE_MAX_TURNS_REPLY=我要回家了...                  # 次数限制�
 BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h
 BOT_RESPONSE_WHITELIST=                                    # 白名单：username@host/userId，这些用户不受以上限制
 BOT_RESPONSE_BLACKLIST=                                    # 黑名单：username@host/userId，这些用户禁止使用回复
-BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线，一般不需要，即使使用 Radar 插件也仅需 antenna ID
+BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线，一般不需要，即使启用 Radar 插件也仅需 antenna ID
 BOT_TIMELINE_HOME=false                                    # homeTimeline
 BOT_TIMELINE_LOCAL=false                                   # localTimeline
 BOT_TIMELINE_HYBRID=false                                  # hybridTimeline
@@ -194,7 +194,7 @@ bot:
     请用简短、友好的方式发帖和回答问题。
 
   timeline:
-    enabled: false                                  # 是否订阅时间线
+    enabled: false                                  # 是否订阅时间线，一般不需要，即使启用 Radar 插件也仅需 antenna ID
     home: false                                     # homeTimeline
     local: false                                    # localTimeline
     hybrid: false                                   # hybridTimeline
@@ -232,7 +232,7 @@ db:
 
 log:
   level: "INFO"                                     # 日志级别 (DEBUG/INFO/WARNING/ERROR)
-  dump_events: false                                # 是否输出事件原始数据（DEBUG）
+  dump_events: false                                # 是否输出事件原始数据（仅用于 DEBUG 数据分析）
 ```
 </details>
 
@@ -283,7 +283,7 @@ systemctl start twipsybot.service
 > - 自动发帖会尽量绕过 [Prompt caching](https://platform.openai.com/docs/guides/prompt-caching)，想让帖子更多样化请配置并启用 [Topics](./plugins/topics)
 > - 切换模型仅需修改 `api_key` `model` `api_base`，相同 `api_base` 的模型可通过 [Cmd](./plugins/cmd) 实时切换
 > - 机器人使用 [Radar](./plugins/radar) + `antenna` 时间线接收帖子，非必要无需订阅其他时间线（日志噪音大）
-> - Docker Compose 部署时，数据库、日志存放于 `twipsybot` 卷，查看可用 `docker compose logs -f twipsybot`
+> - Docker 部署时，数据库、日志存放于 `twipsybot` 卷，查看可用 `docker compose logs -f twipsybot`
 
 > [!NOTE]
 >

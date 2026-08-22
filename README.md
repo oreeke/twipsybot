@@ -246,6 +246,12 @@ twipsybot status     # 状态
 twipsybot down       # 关闭
 twipsybot restart    # 重启
 twipsybot help       # 帮助
+
+# 或 uv（需安装 uv）
+uv sync
+
+uv run twipsybot up
+uv run twipsybot ...
 ```
 
 > 作为服务（可选）
@@ -261,7 +267,7 @@ After=network.target
 [Service]
 Type=exec
 WorkingDirectory=/path/to/twipsybot
-ExecStart=/path/to/envs/twipsybot/bin/twipsybot up
+ExecStart=/path/to/<venv>/bin/twipsybot up
 KillMode=control-group
 TimeoutStopSec=5
 Environment=TWIPSYBOT_UP_MODE=foreground \

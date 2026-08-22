@@ -247,12 +247,16 @@ class MisskeyBot:
         return list(trimmed)
 
     def append_chat_turn(
-        self, user_id: str, user_text: str, assistant_text: str, limit: int | None
+        self,
+        conversation_id: str,
+        user_text: str,
+        assistant_text: str,
+        limit: int | None,
     ) -> None:
         limit_value = resolve_history_limit(
             self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
         )
-        history = list(self._chat_histories.get(user_id) or [])
+        history = list(self._chat_histories.get(conversation_id) or [])
         last = next(reversed(history), None)
         if user_text and not (
             isinstance(last, dict)
@@ -267,7 +271,7 @@ class MisskeyBot:
             and last.get("content") == assistant_text
         ):
             history.append({"role": "assistant", "content": assistant_text})
-        self._chat_histories[user_id] = history[-max(0, limit_value * 2) :]
+        self._chat_histories[conversation_id] = history[-max(0, limit_value * 2) :]
 
     async def __aenter__(self):
         await self.start()

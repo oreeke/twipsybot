@@ -56,5 +56,6 @@ db:
   clear: 30                                         # SQLite 数据保留天数（不含插件）；-1 不清理
 
 log:
+  path: "data/logs/twipsybot.log"                   # 日志路径
   level: "INFO"                                     # 日志级别 (DEBUG/INFO/WARNING/ERROR)
   dump_events: false                                # 是否输出事件原始数据（仅用于 DEBUG 数据分析）

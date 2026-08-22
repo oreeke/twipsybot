@@ -54,7 +54,6 @@ services:
 
     volumes:
       - twipsybot:/app/data
-      - twipsybot:/app/logs
       - ./plugins/config.yaml:/app/plugins/config.yaml:ro          # 插件总配置，需提前从 plugins/config.yaml.example 复制创建
       - ./prompts:/app/prompts:ro                                  # 可选，BOT_SYSTEM_PROMPT/BOT_AUTO_POST_PROMPT 引用 prompts/*.txt 时需要
 
@@ -93,11 +92,13 @@ services:
       - BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）
       - DB_PATH=data/twipsybot.db                                  # SQLite 路径
       - DB_CLEAR=30                                                # SQLite 数据保留天数（不含插件）；-1 不清理
+      - LOG_PATH=data/logs/twipsybot.log                           # 日志路径
       - LOG_LEVEL=INFO                                             # 日志级别 (DEBUG/INFO/WARNING/ERROR)
       - LOG_DUMP_EVENTS=false                                      # 是否输出事件原始数据（仅用于 DEBUG 数据分析）
 
 volumes:
   twipsybot:
+    name: twipsybot
 ```
 </details>
 
@@ -249,6 +250,7 @@ db:
   clear: 30                                         # SQLite 数据保留天数（不含插件）；-1 不清理
 
 log:
+  path: "data/logs/twipsybot.log"                   # 日志路径
   level: "INFO"                                     # 日志级别 (DEBUG/INFO/WARNING/ERROR)
   dump_events: false                                # 是否输出事件原始数据（仅用于 DEBUG 数据分析）
 ```

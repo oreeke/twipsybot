@@ -21,13 +21,13 @@ COPY plugins /app/plugins
 RUN uv build --wheel -o dist && \
     uv pip install --system --no-build --no-deps dist/*.whl && \
     useradd -r -u 10001 -m -U -s /usr/sbin/nologin appuser && \
-    mkdir -p /app/logs /app/data && \
-    chown -R appuser:appuser /app/logs /app/data
+    mkdir -p /app/data /app/run && \
+    chown -R appuser:appuser /app/data /app/run
 
 USER appuser
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
-    CMD pid=$(cat data/twipsybot.pid 2>/dev/null) && test -n "$pid" && test -e "/proc/$pid"
+    CMD pid=$(cat run/twipsybot.pid 2>/dev/null) && test -n "$pid" && test -e "/proc/$pid"
 
 ENTRYPOINT ["twipsybot"]
 CMD ["up"]

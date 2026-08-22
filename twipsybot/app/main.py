@@ -17,7 +17,7 @@ from ..shared.exceptions import (
 
 
 def _stop_file_path() -> Path:
-    return Path("data") / "twipsybot.stop"
+    return Path("run") / "twipsybot.stop"
 
 
 class BotRunner:

@@ -228,7 +228,7 @@ class DBConfig(BaseModel):
 
 
 class LogConfig(BaseModel):
-    path: str = "logs/twipsybot.log"
+    path: str = "data/logs/twipsybot.log"
     level: str = "INFO"
     dump_events: bool = False
 

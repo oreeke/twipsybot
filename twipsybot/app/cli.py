@@ -16,7 +16,7 @@ from .main import _stop_file_path
 
 
 def _pid_file_path() -> Path:
-    return Path("data") / "twipsybot.pid"
+    return Path("run") / "twipsybot.pid"
 
 
 def _remove_stop_file(stop_file: Path) -> None:
@@ -116,7 +116,7 @@ def _cmd_up() -> int:
     _remove_stop_file(_stop_file_path())
     if pid_file.exists():
         pid = _read_pid(pid_file)
-        if pid and psutil.pid_exists(pid):
+        if pid and pid != os.getpid() and psutil.pid_exists(pid):
             print(f"twipsybot is already running (pid={pid})", file=sys.stderr)
             return 2
         _remove_pid_file(pid_file)

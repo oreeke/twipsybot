@@ -40,50 +40,67 @@
   ```
 
 - 复制 `docker-compose.yaml.example` 为 `docker-compose.yaml` 并修改配置
+- 启用插件：复制 `plugins/config.yaml.example` 为 `plugins/config.yaml` 按插件名分节修改
 <details>
 <summary><kbd>📃 docker-compose.yaml</kbd></summary>
 
 ```yaml
-TZ=Asia/Shanghai                                           # 时区，影响自动发帖计数每日重置等时间相关逻辑
-MISSKEY_INSTANCE_URL=https://misskey.example.com           # Misskey 实例 URL（本地：http://localhost:port）
-MISSKEY_ACCESS_TOKEN=your_access_token_here                # Misskey 访问令牌
-OPENAI_API_KEY=your_api_key_here                           # OpenAI API 密钥
-OPENAI_MODEL=deepseek-chat                                 # 使用的模型名称
-OPENAI_API_BASE=https://api.deepseek.com/v1                # OpenAI API 端点
-OPENAI_API_MODE=auto                                       # auto/chat/responses
-OPENAI_MAX_TOKENS=1000                                     # OpenAI 最大生成 token 数
-OPENAI_TEMPERATURE=0.8                                     # OpenAI 温度参数
-BOT_SYSTEM_PROMPT=你是一个可爱的AI助手...                    # 系统提示词（支持文件导入："prompts/*.txt"）
-BOT_AUTO_POST_ENABLED=true                                 # 是否启用自动发帖
-BOT_AUTO_POST_INTERVAL=180                                 # 发帖间隔（分钟）
-BOT_AUTO_POST_MAX_PER_DAY=8                                # 每日最大发帖数量（凌晨 0 点重置计数器）
-BOT_AUTO_POST_VISIBILITY=public                            # 发帖可见性（public/home/followers）
-BOT_AUTO_POST_LOCAL_ONLY=false                             # 是否禁用联合（仅本地可见）
-BOT_AUTO_POST_PROMPT=生成一篇有趣、有见解的社交媒体帖子。      # 发帖提示词
-BOT_RESPONSE_MENTION=true                                  # 是否响应提及（@）
-BOT_RESPONSE_CHAT=true                                     # 是否响应聊天
-BOT_RESPONSE_CHAT_MEMORY=10                                # 聊天上下文记忆长度（条）
-BOT_RESPONSE_RATE_LIMIT=-1                                 # 回复速率限制：同一用户回复最小间隔；-1 不限制；30s/5m/1h
-BOT_RESPONSE_RATE_LIMIT_REPLY=我需要休息一下...             # 速率限制回复文案
-BOT_RESPONSE_MAX_TURNS=-1                                  # 回复次数限制：同一用户最多对话轮数（机器人回复次数）；-1 不限制
-BOT_RESPONSE_MAX_TURNS_REPLY=我要回家了...                  # 次数限制回复文案
-BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h
-BOT_RESPONSE_WHITELIST=                                    # 白名单：username@host/userId，这些用户不受以上限制
-BOT_RESPONSE_BLACKLIST=                                    # 黑名单：username@host/userId，这些用户禁止使用回复
-BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线，一般不需要，即使启用 Radar 插件也仅需 antenna ID
-BOT_TIMELINE_HOME=false                                    # homeTimeline
-BOT_TIMELINE_LOCAL=false                                   # localTimeline
-BOT_TIMELINE_HYBRID=false                                  # hybridTimeline
-BOT_TIMELINE_GLOBAL=false                                  # globalTimeline
-BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）
-DB_PATH=data/twipsybot.db                                  # SQLite 路径
-DB_CLEAR=30                                                # SQLite 数据保留天数（不含插件）；-1 不清理
-LOG_LEVEL=INFO                                             # 日志级别 (DEBUG/INFO/WARNING/ERROR)
-LOG_DUMP_EVENTS=false                                      # 是否输出事件原始数据（仅用于 DEBUG 数据分析）
+services:
+  twipsybot:
+    image: ghcr.io/oreeke/twipsybot:latest
+    # build: .                                                     # 本地构建
+    container_name: twipsybot
+    restart: unless-stopped
+
+    volumes:
+      - twipsybot:/app/data
+      - twipsybot:/app/logs
+      - ./plugins/config.yaml:/app/plugins/config.yaml:ro          # 插件总配置，需提前从 plugins/config.yaml.example 复制创建
+      - ./prompts:/app/prompts:ro                                  # 可选，BOT_SYSTEM_PROMPT/BOT_AUTO_POST_PROMPT 引用 prompts/*.txt 时需要
+
+    environment:
+      - TZ=Asia/Shanghai                                           # 时区，影响自动发帖计数每日重置等时间相关逻辑
+      - MISSKEY_INSTANCE_URL=https://misskey.example.com           # Misskey 实例 URL（本地：http://localhost:port）
+      - MISSKEY_ACCESS_TOKEN=your_access_token_here                # Misskey 访问令牌
+      - OPENAI_API_KEY=your_api_key_here                           # OpenAI API 密钥
+      - OPENAI_MODEL=deepseek-chat                                 # 使用的模型名称
+      - OPENAI_API_BASE=https://api.deepseek.com/v1                # OpenAI API 端点
+      - OPENAI_API_MODE=auto                                       # auto/chat/responses
+      - OPENAI_MAX_TOKENS=1000                                     # 最大生成 token 数
+      - OPENAI_TEMPERATURE=0.8                                     # 温度参数
+      - BOT_SYSTEM_PROMPT=你是一个可爱的AI助手...                    # 系统提示词（支持文件导入："prompts/*.txt"）
+      - BOT_AUTO_POST_ENABLED=true                                 # 是否启用自动发帖
+      - BOT_AUTO_POST_INTERVAL=180                                 # 发帖间隔（分钟）
+      - BOT_AUTO_POST_MAX_PER_DAY=8                                # 每日最大发帖数量（凌晨 0 点重置计数器）
+      - BOT_AUTO_POST_VISIBILITY=public                            # 发帖可见性（public/home/followers）
+      - BOT_AUTO_POST_LOCAL_ONLY=false                             # 是否禁用联合（仅本地可见）
+      - BOT_AUTO_POST_PROMPT=生成一篇有趣、有见解的社交媒体帖子。      # 发帖提示词
+      - BOT_RESPONSE_MENTION=true                                  # 是否响应提及（@）
+      - BOT_RESPONSE_CHAT=true                                     # 是否响应聊天
+      - BOT_RESPONSE_CHAT_MEMORY=10                                # 聊天上下文记忆长度（条）
+      - BOT_RESPONSE_RATE_LIMIT=-1                                 # 回复速率限制：同一用户回复最小间隔；-1 不限制；30s/5m/1h
+      - BOT_RESPONSE_RATE_LIMIT_REPLY=我需要休息一下...             # 速率限制回复文案
+      - BOT_RESPONSE_MAX_TURNS=-1                                  # 回复次数限制：同一用户最多对话轮数（机器人回复次数）；-1 不限制
+      - BOT_RESPONSE_MAX_TURNS_REPLY=我要回家了...                  # 次数限制回复文案
+      - BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h
+      - BOT_RESPONSE_WHITELIST=                                    # 白名单：username@host/userId，这些用户不受以上限制
+      - BOT_RESPONSE_BLACKLIST=                                    # 黑名单：username@host/userId，这些用户禁止使用回复
+      - BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线，一般不需要，即使启用 Radar 插件也仅需 antenna ID
+      - BOT_TIMELINE_HOME=false                                    # homeTimeline
+      - BOT_TIMELINE_LOCAL=false                                   # localTimeline
+      - BOT_TIMELINE_HYBRID=false                                  # hybridTimeline
+      - BOT_TIMELINE_GLOBAL=false                                  # globalTimeline
+      - BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）
+      - DB_PATH=data/twipsybot.db                                  # SQLite 路径
+      - DB_CLEAR=30                                                # SQLite 数据保留天数（不含插件）；-1 不清理
+      - LOG_LEVEL=INFO                                             # 日志级别 (DEBUG/INFO/WARNING/ERROR)
+      - LOG_DUMP_EVENTS=false                                      # 是否输出事件原始数据（仅用于 DEBUG 数据分析）
+
+volumes:
+  twipsybot:
 ```
 </details>
 
-- 启用插件：复制 `plugins/config.yaml.example` 为 `plugins/config.yaml` 按插件名分节修改
 <details>
 <summary><kbd>📃 plugins/config.yaml</kbd></summary>
 
@@ -172,6 +189,7 @@ cd twipsybot
 ```
 
 - 复制 `config.yaml.example` 为 `config.yaml` 并修改配置
+- 启用插件：参考 Docker Compose 部署方式，方法相同
 <details>
 <summary><kbd>📃 config.yaml</kbd></summary>
 
@@ -235,8 +253,6 @@ log:
   dump_events: false                                # 是否输出事件原始数据（仅用于 DEBUG 数据分析）
 ```
 </details>
-
-- 启用插件：参考 Docker Compose 部署方式，方法相同
 
 ```bash
 pip install -e .

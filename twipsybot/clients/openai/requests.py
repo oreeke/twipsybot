@@ -7,11 +7,8 @@ import openai
 from ...shared.constants import REQUEST_TIMEOUT
 
 
-def should_use_responses(*, api_mode: str, api_base: str) -> bool:
-    if api_mode == "chat":
-        return False
-    _ = api_base
-    return True
+def should_use_responses(*, api_mode: str) -> bool:
+    return api_mode != "chat"
 
 
 async def make_responses_request(

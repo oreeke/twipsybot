@@ -4,7 +4,7 @@ import aiohttp
 from loguru import logger
 
 from ...shared.constants import API_TIMEOUT
-from ...shared.exceptions import ClientConnectorError
+from ...shared.exceptions import WebSocketConnectionError
 
 __all__ = ("TCPClient",)
 
@@ -59,4 +59,4 @@ class TCPClient:
             return await self.session.ws_connect(url)
         except aiohttp.ClientConnectorError as e:
             logger.error(f"TCP client connection failed: {e}")
-            raise ClientConnectorError() from e
+            raise WebSocketConnectionError() from e

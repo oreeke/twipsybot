@@ -126,7 +126,7 @@ class OpenAIAPI:
     def _should_use_responses(self) -> bool:
         if self._responses_disabled:
             return False
-        return should_use_responses(api_mode=self.api_mode, api_base=self.api_base)
+        return should_use_responses(api_mode=self.api_mode)
 
     async def _call_api(
         self,

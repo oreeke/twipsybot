@@ -370,7 +370,10 @@ class PluginManager:
 
     @staticmethod
     def _unload_plugin_module(key: str) -> None:
-        sys.modules.pop(f"plugins.{key}.plugin", None)
+        exact = f"plugins.{key}"
+        prefix = f"{exact}."
+        for mod_name in [n for n in sys.modules if n == exact or n.startswith(prefix)]:
+            sys.modules.pop(mod_name, None)
 
     def _load_plugin_from_dir(self, plugin_dir: Path) -> PluginBase | None:
         self._load_plugin(plugin_dir, self._load_plugin_config(plugin_dir))
@@ -397,23 +400,34 @@ class PluginManager:
             plugin._initialized = False
             return False
 
-    async def set_plugin_enabled(self, name: str, enabled: bool) -> bool:
+    async def set_plugin_enabled(self, name: str, enabled: bool) -> str:
+        """Return "" on success, otherwise a failure reason code."""
         if not (plugin_dir := self._find_plugin_dir(name)):
-            return False
+            return "not_found"
         self._master_config = self._load_master_config()
         if not self._is_plugin_configured(plugin_dir):
-            return False
+            return "not_configured"
         key = plugin_dir.name
         if enabled:
-            plugin = self._find_plugin_by_name(key)
-            if not plugin:
-                self._unload_plugin_module(key)
-                if not (plugin := self._load_plugin_from_dir(plugin_dir)):
-                    return False
-            plugin.set_enabled(True)
-            if key in self.discovered_plugins:
-                self.discovered_plugins[key]["enabled"] = True
-            return await self._start_plugin_instance(plugin)
+            return await self._enable_plugin_by_key(key, plugin_dir)
+        return await self._disable_plugin_by_key(key)
+
+    async def _enable_plugin_by_key(self, key: str, plugin_dir: Path) -> str:
+        plugin = self._find_plugin_by_name(key)
+        if plugin and plugin.enabled and getattr(plugin, "_initialized", False):
+            return ""
+        if not plugin:
+            self._unload_plugin_module(key)
+            if not (plugin := self._load_plugin_from_dir(plugin_dir)):
+                return "load_failed"
+        plugin.set_enabled(True)
+        if key in self.discovered_plugins:
+            self.discovered_plugins[key]["enabled"] = True
+        if await self._start_plugin_instance(plugin):
+            return ""
+        return "init_failed"
+
+    async def _disable_plugin_by_key(self, key: str) -> str:
         plugin = self._find_plugin_by_name(key)
         await self._cleanup_plugin_instance(plugin)
         if plugin:
@@ -422,20 +436,23 @@ class PluginManager:
         self._unload_plugin_module(key)
         if key in self.discovered_plugins:
             self.discovered_plugins[key]["enabled"] = False
-        return True
+        return ""
 
-    async def reload_plugin(self, name: str) -> bool:
+    async def reload_plugin(self, name: str) -> str:
+        """Return "" on success, otherwise a failure reason code."""
         if not (plugin_dir := self._find_plugin_dir(name)):
-            return False
+            return "not_found"
         self._master_config = self._load_master_config()
         key = plugin_dir.name
         await self._cleanup_plugin_instance(self._find_plugin_by_name(key))
         self.plugins.pop(key, None)
         self._unload_plugin_module(key)
         if not (plugin := self._load_plugin_from_dir(plugin_dir)):
-            return False
+            return "load_failed"
         if not plugin.enabled:
             self.plugins.pop(key, None)
             self._unload_plugin_module(key)
-            return True
-        return await self._start_plugin_instance(plugin)
+            return ""
+        if await self._start_plugin_instance(plugin):
+            return ""
+        return "init_failed"

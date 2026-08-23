@@ -3,7 +3,6 @@ __all__ = (
     "APIConnectionError",
     "APIRateLimitError",
     "AuthenticationError",
-    "ClientConnectorError",
     "ConfigurationError",
     "MisskeyBotError",
     "WebSocketConnectionError",
@@ -40,8 +39,4 @@ class WebSocketConnectionError(MisskeyBotError):
 
 
 class WebSocketReconnectError(WebSocketConnectionError):
-    pass
-
-
-class ClientConnectorError(MisskeyBotError):
     pass

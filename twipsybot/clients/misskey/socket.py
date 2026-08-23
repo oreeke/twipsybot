@@ -58,10 +58,7 @@ class _StreamingSocketMixin:
     async def _reconnect_with_backoff(self, delay_seconds: float) -> None:
         await self._close_websocket()
         await asyncio.sleep(delay_seconds)
-        await self._connect_websocket()
-        await self._resubscribe_channels()
-        await self._flush_send_buffer()
-        self.state = "connected"
+        await self._connect_and_resubscribe()
 
     async def _connect_websocket(self) -> None:
         async with self._ws_lock:
@@ -108,6 +105,9 @@ class _StreamingSocketMixin:
                     return
                 self.ws_connection = ws
             logger.debug(f"WebSocket connected: {safe_url}")
+        except WebSocketConnectionError:
+            await self._cleanup_failed_connection()
+            raise
         except (aiohttp.ClientError, OSError) as e:
             await self._cleanup_failed_connection()
             error_msg = redact_misskey_access_token(str(e))

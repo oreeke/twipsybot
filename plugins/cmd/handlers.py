@@ -13,6 +13,12 @@ from twipsybot.shared.utils import (
 )
 
 _MSG_SPECIFY_PLUGIN_NAME = "请指定插件名称"
+_PLUGIN_FAILURE_REASONS = {
+    "not_found": "不存在",
+    "not_configured": "未配置",
+    "load_failed": "加载失败",
+    "init_failed": "初始化失败",
+}
 
 
 class CmdHandlersMixin:
@@ -161,11 +167,11 @@ class CmdHandlersMixin:
         if not plugin_name.strip():
             return _MSG_SPECIFY_PLUGIN_NAME
         name = plugin_name.strip()
-        action = "启用" if enable else "禁用"
         past_action = "已启用" if enable else "已禁用"
-        if await self.plugin_manager.set_plugin_enabled(name, enable):
+        reason = await self.plugin_manager.set_plugin_enabled(name, enable)
+        if not reason:
             return f"插件 {name} {past_action}"
-        return f"插件 {name} 不存在或{action}失败"
+        return f"插件 {name} {_PLUGIN_FAILURE_REASONS.get(reason, reason)}"
 
     async def _enable_plugin(self, plugin_name: str) -> str:
         return await self._toggle_plugin(plugin_name, True)
@@ -177,9 +183,10 @@ class CmdHandlersMixin:
         if not plugin_name.strip():
             return _MSG_SPECIFY_PLUGIN_NAME
         name = plugin_name.strip()
-        if await self.plugin_manager.reload_plugin(name):
+        reason = await self.plugin_manager.reload_plugin(name)
+        if not reason:
             return f"插件 {name} 已重启并重读配置"
-        return f"插件 {name} 不存在或重启失败"
+        return f"插件 {name} 重启失败: {_PLUGIN_FAILURE_REASONS.get(reason, reason)}"
 
     async def _get_db_stats(self) -> str:
         try:

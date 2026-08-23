@@ -34,12 +34,6 @@ class BotRuntime:
             return True
         return False
 
-    def cancel_all_tasks(self) -> None:
-        for task in self.tasks.values():
-            if not task.done():
-                task.cancel()
-        self.tasks.clear()
-
     async def cleanup_tasks(self) -> None:
         for task in self.tasks.values():
             if not task.done():

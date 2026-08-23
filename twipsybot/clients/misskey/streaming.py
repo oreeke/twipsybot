@@ -187,27 +187,24 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
             if ch_info.get("name") == channel_name
         ]
         for channel_id in channels_to_remove:
-            if self._ws_available:
-                try:
-                    await self._send_control(
-                        {"type": "disconnect", "body": {"id": channel_id}}
-                    )
-                except WebSocketConnectionError:
-                    pass
+            await self._try_send_disconnect(channel_id)
             self.channels.pop(channel_id, None)
         logger.debug(f"Disconnected channel: {channel_name}")
 
     async def disconnect_channel_id(self, channel_id: str) -> None:
         if not channel_id:
             return
-        if channel_id in self.channels and self._ws_available:
-            try:
-                await self._send_control(
-                    {"type": "disconnect", "body": {"id": channel_id}}
-                )
-            except WebSocketConnectionError:
-                pass
+        if channel_id in self.channels:
+            await self._try_send_disconnect(channel_id)
         self.channels.pop(channel_id, None)
+
+    async def _try_send_disconnect(self, channel_id: str) -> None:
+        if not self._ws_available:
+            return
+        try:
+            await self._send_control({"type": "disconnect", "body": {"id": channel_id}})
+        except WebSocketConnectionError:
+            pass
 
     async def send_channel_message(
         self,
@@ -259,15 +256,18 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
                 except ValueError:
                     await self.connect_channel(channel, params)
             try:
-                await self._connect_websocket()
-                await self._resubscribe_channels()
-                await self._flush_send_buffer()
-                self.state = "connected"
+                await self._connect_and_resubscribe()
             except WebSocketConnectionError:
                 self.state = "reconnecting"
             if self._first_connection:
                 logger.info("Streaming client started")
                 self._first_connection = False
+
+    async def _connect_and_resubscribe(self) -> None:
+        await self._connect_websocket()
+        await self._resubscribe_channels()
+        await self._flush_send_buffer()
+        self.state = "connected"
 
     async def _resubscribe_channels(self) -> None:
         for channel_id, info in self.channels.items():

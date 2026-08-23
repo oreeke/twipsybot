@@ -2,7 +2,7 @@
 
 <h1>TwipsyBot</h1>
 
-一只 Python 实现的 Misskey 机器人<br><br>
+<br>**一只 Python 实现的 Misskey 机器人**<br><br>
 正运行在：[oreeke.com/@ai](https://oreeke.com/@ai)
 
 <a href="https://www.python.org/downloads">
@@ -12,18 +12,10 @@
 <a href="./LICENSE">
     <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-603669.svg?style=for-the-badge&labelColor=303030&logo=gnu&logoColor=ffffff"></a>
 
+<br>它可以定时自动发帖、实时响应 @提及/私信/群聊，并提供速率限制与黑白名单；支持主题/RSS 内容源、主动参与天线帖互动、多模态视觉理解，以及关键词触发的预设回复。
+<br><br>❤️<br><br>
+
 </div>
-
-## 简介
-
-### 主要功能
-
-- 📜 根据已设置的周期和可见性自动发帖，由 AI 生成内容
-- 💬 实时响应提及（`@`）、私信、群聊，支持速率限制、黑白名单
-- 📢 自定义主题或聚合 RSS 最新动态作为内容源发布（[Topics](./plugins/topics)）
-- 📡 订阅天线，对感兴趣的帖子自动反应、回复、转发、引用（[Radar](./plugins/radar)）
-- 👁️ 接入多模态模型时，支持视觉理解（[Vision](./plugins/vision)）
-- 🥏 自定义关键词和期望回复，绕过 AI（[KeyAct](./plugins/keyact)）
 
 ## 开始
 
@@ -31,7 +23,7 @@
 
 #### `a` Docker Compose
 
-- 仅需下载 `docker-compose.yaml.example` 和 `plugins/config.yaml.example`
+- _仅需下载 `docker-compose.yaml.example` 和 `plugins/config.yaml.example`_
 
   ```bash
   mkdir -p twipsybot/plugins && cd twipsybot
@@ -39,8 +31,8 @@
   curl -fsSL https://raw.githubusercontent.com/oreeke/twipsybot/main/plugins/config.yaml.example -o plugins/config.yaml.example
   ```
 
-- 复制 `docker-compose.yaml.example` 为 `docker-compose.yaml` 并修改配置
-- 启用插件：复制 `plugins/config.yaml.example` 为 `plugins/config.yaml` 按插件名分节修改
+- _复制 `docker-compose.yaml.example` 为 `docker-compose.yaml` 并修改配置_
+- _启用插件：复制 `plugins/config.yaml.example` 为 `plugins/config.yaml` 按插件名分节修改_
 <details>
 <summary><kbd>📃 docker-compose.yaml</kbd></summary>
 
@@ -182,15 +174,15 @@ docker compose up -d
 
 #### `b` 手动安装
 
-- 克隆仓库
+- _克隆仓库_
 
 ```bash
 git clone https://github.com/oreeke/twipsybot.git
 cd twipsybot
 ```
 
-- 复制 `config.yaml.example` 为 `config.yaml` 并修改配置
-- 启用插件：参考 Docker Compose 部署方式，方法相同
+- _复制 `config.yaml.example` 为 `config.yaml` 并修改配置_
+- _启用插件：参考 Docker Compose 部署方式，方法相同_
 <details>
 <summary><kbd>📃 config.yaml</kbd></summary>
 
@@ -272,7 +264,7 @@ uv run twipsybot up
 uv run twipsybot ...
 ```
 
-> 作为服务（可选）
+> _作为服务（可选）_
 
 <details>
 <summary><kbd>📃 twipsybot.service</kbd></summary>

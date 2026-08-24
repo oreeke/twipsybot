@@ -149,7 +149,7 @@ class MentionHandler:
                     f"Mention received from @{display}: {self.bot.format_log_text(mention.text)}"
                 )
 
-            await self.bot.run_response_pipeline(
+            await self.bot.pipeline.run_response_pipeline(
                 actor_id=mention.user_id,
                 actor_name=mention.username,
                 user_id=mention.user_id,

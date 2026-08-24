@@ -152,7 +152,7 @@ class ChatHandler:
         def ai_after_sent(text: str) -> None:
             self.bot.append_chat_turn(ctx.conversation_id, user_content_ai, text, limit)
 
-        await self.bot.run_response_pipeline(
+        await self.bot.pipeline.run_response_pipeline(
             actor_id=ctx.actor_id,
             actor_name=ctx.username,
             user_id=ctx.user_id,

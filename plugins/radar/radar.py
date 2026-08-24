@@ -224,7 +224,9 @@ class RadarPlugin(PluginBase):
             return None
         username = extract_user_handle(note_data) or extract_username(note_data)
         try:
-            async with self.bot.lock_actor(extract_user_id(note_data), username):
+            async with self.bot.pipeline.lock_actor(
+                extract_user_id(note_data), username
+            ):
                 await self._act(note_data, note_id, channel)
         except Exception as e:
             logger.error(f"Radar interaction failed: {e!r}")

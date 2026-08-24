@@ -128,7 +128,9 @@ class CmdHandlersMixin:
         cleared = []
         getters = {
             "chat": lambda b: getattr(b, "_chat_histories", None),
-            "locks": lambda b: getattr(b, "_user_locks", None),
+            "locks": lambda b: getattr(
+                getattr(b, "pipeline", None), "_user_locks", None
+            ),
             "events": lambda b: getattr(
                 getattr(b, "streaming", None), "processed_events", None
             ),

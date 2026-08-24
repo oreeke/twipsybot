@@ -167,6 +167,9 @@ class PluginManager:
 
     @staticmethod
     def _load_plugin_module(plugin_dir: Path, plugin_file: Path):
+        project_root = str(plugin_dir.parent.resolve())
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
         spec = importlib.util.spec_from_file_location(
             f"plugins.{plugin_dir.name}.plugin", plugin_file
         )

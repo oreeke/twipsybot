@@ -12,7 +12,7 @@
 <a href="./LICENSE">
     <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-603669.svg?style=for-the-badge&labelColor=303030&logo=gnu&logoColor=ffffff"></a>
 
-<br>它可以定时自动发帖、实时响应 @提及/私信/群聊，并提供速率限制与黑白名单；支持主题/RSS 内容源、主动参与天线帖互动、多模态视觉理解，以及关键词触发的预设回复。
+<br>它有时是抽象气氛组，有时是靠谱小帮手。它把所看所想寄向联邦宇宙，也把星尘里的帖子带回家。
 <br><br>❤️<br><br>
 
 </div>
@@ -23,7 +23,7 @@
 
 #### `a` Docker Compose
 
-- _仅需下载 `docker-compose.yaml.example` 和 `plugins/config.yaml.example`_
+- _仅需下载 `docker-compose.yaml.example` 和 `plugins/config.yaml.example` 两个文件_
 
   ```bash
   mkdir -p twipsybot/plugins && cd twipsybot
@@ -296,8 +296,9 @@ systemctl start twipsybot.service
 
 > [!TIP]
 >
-> - 自动发帖会尽量绕过 [Prompt caching](https://platform.openai.com/docs/guides/prompt-caching)，想让帖子更多样化请配置并启用 [Topics](./plugins/topics)
+> - 虽然自动发帖会尽量绕过 [Prompt caching](https://platform.openai.com/docs/guides/prompt-caching)，但想让内容更丰富请配置并启用 [Topics](./plugins/topics)
 > - 切换模型仅需修改 `api_key` `model` `api_base`，相同 `api_base` 的模型可通过 [Cmd](./plugins/cmd) 实时切换
+> - 使用推理模型时，思维链消耗大，适当增加 `max_tokens` 可以避免 AI 回复中断
 > - 机器人使用 [Radar](./plugins/radar) + `antenna` 时间线接收帖子，非必要无需订阅其他时间线（日志噪音大）
 > - Docker 部署时，数据库、日志存放于 `twipsybot` 卷，查看可用 `docker compose logs -f twipsybot`
 
@@ -313,7 +314,7 @@ systemctl start twipsybot.service
 | 提供商 | 兼容性 | 多模态 |
 | :---: | :---: | --- |
 | [OpenAI](https://platform.openai.com/docs/quickstart) | ✅ | 📝 👁️ |
-| [DeepSeek](https://api-docs.deepseek.com/) | ✅ | 📝 |
+| [DeepSeek](https://api-docs.deepseek.com/) | ✅ | 📝 👁️ |
 | [xAI](https://docs.x.ai/developers/api-reference) | ✅ | 📝 👁️ |
 | [Gemini](https://ai.google.dev/gemini-api/docs/openai) | ✅ | 📝 👁️ |
 | [Claude](https://platform.claude.com/docs/en/api/openai-sdk) | ✅ | 📝 👁️ |
@@ -325,8 +326,8 @@ systemctl start twipsybot.service
 | 插件 | 功能描述 |
 | :---: | --- |
 | [Cmd](./plugins/cmd) | 在聊天中使用 `^` 开头的命令管理机器人 |
-| [KeyAct](./plugins/keyact) | 匹配自定义关键词直接回复，绕过 AI |
+| [KeyAct](./plugins/keyact) | 匹配自定义关键词触发回复，绕过 AI |
 | [Radar](./plugins/radar) | 与天线推送的帖子互动（反应、回复、转发、引用） |
-| [Topics](./plugins/topics) | 为自动发帖提供内容源（TXT / RSS） |
-| [Vision](./plugins/vision) | 识别提及（`@`）或聊天中的图片并回复 |
-| [Weather](./plugins/weather) | 查询指定城市的天气信息 |
+| [Topics](./plugins/topics) | 为自动发帖提供内容源（文本主题 / RSS） |
+| [Vision](./plugins/vision) | 理解 @提及或聊天中的图像并生成回复 |
+| [Weather](./plugins/weather) | 查询指定城市的天气信息（openweathermap） |

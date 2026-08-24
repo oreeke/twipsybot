@@ -7,7 +7,7 @@ WORKDIR /app
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /bin/
 
 COPY pyproject.toml uv.lock README.md LICENSE ./
 RUN uv export --frozen --no-emit-project -o requirements.lock.txt && \
@@ -15,7 +15,7 @@ RUN uv export --frozen --no-emit-project -o requirements.lock.txt && \
 
 COPY twipsybot /app/twipsybot
 RUN uv build --wheel -o dist && \
-    uv pip install --system --no-build --no-deps dist/*.whl
+    uv pip install --system --no-build --no-deps --no-index --find-links dist "twipsybot==$(uv version --short)"
 
 FROM ${PYTHON_IMAGE}
 

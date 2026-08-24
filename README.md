@@ -76,7 +76,7 @@ services:
       - BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h
       - BOT_RESPONSE_WHITELIST=                                    # 白名单：username@host/userId，这些用户不受以上限制
       - BOT_RESPONSE_BLACKLIST=                                    # 黑名单：username@host/userId，这些用户禁止使用回复
-      - BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线，一般不需要，即使启用 Radar 插件也仅需 antenna ID
+      - BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线（仅用于 Radar）
       - BOT_TIMELINE_HOME=false                                    # homeTimeline
       - BOT_TIMELINE_LOCAL=false                                   # localTimeline
       - BOT_TIMELINE_HYBRID=false                                  # hybridTimeline
@@ -205,7 +205,7 @@ bot:
     请用简短、友好的方式发帖和回答问题。
 
   timeline:
-    enabled: false                                  # 是否订阅时间线，一般不需要，即使启用 Radar 插件也仅需 antenna ID
+    enabled: false                                  # 是否订阅时间线（仅用于 Radar）
     home: false                                     # homeTimeline
     local: false                                    # localTimeline
     hybrid: false                                   # hybridTimeline

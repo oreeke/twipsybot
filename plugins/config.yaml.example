@@ -1,6 +1,5 @@
 # 插件总配置文件
-# 复制此文件为 plugins/config.yaml，集中管理所有插件配置
-# 若某个插件目录下已存在独立的 config.yaml，该插件优先使用独立文件，此处对应条目会被忽略
+# 复制此文件为 plugins/config.yaml，集中管理所有插件配置，总配置优先
 
 cmd:
   enabled: false                                 # 插件开关

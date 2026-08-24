@@ -19,7 +19,7 @@ bot:
     请用简短、友好的方式发帖和回答问题。
 
   timeline:
-    enabled: false                                  # 是否订阅时间线，一般不需要，即使启用 Radar 插件也仅需 antenna ID
+    enabled: false                                  # 是否订阅时间线（仅用于 Radar）
     home: false                                     # homeTimeline
     local: false                                    # localTimeline
     hybrid: false                                   # hybridTimeline

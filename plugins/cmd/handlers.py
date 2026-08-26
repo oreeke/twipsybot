@@ -7,6 +7,7 @@ import aiosqlite
 from twipsybot.clients.misskey.channels import ChannelType
 from twipsybot.shared.config_keys import ConfigKeys
 from twipsybot.shared.utils import (
+    format_duration_hms,
     get_memory_usage,
     get_system_info,
     normalize_tokens,
@@ -22,19 +23,10 @@ _PLUGIN_FAILURE_REASONS = {
 
 
 class CmdHandlersMixin:
-    @staticmethod
-    def _format_duration(seconds: float) -> str:
-        total = int(max(0, seconds))
-        days, rem = divmod(total, 86400)
-        hours, rem = divmod(rem, 3600)
-        minutes, seconds = divmod(rem, 60)
-        base = f"{hours:02}:{minutes:02}:{seconds:02}"
-        return f"{days}d {base}" if days else base
-
     def _get_uptime_text(self, bot: Any) -> str | None:
         started_at = bot.runtime.startup_time
         seconds = (datetime.now(UTC) - started_at).total_seconds()
-        return self._format_duration(seconds)
+        return format_duration_hms(seconds)
 
     def _get_feature_toggle_text(self) -> str:
         cfg = self.global_config

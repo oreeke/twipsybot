@@ -6,7 +6,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 import aiohttp
 from loguru import logger
 
-from ...shared.constants import STREAM_QUEUE_MAX
+from ...shared.constants import STREAM_SEND_BUFFER_MAX
 from ...shared.exceptions import WebSocketConnectionError, WebSocketReconnectError
 from ...shared.utils import redact_misskey_access_token
 
@@ -19,7 +19,7 @@ class _StreamingSocketMixin:
         return self.ws_connection is not None and not self.ws_connection.closed
 
     def _buffer_outgoing(self, message: dict[str, Any]) -> None:
-        if len(self._send_buffer) >= STREAM_QUEUE_MAX:
+        if len(self._send_buffer) >= STREAM_SEND_BUFFER_MAX:
             self._send_buffer.popleft()
         self._send_buffer.append(message)
 

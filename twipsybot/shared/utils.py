@@ -148,11 +148,11 @@ def maybe_log_event_dump(enabled: bool, *, kind: str, payload: Any) -> None:
 
 def format_duration_hms(seconds: float) -> str:
     total = int(max(0, seconds))
-    hours, rem = divmod(total, 3600)
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
     minutes, seconds = divmod(rem, 60)
-    if hours > 0:
-        return f"{hours}:{minutes:02d}:{seconds:02d}"
-    return f"{minutes}:{seconds:02d}"
+    base = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{days}d {base}" if days else base
 
 
 def resolve_history_limit(config_value: int | None, limit: int | None) -> int:

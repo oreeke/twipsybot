@@ -1,8 +1,12 @@
 import asyncio
-from typing import Any
 
 from loguru import logger
 
+from ...clients.misskey.antenna import (
+    build_antenna_index,
+    dedupe_non_empty,
+    resolve_antenna_selector,
+)
 from ...clients.misskey.channels import ChannelSpec, ChannelType
 from ...clients.misskey.misskey_api import MisskeyAPI
 from ...clients.misskey.streaming import StreamingClient
@@ -34,6 +38,13 @@ class StreamingConnector:
         self._timeline_channels = self._load_timeline_channels()
         return set(self._timeline_channels)
 
+    def get_timeline_channels(self) -> set[str]:
+        return set(self._timeline_channels)
+
+    def set_timeline_channels(self, channels: set[str]) -> set[str]:
+        self._timeline_channels = set(channels)
+        return set(self._timeline_channels)
+
     def _load_timeline_channels(self) -> set[str]:
         if not self._config.get(ConfigKeys.BOT_TIMELINE_ENABLED):
             return set()
@@ -45,60 +56,26 @@ class StreamingConnector:
         }
         return {channel for key, channel in mapping.items() if self._config.get(key)}
 
-    def _load_antenna_selectors(self) -> list[str]:
+    def load_antenna_selectors(self) -> list[str]:
         return normalize_tokens(self._config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS))
 
-    @staticmethod
-    def _build_antenna_index(
-        antennas: list[dict[str, Any]],
-    ) -> tuple[set[str], dict[str, list[str]]]:
-        antenna_ids: set[str] = set()
-        name_to_ids: dict[str, list[str]] = {}
-        for antenna in antennas:
-            if not isinstance(antenna, dict):
-                continue
-            antenna_id = antenna.get("id")
-            if isinstance(antenna_id, str) and antenna_id:
-                antenna_ids.add(antenna_id)
-            name = antenna.get("name")
-            if not isinstance(name, str):
-                continue
-            normalized_name = name.strip()
-            if not normalized_name or not isinstance(antenna_id, str) or not antenna_id:
-                continue
-            name_to_ids.setdefault(normalized_name, []).append(antenna_id)
-        return antenna_ids, name_to_ids
-
-    @staticmethod
-    def _dedupe_non_empty(values: list[str]) -> list[str]:
-        return list(dict.fromkeys(v for v in values if v))
-
-    @staticmethod
-    def _resolve_antenna_selector(
-        selector: str, antenna_ids: set[str], name_to_ids: dict[str, list[str]]
-    ) -> str:
-        if selector in antenna_ids:
-            return selector
-        candidates = name_to_ids.get(selector)
-        if not candidates:
-            logger.warning(f"Antenna not found: {selector}")
-            return ""
-        if len(candidates) != 1:
-            logger.warning(f"Antenna name is ambiguous: {selector}")
-            return ""
-        return candidates[0]
-
-    async def _resolve_antenna_ids(self, selectors: list[str]) -> list[str]:
+    async def resolve_antenna_ids(self, selectors: list[str]) -> list[str]:
         normalized = [s.strip() for s in selectors if isinstance(s, str) and s.strip()]
         if not normalized:
             return []
         antennas = await self._misskey.list_antennas()
-        antenna_ids, name_to_ids = self._build_antenna_index(antennas)
-        resolved = [
-            self._resolve_antenna_selector(s, antenna_ids, name_to_ids)
-            for s in normalized
-        ]
-        return self._dedupe_non_empty(resolved)
+        antenna_ids, name_to_ids, _ = build_antenna_index(antennas)
+        resolved: list[str] = []
+        for selector in normalized:
+            antenna_id, err = resolve_antenna_selector(
+                selector, antenna_ids, name_to_ids
+            )
+            if err == "not_found":
+                logger.warning(f"Antenna not found: {selector}")
+            elif err == "ambiguous":
+                logger.warning(f"Antenna name is ambiguous: {selector}")
+            resolved.append(antenna_id)
+        return dedupe_non_empty(resolved)
 
     async def get_streaming_channels(self) -> list[ChannelSpec]:
         active = {ChannelType.MAIN.value, *self._timeline_channels}
@@ -110,8 +87,8 @@ class StreamingConnector:
             ChannelType.GLOBAL_TIMELINE.value,
         ]
         result: list[ChannelSpec] = [c for c in ordered if c in active]
-        selectors = self._load_antenna_selectors()
-        for antenna_id in await self._resolve_antenna_ids(selectors):
+        selectors = self.load_antenna_selectors()
+        for antenna_id in await self.resolve_antenna_ids(selectors):
             result.append((ChannelType.ANTENNA.value, {"antennaId": antenna_id}))
         return result
 

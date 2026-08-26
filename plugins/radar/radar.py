@@ -2,6 +2,7 @@ from typing import Any
 
 from loguru import logger
 
+from twipsybot.clients.misskey.antenna import build_antenna_index
 from twipsybot.clients.misskey.channels import ChannelType
 from twipsybot.plugin import PluginBase
 from twipsybot.shared.config_keys import ConfigKeys
@@ -57,7 +58,7 @@ class RadarPlugin(PluginBase):
 
     async def _format_antenna_sources(self) -> str:
         bot = self.bot
-        selectors = bot.connect._load_antenna_selectors()
+        selectors = bot.connect.load_antenna_selectors()
         if not selectors:
             return "Antenna: (empty)"
         id_to_name = await self._get_antenna_name_map()
@@ -70,28 +71,12 @@ class RadarPlugin(PluginBase):
 
     async def _get_antenna_name_map(self) -> dict[str, str]:
         antennas = await self.misskey.list_antennas()
-        return self._build_antenna_id_name_map(antennas)
-
-    @staticmethod
-    def _build_antenna_id_name_map(antennas: Any) -> dict[str, str]:
-        if not isinstance(antennas, list):
-            return {}
-        mapping: dict[str, str] = {}
-        for antenna in antennas:
-            if not isinstance(antenna, dict):
-                continue
-            antenna_id = antenna.get("id")
-            name = antenna.get("name")
-            if not isinstance(antenna_id, str) or not antenna_id:
-                continue
-            if not isinstance(name, str) or not name.strip():
-                continue
-            mapping[antenna_id] = name.strip()
-        return mapping
+        _, _, id_to_name = build_antenna_index(antennas)
+        return id_to_name
 
     async def _resolve_antenna_ids(self, bot, selectors: list[str]) -> list[str]:
         try:
-            ids = await bot.connect._resolve_antenna_ids(selectors)
+            ids = await bot.connect.resolve_antenna_ids(selectors)
         except Exception:
             return []
         ids = [v.strip() for v in ids if isinstance(v, str) and v.strip()]

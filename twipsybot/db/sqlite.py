@@ -180,7 +180,7 @@ class DBManager:
     async def set_plugin_data(self, plugin_name: str, key: str, value: str) -> None:
         await self._execute_write(
             "INSERT OR REPLACE INTO plugin_data (plugin_name, key, value, updated_at) VALUES (?, ?, ?, ?)",
-            (plugin_name, key, value, datetime.now()),
+            (plugin_name, key, value, datetime.now().isoformat()),
         )
 
     async def get_response_limit_state(
@@ -210,7 +210,13 @@ class DBManager:
                 (user_id, last_reply_ts, turns, blocked_until_ts, updated_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (user_id, last_reply_ts, int(turns), blocked_until_ts, datetime.now()),
+            (
+                user_id,
+                last_reply_ts,
+                int(turns),
+                blocked_until_ts,
+                datetime.now().isoformat(),
+            ),
         )
 
     async def cleanup_response_limit_state(

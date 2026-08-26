@@ -38,11 +38,11 @@ services:
       - BOT_RESPONSE_WHITELIST=                                    # 白名单：username@host/userId，这些用户不受以上限制
       - BOT_RESPONSE_BLACKLIST=                                    # 黑名单：username@host/userId，这些用户禁止使用回复
       - BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线（仅用于 Radar）
+      - BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）
       - BOT_TIMELINE_HOME=false                                    # homeTimeline
       - BOT_TIMELINE_LOCAL=false                                   # localTimeline
       - BOT_TIMELINE_HYBRID=false                                  # hybridTimeline
       - BOT_TIMELINE_GLOBAL=false                                  # globalTimeline
-      - BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）
       - DB_PATH=data/twipsybot.db                                  # SQLite 路径
       - DB_CLEAR=30                                                # SQLite 数据保留天数（不含插件）；-1 不清理
       - LOG_PATH=data/logs/twipsybot.log                           # 日志路径

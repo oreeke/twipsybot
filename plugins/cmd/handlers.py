@@ -4,6 +4,10 @@ from typing import Any
 
 import aiosqlite
 
+from twipsybot.clients.misskey.antenna import (
+    build_antenna_index,
+    resolve_antenna_selector,
+)
 from twipsybot.clients.misskey.channels import ChannelType
 from twipsybot.shared.config_keys import ConfigKeys
 from twipsybot.shared.utils import (
@@ -342,7 +346,7 @@ class CmdHandlersMixin:
 
     def _format_timeline_status(self) -> str:
         bot = self.bot
-        desired = getattr(bot, "timeline_channels", set()) or set()
+        desired = bot.get_timeline_channels()
         desired_text = ", ".join(sorted(desired)) if desired else "(空)"
         connected = getattr(bot, "streaming", None)
         if connected and getattr(connected, "channels", None):
@@ -366,11 +370,11 @@ class CmdHandlersMixin:
         action = tokens[0].lower()
         name_map = self._timeline_name_map()
         if action in {"reset", "default"}:
-            bot.timeline_channels = bot.load_timeline_channels()
+            bot.load_timeline_channels()
             await bot.restart_streaming()
             return "已重置时间线订阅\n" + self._format_timeline_status()
         if action in {"clear", "off"}:
-            bot.timeline_channels = set()
+            bot.set_timeline_channels(set())
             await bot.restart_streaming()
             return "已清空时间线订阅\n" + self._format_timeline_status()
         if action not in {"add", "enable", "del", "remove", "disable", "set"}:
@@ -389,58 +393,15 @@ class CmdHandlersMixin:
                 resolved.add(name_map[raw])
             else:
                 return f"未知时间线: {raw}\n可选: home/local/hybrid/global"
-        current = set(getattr(bot, "timeline_channels", set()) or set())
+        current = bot.get_timeline_channels()
         if action in {"add", "enable"}:
-            bot.timeline_channels = current | resolved
+            bot.set_timeline_channels(current | resolved)
         elif action in {"del", "remove", "disable"}:
-            bot.timeline_channels = current - resolved
+            bot.set_timeline_channels(current - resolved)
         else:
-            bot.timeline_channels = resolved
+            bot.set_timeline_channels(resolved)
         await bot.restart_streaming()
         return "已更新时间线订阅\n" + self._format_timeline_status()
-
-    @staticmethod
-    def _build_antenna_index(
-        antennas: Any,
-    ) -> tuple[set[str], dict[str, list[str]], dict[str, str]]:
-        if not isinstance(antennas, list):
-            return set(), {}, {}
-        antenna_ids: set[str] = set()
-        name_to_ids: dict[str, list[str]] = {}
-        id_to_name: dict[str, str] = {}
-        for antenna in antennas:
-            if not isinstance(antenna, dict):
-                continue
-            antenna_id = antenna.get("id")
-            if not isinstance(antenna_id, str) or not antenna_id:
-                continue
-            antenna_ids.add(antenna_id)
-            name = antenna.get("name")
-            if isinstance(name, str) and (normalized := name.strip()):
-                name_to_ids.setdefault(normalized, []).append(antenna_id)
-                id_to_name[antenna_id] = normalized
-        return antenna_ids, name_to_ids, id_to_name
-
-    @staticmethod
-    def _resolve_antenna_selector(
-        selector: str, antenna_ids: set[str], name_to_ids: dict[str, list[str]]
-    ) -> tuple[str, str | None, str | None]:
-        if selector in antenna_ids:
-            return selector, None, None
-        if selector in name_to_ids:
-            candidates = name_to_ids[selector]
-        else:
-            lowered = selector.lower()
-            merged: list[str] = []
-            for name, ids in name_to_ids.items():
-                if name.lower() == lowered and ids:
-                    merged.extend(ids)
-            candidates = list(dict.fromkeys(merged))
-        if not candidates:
-            return "", None, "not_found"
-        if len(candidates) != 1:
-            return "", None, "ambiguous"
-        return candidates[0], selector, None
 
     async def _format_antenna_status(self) -> str:
         bot = self.bot
@@ -470,14 +431,14 @@ class CmdHandlersMixin:
         if not antenna_id:
             return "(空)"
         antennas = await self.misskey.list_antennas()
-        _, _, id_to_name = self._build_antenna_index(antennas)
+        _, _, id_to_name = build_antenna_index(antennas)
         if name := id_to_name.get(antenna_id):
             return f"{name} ({antenna_id})"
         return antenna_id
 
     async def _list_antennas(self) -> str:
         antennas = await self.misskey.list_antennas()
-        _, _, id_to_name = self._build_antenna_index(antennas)
+        _, _, id_to_name = build_antenna_index(antennas)
         if not id_to_name:
             return "没有可用天线"
         lines = ["天线列表:"]
@@ -489,7 +450,7 @@ class CmdHandlersMixin:
         self, selectors: list[str], *, strict: bool
     ) -> tuple[list[str], str | None]:
         antennas = await self.misskey.list_antennas()
-        antenna_ids, name_to_ids, _ = self._build_antenna_index(antennas)
+        antenna_ids, name_to_ids, _ = build_antenna_index(antennas)
         error_templates = {
             "not_found": "未知天线: {selector}\n使用 ^antenna list 查看可选天线",
             "ambiguous": "天线名称不唯一: {selector}\n请使用天线 ID",
@@ -498,7 +459,7 @@ class CmdHandlersMixin:
         for selector in (s.strip() for s in selectors):
             if not selector:
                 continue
-            antenna_id, _, err = self._resolve_antenna_selector(
+            antenna_id, err = resolve_antenna_selector(
                 selector, antenna_ids, name_to_ids
             )
             if err:
@@ -548,10 +509,8 @@ class CmdHandlersMixin:
         if not selector:
             return "请指定天线名称或 ID"
         antennas = await self.misskey.list_antennas()
-        antenna_ids, name_to_ids, id_to_name = self._build_antenna_index(antennas)
-        resolved_id, _, err = self._resolve_antenna_selector(
-            selector, antenna_ids, name_to_ids
-        )
+        antenna_ids, name_to_ids, id_to_name = build_antenna_index(antennas)
+        resolved_id, err = resolve_antenna_selector(selector, antenna_ids, name_to_ids)
         if err == "not_found":
             return f"未知天线: {selector}\n使用 ^antenna list 查看可选天线"
         if err == "ambiguous":

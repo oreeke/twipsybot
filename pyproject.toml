@@ -1,6 +1,6 @@
 [project]
 name = "twipsybot"
-version = "0.1.11"
+version = "0.1.12"
 description = "AI-powered Misskey bot with OpenAI-compatible LLMs."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -29,6 +29,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pyright>=1.1.408",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
 ]
 
 [project.scripts]
@@ -50,10 +52,14 @@ ignore = ["E501"]
 [tool.ruff.lint.isort]
 known-first-party = ["twipsybot"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
-include = ["twipsybot", "plugins"]
+include = ["twipsybot", "plugins", "tests"]
 exclude = ["data", "logs"]
 reportUnsupportedDunderAll = "none"
 reportAttributeAccessIssue = "error"

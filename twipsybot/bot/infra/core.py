@@ -118,6 +118,12 @@ class MisskeyBot:
     def load_timeline_channels(self) -> set[str]:
         return self.connect.load_timeline_channels()
 
+    def get_timeline_channels(self) -> set[str]:
+        return self.connect.get_timeline_channels()
+
+    def set_timeline_channels(self, channels: set[str]) -> set[str]:
+        return self.connect.set_timeline_channels(channels)
+
     async def get_streaming_channels(self):
         return await self.connect.get_streaming_channels()
 
@@ -136,15 +142,21 @@ class MisskeyBot:
             self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
         )
         if (cached := self._chat_histories.get(conversation_id)) is not None:
-            return list(cached)[-max(0, limit_value * 2) :]
+            return self._trim_chat_history(list(cached), limit_value)
         if conversation_id.startswith("room:"):
             room_id = room_id or conversation_id.removeprefix("room:")
         history = await self.handlers.chat.get_chat_history(
             user_id=user_id, room_id=room_id, limit=limit_value
         )
-        trimmed = history[-max(0, limit_value * 2) :]
+        trimmed = self._trim_chat_history(history, limit_value)
         self._chat_histories[conversation_id] = trimmed
         return list(trimmed)
+
+    @staticmethod
+    def _trim_chat_history(
+        history: list[dict[str, str]], limit_value: int
+    ) -> list[dict[str, str]]:
+        return history[-limit_value * 2 :] if limit_value > 0 else []
 
     def append_chat_turn(
         self,
@@ -171,7 +183,9 @@ class MisskeyBot:
             and last.get("content") == assistant_text
         ):
             history.append({"role": "assistant", "content": assistant_text})
-        self._chat_histories[conversation_id] = history[-max(0, limit_value * 2) :]
+        self._chat_histories[conversation_id] = self._trim_chat_history(
+            history, limit_value
+        )
 
     async def __aenter__(self):
         await self.start()

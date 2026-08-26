@@ -20,11 +20,11 @@ bot:
 
   timeline:
     enabled: false                                  # 是否订阅时间线（仅用于 Radar）
+    antenna_ids: []                                 # antenna ID 或名称（逗号/空格分隔）
     home: false                                     # homeTimeline
     local: false                                    # localTimeline
     hybrid: false                                   # hybridTimeline
     global: false                                   # globalTimeline
-    antenna_ids: []                                 # antenna ID 或名称（逗号/空格分隔）
 
   auto_post:
     enabled: true                                   # 是否启用自动发帖

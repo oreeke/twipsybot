@@ -77,11 +77,11 @@ services:
       - BOT_RESPONSE_WHITELIST=                                    # 白名单：username@host/userId，这些用户不受以上限制
       - BOT_RESPONSE_BLACKLIST=                                    # 黑名单：username@host/userId，这些用户禁止使用回复
       - BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线（仅用于 Radar）
+      - BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）
       - BOT_TIMELINE_HOME=false                                    # homeTimeline
       - BOT_TIMELINE_LOCAL=false                                   # localTimeline
       - BOT_TIMELINE_HYBRID=false                                  # hybridTimeline
       - BOT_TIMELINE_GLOBAL=false                                  # globalTimeline
-      - BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）
       - DB_PATH=data/twipsybot.db                                  # SQLite 路径
       - DB_CLEAR=30                                                # SQLite 数据保留天数（不含插件）；-1 不清理
       - LOG_PATH=data/logs/twipsybot.log                           # 日志路径
@@ -159,11 +159,6 @@ vision:
   max_bytes: 5MB                                 # 单张图片下载大小上限（B/KB/MB）
   use_thumbnail: false                           # 是否使用缩略图（更快但细节更少）
   default_prompt: "请描述图片内容。"               # 用户只发图片不带文字时使用
-
-weather:
-  enabled: false                                 # 插件开关
-  priority: 10                                   # 插件优先级（数字越大越先执行）
-  api_key: "your_openweathermap_api_key_here"    # 请替换为你的 OpenWeatherMap API 密钥
 ```
 </details>
 
@@ -206,11 +201,11 @@ bot:
 
   timeline:
     enabled: false                                  # 是否订阅时间线（仅用于 Radar）
+    antenna_ids: []                                 # antenna ID 或名称（逗号/空格分隔）
     home: false                                     # homeTimeline
     local: false                                    # localTimeline
     hybrid: false                                   # hybridTimeline
     global: false                                   # globalTimeline
-    antenna_ids: []                                 # antenna ID 或名称（逗号/空格分隔）
 
   auto_post:
     enabled: true                                   # 是否启用自动发帖
@@ -330,4 +325,3 @@ systemctl start twipsybot.service
 | [Radar](./plugins/radar) | 与天线推送的帖子互动（反应、回复、转发、引用） |
 | [Topics](./plugins/topics) | 为自动发帖提供内容源（文本主题 / RSS） |
 | [Vision](./plugins/vision) | 理解 @提及或聊天中的图像并生成回复 |
-| [Weather](./plugins/weather) | 查询指定城市的天气信息（openweathermap） |

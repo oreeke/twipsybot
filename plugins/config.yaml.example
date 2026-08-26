@@ -62,8 +62,3 @@ vision:
   max_bytes: 5MB                                 # 单张图片下载大小上限（B/KB/MB）
   use_thumbnail: false                           # 是否使用缩略图（更快但细节更少）
   default_prompt: "请描述图片内容。"               # 用户只发图片不带文字时使用
-
-weather:
-  enabled: false                                 # 插件开关
-  priority: 10                                   # 插件优先级（数字越大越先执行）
-  api_key: "your_openweathermap_api_key_here"    # 请替换为你的 OpenWeatherMap API 密钥

@@ -372,11 +372,6 @@ class TopicsPlugin(PluginBase):
             return title
         system_prompt = getattr(getattr(self, "bot", None), "system_prompt", None)
         ai_config = dict(getattr(getattr(self, "bot", None), "ai_config", {}) or {})
-        max_tokens = ai_config.get("max_tokens")
-        if isinstance(max_tokens, int):
-            ai_config["max_tokens"] = min(max_tokens, 120)
-        else:
-            ai_config["max_tokens"] = 120
 
         try:
             prompt = str(self.rss_ai_prefix).format(

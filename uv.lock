@@ -1132,7 +1132,7 @@ wheels = [
 
 [[package]]
 name = "twipsybot"
-version = "0.1.13"
+version = "0.1.14"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -1141,6 +1141,7 @@ dependencies = [
     { name = "apscheduler" },
     { name = "beautifulsoup4" },
     { name = "cachetools" },
+    { name = "certifi" },
     { name = "click" },
     { name = "feedparser" },
     { name = "humanfriendly" },
@@ -1169,6 +1170,7 @@ requires-dist = [
     { name = "apscheduler", specifier = "==3.11.2" },
     { name = "beautifulsoup4", specifier = "==4.14.3" },
     { name = "cachetools", specifier = "==6.2.4" },
+    { name = "certifi", specifier = "==2026.7.22" },
     { name = "click", specifier = "==8.3.1" },
     { name = "feedparser", specifier = "==6.0.11" },
     { name = "humanfriendly", specifier = "==10.0" },

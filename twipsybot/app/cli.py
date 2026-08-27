@@ -102,6 +102,12 @@ def _run_up_daemon(pid_file: Path) -> int:
     proc = _spawn_detached([sys.executable, "-m", "twipsybot.app.cli", "up"], env=env)
     deadline = time.time() + 5.0
     while time.time() < deadline:
+        if proc.poll() is not None:
+            print(
+                f"twipsybot exited immediately (code={proc.returncode}), check logs",
+                file=sys.stderr,
+            )
+            return 1
         pid = _read_pid(pid_file)
         if pid is not None and pid == proc.pid and psutil.pid_exists(pid):
             return 0
@@ -131,15 +137,13 @@ def _cmd_up() -> int:
                 f"pid_file={pid_file}\n"
                 "next:\n"
                 "  twipsybot status\n"
-                "  twipsybot down\n"
-                "  twipsybot restart",
+                "  twipsybot restart\n"
+                "  twipsybot down",
                 file=sys.stdout,
             )
         return code
     print(
-        f"twipsybot running (pid={os.getpid()})\n"
-        f"pid_file={pid_file}\n"
-        "press Ctrl+C to stop",
+        f"twipsybot running (pid={os.getpid()})\npid_file={pid_file}",
         file=sys.stdout,
     )
     return _run_up_foreground(pid_file)

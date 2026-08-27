@@ -1,12 +1,14 @@
 import asyncio
 import signal
 import sys
+from io import TextIOWrapper
 from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
 
 from ..bot.infra.core import MisskeyBot
+from ..shared.banner import BANNER
 from ..shared.config import Config
 from ..shared.config_keys import ConfigKeys
 from ..shared.exceptions import (
@@ -40,6 +42,7 @@ class BotRunner:
             compression="zip",
             enqueue=True,
         )
+        print(BANNER)
         stop_file = _stop_file_path()
         stop_file.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -118,6 +121,9 @@ class BotRunner:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, TextIOWrapper):
+            stream.reconfigure(errors="replace")
     try:
         asyncio.run(BotRunner().run())
         logger.info("Bye")

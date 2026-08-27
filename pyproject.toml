@@ -1,6 +1,6 @@
 [project]
 name = "twipsybot"
-version = "0.1.13"
+version = "0.1.14"
 description = "AI-powered Misskey bot with OpenAI-compatible LLMs."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -13,6 +13,7 @@ dependencies = [
     "apscheduler==3.11.2",
     "beautifulsoup4==4.14.3",
     "cachetools==6.2.4",
+    "certifi==2026.7.22",
     "click==8.3.1",
     "feedparser==6.0.11",
     "humanfriendly==10.0",

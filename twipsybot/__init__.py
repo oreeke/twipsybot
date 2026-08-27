@@ -1,5 +1,25 @@
+import ssl
 from importlib import import_module
 from typing import Any
+
+
+def _patch_broken_windows_cert_store() -> None:
+    original = ssl.SSLContext.load_default_certs
+
+    def load_default_certs(
+        self: ssl.SSLContext, purpose: ssl.Purpose = ssl.Purpose.SERVER_AUTH
+    ) -> None:
+        try:
+            original(self, purpose)
+        except ssl.SSLError:
+            import certifi
+
+            self.load_verify_locations(cafile=certifi.where())
+
+    ssl.SSLContext.load_default_certs = load_default_certs
+
+
+_patch_broken_windows_cert_store()
 
 _PLUGIN_MODULE = ".plugin"
 

@@ -47,9 +47,15 @@ class BotRunner:
         config = Config()
         config.load()
         log_path = Path(config.get(ConfigKeys.LOG_PATH))
+        log_format = "{time:YYYY-MM-DD HH:mm:ss.SSS} | <level>{level: <8}</level> | <level>{message}</level>"
+        logger.remove()
+        logger.add(
+            sys.stderr, level=config.get(ConfigKeys.LOG_LEVEL), format=log_format
+        )
         logger.add(
             log_path,
             level=config.get(ConfigKeys.LOG_LEVEL),
+            format=log_format,
             rotation="10 MB",
             compression="zip",
             enqueue=True,

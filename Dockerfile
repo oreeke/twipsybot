@@ -37,7 +37,7 @@ RUN useradd -r -u 10001 -m -U -s /usr/sbin/nologin appuser && \
 USER appuser
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
-    CMD pid=$(cat run/twipsybot.pid 2>/dev/null) && test -n "$pid" && test -e "/proc/$pid"
+    CMD pid=$(cat run/twipsybot.pid 2>/dev/null) && test -n "$pid" && test -e "/proc/$pid" && test ! -e run/twipsybot.fatal
 
 ENTRYPOINT ["twipsybot"]
 CMD ["up"]

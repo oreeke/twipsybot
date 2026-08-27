@@ -22,6 +22,18 @@ def _stop_file_path() -> Path:
     return Path("run") / "twipsybot.stop"
 
 
+def _fatal_file_path() -> Path:
+    return Path("run") / "twipsybot.fatal"
+
+
+def _termination_signals() -> tuple[signal.Signals, ...]:
+    return (
+        (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+        if sys.platform != "win32"
+        else (signal.SIGINT, signal.SIGTERM)
+    )
+
+
 class BotRunner:
     def __init__(self):
         self.bot: MisskeyBot | None = None
@@ -83,12 +95,6 @@ class BotRunner:
             await asyncio.sleep(1.0)
 
     def _setup_monitoring_and_signals(self) -> None:
-        signals = (
-            (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-            if sys.platform != "win32"
-            else (signal.SIGINT, signal.SIGTERM)
-        )
-
         def signal_handler(sig, _):
             logger.info(
                 f"Received signal {signal.Signals(sig).name}; preparing to shut down..."
@@ -101,7 +107,7 @@ class BotRunner:
                 except RuntimeError:
                     pass
 
-        for sig in signals:
+        for sig in _termination_signals():
             try:
                 signal.signal(sig, signal_handler)
             except Exception:
@@ -120,6 +126,24 @@ class BotRunner:
         logger.info("Bot shut down")
 
 
+async def _wait_for_termination() -> int:
+    stop = asyncio.Event()
+    received = signal.SIGTERM
+
+    def handler(sig, _):
+        nonlocal received
+        received = sig
+        stop.set()
+
+    for sig in _termination_signals():
+        try:
+            signal.signal(sig, handler)
+        except Exception:
+            pass
+    await stop.wait()
+    return received
+
+
 def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, TextIOWrapper):
@@ -130,12 +154,15 @@ def main() -> int:
         return 0
     except KeyboardInterrupt:
         return 130
-    except ConfigurationError as e:
-        logger.error(f"Startup error: {e}")
-        return 2
-    except AuthenticationError as e:
-        logger.error(f"Startup error: {e}")
-        return 3
+    except (ConfigurationError, AuthenticationError) as e:
+        logger.error(f"FATAL startup error: {e}")
+        fatal_file = _fatal_file_path()
+        try:
+            fatal_file.parent.mkdir(parents=True, exist_ok=True)
+            fatal_file.write_text(str(e), encoding="utf-8")
+        except OSError:
+            pass
+        return 128 + asyncio.run(_wait_for_termination())
     except APIConnectionError as e:
         logger.error(f"Startup error: {e}")
         return 4

@@ -1132,7 +1132,7 @@ wheels = [
 
 [[package]]
 name = "twipsybot"
-version = "0.1.14"
+version = "0.1.15"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -1178,7 +1178,7 @@ requires-dist = [
     { name = "openai", specifier = "==2.14.0" },
     { name = "psutil", specifier = "==7.2.1" },
     { name = "pydantic", specifier = "==2.12.5" },
-    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.408" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.411" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.2" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.2.0" },
     { name = "python-dotenv", specifier = "==1.2.2" },

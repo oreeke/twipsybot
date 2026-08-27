@@ -12,7 +12,7 @@ import psutil
 from ..shared.exceptions import ConfigurationError
 from ..shared.utils import format_duration_hms
 from . import main as app_main
-from .main import _stop_file_path
+from .main import _fatal_file_path, _stop_file_path
 
 
 def _pid_file_path() -> Path:
@@ -97,6 +97,7 @@ def _run_up_foreground(pid_file: Path) -> int:
 
 
 def _run_up_daemon(pid_file: Path) -> int:
+    fatal_file = _fatal_file_path()
     env = dict(os.environ)
     env["TWIPSYBOT_UP_CHILD"] = "1"
     proc = _spawn_detached([sys.executable, "-m", "twipsybot.app.cli", "up"], env=env)
@@ -105,6 +106,12 @@ def _run_up_daemon(pid_file: Path) -> int:
         if proc.poll() is not None:
             print(
                 f"twipsybot exited immediately (code={proc.returncode}), check logs",
+                file=sys.stderr,
+            )
+            return 1
+        if fatal_file.exists():
+            print(
+                "twipsybot failed to start (fatal startup error), check logs",
                 file=sys.stderr,
             )
             return 1
@@ -120,6 +127,7 @@ def _cmd_up() -> int:
     pid_file = _pid_file_path()
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     _remove_stop_file(_stop_file_path())
+    _remove_stop_file(_fatal_file_path())
     if pid_file.exists():
         pid = _read_pid(pid_file)
         if pid and pid != os.getpid() and psutil.pid_exists(pid):

@@ -1,6 +1,6 @@
 [project]
 name = "twipsybot"
-version = "0.1.14"
+version = "0.1.15"
 description = "AI-powered Misskey bot with OpenAI-compatible LLMs."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -29,7 +29,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pyright>=1.1.408",
+    "pyright>=1.1.411",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]

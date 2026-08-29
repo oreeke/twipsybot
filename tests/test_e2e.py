@@ -42,6 +42,20 @@ async def test_mention_triggers_ai_reply(
     assert notes[0]["replyId"] == "note-mention-1"
 
 
+async def test_mention_text_without_bot_id_is_ignored(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    bot = await make_bot(write_config())
+
+    await bot.handlers.mention.handle({**_MENTION_NOTE, "mentions": ["other-id"]})
+
+    assert openai_server.calls == []
+    assert "notes/create" not in misskey_server.calls
+
+
 async def test_chat_message_plugin_takeover(
     make_bot: MakeBot,
     write_config: WriteConfig,
@@ -227,6 +241,26 @@ async def test_room_chat_requires_mention_and_replies_to_room(
     assert reply["text"] == f"@bob\n{DEFAULT_AI_REPLY}"
 
 
+async def test_room_chat_does_not_match_longer_username(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    bot = await make_bot(write_config())
+    room_message = {
+        **_CHAT_MESSAGE,
+        "toRoomId": "room-1",
+        "toRoom": {"id": "room-1", "name": "测试房间"},
+        "text": "@testbot2 你好",
+    }
+
+    await bot.handlers.chat.handle(room_message)
+
+    assert openai_server.calls == []
+    assert "chat/messages/create-to-room" not in misskey_server.calls
+
+
 async def test_reply_to_bot_triggers_ai_reply(
     make_bot: MakeBot,
     write_config: WriteConfig,
@@ -252,6 +286,32 @@ async def test_reply_to_bot_triggers_ai_reply(
     prompt = openai_server.calls[0]["messages"][-1]["content"]
     assert prompt == "机器人原帖\n\n继续说说"
     assert misskey_server.calls["notes/create"][0]["replyId"] == "reply-1"
+
+
+async def test_reply_to_same_username_with_other_id_is_ignored(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    bot = await make_bot(write_config())
+    event = {
+        "type": "reply",
+        "note": {
+            "id": "reply-1",
+            "text": "继续说说",
+            "user": {"id": "user-1", "username": "alice"},
+            "reply": {
+                "text": "同名用户原帖",
+                "user": {"id": "other-id", "username": "testbot"},
+            },
+        },
+    }
+
+    await bot.handlers.mention.handle(event)
+
+    assert openai_server.calls == []
+    assert "notes/create" not in misskey_server.calls
 
 
 async def test_rate_limit_returns_configured_reply_without_second_ai_call(

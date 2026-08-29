@@ -1,7 +1,9 @@
 import asyncio
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from cachetools import TTLCache
@@ -264,7 +266,19 @@ class MisskeyBot:
             logger.info("Services stopped")
 
     def is_bot_mentioned(self, text: str) -> bool:
-        return bool(text and self.bot_username and f"@{self.bot_username}" in text)
+        if not text or not self.bot_username:
+            return False
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_@])@{re.escape(self.bot_username)}"
+            rf"(?:(?:@(?P<host>[A-Za-z0-9.-]+))|(?![A-Za-z0-9_@]))",
+            re.IGNORECASE,
+        )
+        current_host = urlparse(self.misskey.instance_url).hostname
+        return any(
+            not (host := match.group("host"))
+            or bool(current_host and host.rstrip(".").lower() == current_host.lower())
+            for match in pattern.finditer(text)
+        )
 
     @staticmethod
     def format_log_text(text: str, max_length: int = 50) -> str:

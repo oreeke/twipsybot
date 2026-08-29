@@ -32,16 +32,10 @@ class MentionHandler:
         self.bot = bot
 
     def _is_self_mention(self, mention: MentionContext) -> bool:
-        if (
+        return bool(
             self.bot.bot_user_id
             and mention.user_id
             and mention.user_id == self.bot.bot_user_id
-        ):
-            return True
-        if not (self.bot.bot_username and mention.username):
-            return False
-        return mention.username == self.bot.bot_username or mention.username.startswith(
-            f"{self.bot.bot_username}@"
         )
 
     @staticmethod
@@ -60,29 +54,20 @@ class MentionHandler:
         note_type: str | None,
         is_reply_event: bool,
         reply_to_bot: bool,
-        text: str,
         note_data: dict[str, Any],
     ) -> bool:
         if note_type == "mention" and reply_to_bot:
             return False
         if is_reply_event:
             return reply_to_bot
-        return self.bot.is_bot_mentioned(text) or self._mentions_bot(note_data)
+        return self._mentions_bot(note_data)
 
     def _is_reply_to_bot(self, note_data: dict[str, Any]) -> bool:
         replied = note_data.get("reply")
         if not isinstance(replied, dict):
             return False
         replied_user_id = extract_user_id(replied)
-        if self.bot.bot_user_id and replied_user_id == self.bot.bot_user_id:
-            return True
-        if not self.bot.bot_username:
-            return False
-        replied_user = replied.get("user")
-        return (
-            isinstance(replied_user, dict)
-            and replied_user.get("username") == self.bot.bot_username
-        )
+        return bool(self.bot.bot_user_id and replied_user_id == self.bot.bot_user_id)
 
     def _parse_reply_text(self, note_data: dict[str, Any]) -> str:
         parts: list[str] = []
@@ -196,7 +181,6 @@ class MentionHandler:
                 note_type=note_type,
                 is_reply_event=is_reply_event,
                 reply_to_bot=reply_to_bot,
-                text=text,
                 note_data=note_data,
             )
             if not should_handle:

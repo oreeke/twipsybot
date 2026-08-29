@@ -39,6 +39,28 @@ class _BadRequest:
         return self.message
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("@testbot 你好", True),
+        ("你好 @TESTBOT。", True),
+        ("@testbot@example.com 你好", True),
+        ("@testbot@example.com. 你好", True),
+        ("@testbot2 你好", False),
+        ("@testbot_other 你好", False),
+        ("@testbot@other.example 你好", False),
+        ("@@testbot 你好", False),
+        ("user@testbot.example", False),
+    ],
+)
+def test_bot_mention_matches_complete_local_account(text: str, expected: bool) -> None:
+    bot = cast(Any, object.__new__(MisskeyBot))
+    bot.bot_username = "testbot"
+    bot.misskey = SimpleNamespace(instance_url="https://example.com")
+
+    assert bot.is_bot_mentioned(text) is expected
+
+
 def test_invalid_config_fails_fast(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(

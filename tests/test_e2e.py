@@ -122,6 +122,39 @@ async def test_auto_post_preserves_zero_timestamp(
     assert prompt == "[0] epoch 写一条随笔"
 
 
+async def test_auto_post_uses_highest_priority_prompt_and_timestamp(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    plugins_dir = make_plugin_dir(
+        "high",
+        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
+        "class HighPlugin(PluginBase):\n"
+        "    api_version = PLUGIN_API_VERSION\n"
+        "    async def on_auto_post(self, event):\n"
+        "        return {'prompt': 'high ', 'timestamp': 1}\n",
+        config="enabled: true\npriority: 20\n",
+    )
+    make_plugin_dir(
+        "low",
+        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
+        "class LowPlugin(PluginBase):\n"
+        "    api_version = PLUGIN_API_VERSION\n"
+        "    async def on_auto_post(self, event):\n"
+        "        return {'prompt': 'low ', 'timestamp': 2}\n",
+        config="enabled: true\npriority: 10\n",
+    )
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    bot.runtime.running = True
+
+    await bot.handlers.auto_post.run()
+
+    prompt = openai_server.calls[0]["messages"][-1]["content"]
+    assert prompt == "[1] high 写一条随笔"
+
+
 async def test_blacklisted_user_is_ignored(
     make_bot: MakeBot,
     write_config: WriteConfig,

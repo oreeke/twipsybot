@@ -16,11 +16,9 @@ class AutoPostService:
     def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
         self.posts_today = 0
-        self.last_auto_post_time = bot.runtime.startup_time
 
     def post_count(self) -> None:
         self.posts_today += 1
-        self.last_auto_post_time = datetime.now(UTC)
 
     def check_post_counter(self, max_posts: int) -> bool:
         if self.posts_today >= max_posts:
@@ -114,16 +112,13 @@ class AutoPostService:
     async def _generate_ai_post(
         self, plugin_results: list[Any], max_posts: int, local_only: bool | None
     ) -> None:
-        plugin_prompt = ""
-        timestamp_override = None
-        for result in plugin_results:
-            if result and "prompt" in result:
-                plugin_prompt = result["prompt"]
-                if result.get("timestamp") is not None:
-                    timestamp_override = result.get("timestamp")
-                logger.info(
-                    f"Plugin {result.get('plugin_name')} requested prompt modification: {plugin_prompt}"
-                )
+        result = next((item for item in plugin_results if "prompt" in item), None)
+        plugin_prompt = result["prompt"] if result else ""
+        timestamp_override = result.get("timestamp") if result else None
+        if result:
+            logger.info(
+                f"Plugin {result.get('plugin_name')} requested prompt modification: {plugin_prompt}"
+            )
         post_prompt = self.bot.config.get(ConfigKeys.BOT_AUTO_POST_PROMPT, "")
         try:
             content = await self._generate_post(

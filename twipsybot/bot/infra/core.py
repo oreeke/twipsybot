@@ -186,7 +186,6 @@ class MisskeyBot:
 
     async def _initialize_services(self) -> None:
         await self.db.initialize()
-        self.openai.initialize()
         current_user = await self.misskey.get_current_user()
         self.bot_user_id = current_user.get("id")
         self.bot_username = current_user.get("username")

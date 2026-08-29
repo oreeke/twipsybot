@@ -1,6 +1,6 @@
 import asyncio
 import inspect
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -34,11 +34,10 @@ class ResponsePipeline:
     @asynccontextmanager
     async def lock_actor(
         self, user_id: str | None, username: str | None
-    ) -> AsyncIterator[None]:
+    ) -> AsyncGenerator[None]:
         key = self._actor_key(user_id, username)
         if not key:
-            async with asyncio.Lock():
-                yield
+            yield
             return
         entry = self._actor_locks.setdefault(key, _ActorLock())
         entry.users += 1

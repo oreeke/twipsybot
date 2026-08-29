@@ -241,7 +241,6 @@ async def make_bot(tmp_path: Path) -> AsyncIterator[MakeBot]:
         bot = MisskeyBot(config)
         bot.plugin_manager.plugins_dir = plugins_dir or (tmp_path / "no-plugins")
         await bot.db.initialize()
-        bot.openai.initialize()
         current_user = await bot.misskey.get_current_user()
         bot.bot_user_id = current_user.get("id")
         bot.bot_username = current_user.get("username")

@@ -64,15 +64,9 @@ class OpenAIAPI:
                 timeout=API_TIMEOUT,
                 max_retries=2,
             )
-            self._initialized = False
         except Exception as e:
             logger.error(f"Failed to create OpenAI API client: {e}")
             raise APIConnectionError(self._safe_error_message(e)) from e
-
-    def initialize(self) -> None:
-        if not self._initialized:
-            logger.info(f"OpenAI API client initialized: {self.api_base}")
-            self._initialized = True
 
     async def _call_api_common(
         self,

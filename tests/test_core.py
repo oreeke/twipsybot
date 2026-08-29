@@ -64,12 +64,19 @@ def test_environment_overrides_yaml_config(
 ) -> None:
     monkeypatch.setenv("OPENAI_MODEL", "model-from-env")
     monkeypatch.setenv("BOT_RESPONSE_RATE_LIMIT", "3")
+    monkeypatch.setenv("BOT_TIMELINE_GLOBAL", "true")
     monkeypatch.setenv("DB_CLEAR", "30")
 
-    config = write_config(openai={"model": "model-from-yaml"})
+    config = write_config(
+        openai={"model": "model-from-yaml"},
+        bot={"timeline": {"global": False}},
+    )
 
     assert config.get(ConfigKeys.OPENAI_MODEL) == "model-from-env"
     assert config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT) == "3"
+    assert config.get(ConfigKeys.BOT_TIMELINE_GLOBAL) is True
+    assert config.data["bot"]["timeline"]["global"] is True
+    assert "global_" not in config.data["bot"]["timeline"]
     assert (
         ResponseLimiter._parse_duration_seconds(
             config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT)

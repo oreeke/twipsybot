@@ -260,7 +260,7 @@ class Config:
         self._apply_env_overrides(merged)
         self._expand_prompt_files(merged)
         self._model = self._validate_model(merged)
-        self.data = self._model.model_dump()
+        self.data = self._model.model_dump(by_alias=True)
         self._ensure_paths()
 
     @staticmethod
@@ -327,10 +327,7 @@ class Config:
             if default is not _MISSING:
                 return default
             return None
-        if key == ConfigKeys.BOT_TIMELINE_GLOBAL:
-            value = _get_dotted(self.data, "bot.timeline.global_")
-        else:
-            value = _get_dotted(self.data, key)
+        value = _get_dotted(self.data, key)
         if value is None and default is not _MISSING:
             return default
         return value

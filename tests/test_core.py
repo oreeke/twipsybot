@@ -11,12 +11,13 @@ import psutil
 import pytest
 import yaml
 from conftest import MakeBot, WriteConfig
-from httpx import Request, Response
+from httpx2 import Request, Response
 from openai import APIStatusError
 
 from twipsybot import Config, MisskeyBot
 from twipsybot.app.cli import _write_pid_file
 from twipsybot.bot.flows.post import AutoPostService
+from twipsybot.bot.infra.limits import ResponseLimiter
 from twipsybot.clients.openai.openai_api import OpenAIAPI
 from twipsybot.db.sqlite import ConnectionPool
 from twipsybot.shared.config_keys import ConfigKeys
@@ -62,10 +63,48 @@ def test_environment_overrides_yaml_config(
     write_config: WriteConfig,
 ) -> None:
     monkeypatch.setenv("OPENAI_MODEL", "model-from-env")
+    monkeypatch.setenv("BOT_RESPONSE_RATE_LIMIT", "3")
+    monkeypatch.setenv("DB_CLEAR", "30")
 
     config = write_config(openai={"model": "model-from-yaml"})
 
     assert config.get(ConfigKeys.OPENAI_MODEL) == "model-from-env"
+    assert config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT) == "3"
+    assert (
+        ResponseLimiter._parse_duration_seconds(
+            config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT)
+        )
+        == 3
+    )
+    assert config.get(ConfigKeys.DB_CLEAR) == 30
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (30, 30),
+        ("30", 30),
+        ("-1", -1),
+        ("off", -1),
+        ("30s", 30),
+        ("5m", 300),
+        ("1h", 3600),
+        ("1d", 86400),
+        ("1h30m", 5400),
+        ("1h 30m", 5400),
+        ("1w", None),
+        ("1mm", None),
+        ("1y", None),
+        ("500ms", None),
+        ("1us", None),
+        ("1ns", None),
+        ("1hXXX30m", None),
+        ("invalid", None),
+        (True, None),
+    ],
+)
+def test_response_limit_duration_parsing(value: Any, expected: int | None) -> None:
+    assert ResponseLimiter._parse_duration_seconds(value) == expected
 
 
 async def test_database_persists_updates_and_cleans_expired_state(
@@ -87,6 +126,8 @@ async def test_database_persists_updates_and_cleans_expired_state(
     await bot.db._execute_write(
         "UPDATE response_limit_state SET updated_at = '2000-01-01 00:00:00'"
     )
+    assert await bot.db.cleanup_response_limit_state() == 0
+    assert await bot.db.get_response_limit_state("old-user") is not None
     assert await bot.db.cleanup_response_limit_state(max_age_days=30) == 1
     assert await bot.db.get_response_limit_state("old-user") is None
 

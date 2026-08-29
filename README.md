@@ -71,11 +71,11 @@ services:
       - BOT_RESPONSE_MENTION=true                                  # 是否响应提及（@）
       - BOT_RESPONSE_CHAT=true                                     # 是否响应聊天
       - BOT_RESPONSE_CHAT_MEMORY=10                                # 聊天上下文记忆长度（条）
-      - BOT_RESPONSE_RATE_LIMIT=-1                                 # 回复速率限制：同一用户回复最小间隔；-1 不限制；30s/5m/1h
+      - BOT_RESPONSE_RATE_LIMIT=-1                                 # 回复速率限制：同一用户回复最小间隔；-1 不限制；30s/5m/1h/1d
       - BOT_RESPONSE_RATE_LIMIT_REPLY=我需要休息一下...             # 速率限制回复文案
       - BOT_RESPONSE_MAX_TURNS=-1                                  # 回复次数限制：同一用户最多对话轮数（机器人回复次数）；-1 不限制
       - BOT_RESPONSE_MAX_TURNS_REPLY=我要回家了...                  # 次数限制回复文案
-      - BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h
+      - BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h/1d
       - BOT_RESPONSE_WHITELIST=                                    # 白名单：username@host/userId，这些用户不受以上限制
       - BOT_RESPONSE_BLACKLIST=                                    # 黑名单：username@host/userId，这些用户禁止使用回复
       - BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线（仅用于 Radar）
@@ -85,7 +85,7 @@ services:
       - BOT_TIMELINE_HYBRID=false                                  # hybridTimeline
       - BOT_TIMELINE_GLOBAL=false                                  # globalTimeline
       - DB_PATH=data/twipsybot.db                                  # SQLite 路径
-      - DB_CLEAR=30                                                # SQLite 数据保留天数（不含插件）；-1 不清理
+      - DB_CLEAR=-1                                                # SQLite 数据保留天数（不含插件）；-1 不清理
       - LOG_PATH=data/logs/twipsybot.log                           # 日志路径
       - LOG_LEVEL=INFO                                             # 日志级别 (DEBUG/INFO/WARNING/ERROR)
       - LOG_DUMP_EVENTS=false                                      # 是否输出事件原始数据（仅用于 DEBUG 数据分析）
@@ -219,11 +219,11 @@ bot:
     mention: true                                   # 是否响应提及（@）
     chat: true                                      # 是否响应聊天
     chat_memory: 10                                 # 聊天上下文记忆长度（条）
-    rate_limit: -1                                  # 回复速率限制：同一用户回复最小间隔；-1 不限制；30s/5m/1h
+    rate_limit: -1                                  # 回复速率限制：同一用户回复最小间隔；-1 不限制；30s/5m/1h/1d
     rate_limit_reply: "我需要休息一下..."            # 速率限制回复文案
     max_turns: -1                                   # 回复次数限制：同一用户最多对话轮数（机器人回复次数）；-1 不限制
     max_turns_reply: "我要回家了..."                 # 次数限制回复文案
-    max_turns_release: -1                           # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h
+    max_turns_release: -1                           # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h/1d
     whitelist:                                      # 白名单：username@host/userId，这些用户不受以上限制
       - "admin@example.com"
       - "user-id-123"
@@ -233,7 +233,7 @@ bot:
 
 db:
   path: "data/twipsybot.db"                         # SQLite 路径
-  clear: 30                                         # SQLite 数据保留天数（不含插件）；-1 不清理
+  clear: -1                                         # SQLite 数据保留天数（不含插件）；-1 不清理
 
 log:
   path: "data/logs/twipsybot.log"                   # 日志路径

@@ -271,7 +271,7 @@ class DBManager:
         if max_age_days is None:
             max_age_days = self.config.get(ConfigKeys.DB_CLEAR)
         if not isinstance(max_age_days, int):
-            max_age_days = 30
+            max_age_days = -1
         if max_age_days < 0:
             return 0
         if max_age_days == 0:

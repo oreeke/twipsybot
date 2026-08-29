@@ -958,6 +958,21 @@ async def test_vision_handles_image_with_public_services() -> None:
     generate_chat.assert_awaited_once()
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("6 MB", 6_000_000),
+        ("6 MiB", 6 * 1024 * 1024),
+        (1024.9, 1024),
+        (-1, 0),
+        ("invalid", 42),
+        (True, 42),
+    ],
+)
+def test_vision_size_parsing(value: Any, expected: int) -> None:
+    assert VisionPlugin._parse_size(value, 42) == expected
+
+
 async def test_radar_reacts_through_public_misskey_service() -> None:
     create_reaction = AsyncMock(return_value={})
     misskey = SimpleNamespace(create_reaction=create_reaction)

@@ -11,7 +11,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /bin/
 
 COPY pyproject.toml uv.lock README.md LICENSE ./
 RUN uv export --frozen --no-emit-project -o requirements.lock.txt && \
-    uv pip install --system --only-binary :all: --no-binary sgmllib3k --require-hashes -r requirements.lock.txt
+    uv pip install --system --only-binary :all: --require-hashes -r requirements.lock.txt
 
 COPY twipsybot /app/twipsybot
 RUN uv build --wheel -o dist && \

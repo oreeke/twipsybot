@@ -1,18 +1,20 @@
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any
 from urllib.parse import urlparse
 
+import durationpy
 from cachetools import TTLCache
-from pytimeparse2 import parse as parse_duration
 
 from ...db.sqlite import DBManager
 from ...shared.config import Config
 from ...shared.config_keys import ConfigKeys
 from ...shared.constants import RESPONSE_LIMIT_CACHE_MAX, RESPONSE_LIMIT_CACHE_TTL
 from ...shared.utils import normalize_tokens
+
+_DURATION_PATTERN = re.compile(r"[+-]?(?:[\d.]+[smhd]\s*)+")
 
 
 @dataclass(slots=True)
@@ -98,17 +100,14 @@ class ResponseLimiter:
             return None
         if s in {"-1", "unlimited", "none", "off"}:
             return -1
+        if s.isdigit():
+            return int(s)
+        if _DURATION_PATTERN.fullmatch(s) is None:
+            return None
         try:
-            seconds = parse_duration(s, as_timedelta=False)
+            return int(durationpy.from_str(s).total_seconds())
         except Exception:
             return None
-        if seconds is None:
-            return None
-        if isinstance(seconds, (int, float)):
-            return int(seconds)
-        if isinstance(seconds, timedelta):
-            return int(seconds.total_seconds())
-        return None
 
     @staticmethod
     def _parse_duration_number(value: Any) -> int | None:

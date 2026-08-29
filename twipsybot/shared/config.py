@@ -224,15 +224,13 @@ class BotConfig(BaseModel):
 
 class DBConfig(BaseModel):
     path: str = "data/twipsybot.db"
-    clear: int | str = 30
+    clear: int = -1
 
     @field_validator("clear")
     @classmethod
-    def _validate_clear(cls, v: int | str) -> int | str:
-        if isinstance(v, int) and v < -1:
+    def _validate_clear(cls, v: int) -> int:
+        if v < -1:
             raise ValueError("database clear days must be >= -1")
-        if isinstance(v, str) and not v.strip():
-            raise ValueError("database clear days must not be empty")
         return v
 
 

@@ -1,8 +1,8 @@
 import base64
 from typing import Any
 
-import humanfriendly
 from loguru import logger
+from pydantic import ByteSize, TypeAdapter
 
 from twipsybot.plugin import (
     PLUGIN_API_VERSION,
@@ -12,6 +12,8 @@ from twipsybot.plugin import (
     MessageEvent,
     PluginBase,
 )
+
+_BYTE_SIZE_ADAPTER = TypeAdapter(ByteSize)
 
 
 class VisionPlugin(PluginBase):
@@ -104,10 +106,8 @@ class VisionPlugin(PluginBase):
             return default
         if isinstance(value, (int, float)):
             return max(0, int(value))
-        if not isinstance(value, str):
-            return default
         try:
-            return max(0, int(humanfriendly.parse_size(value)))
+            return int(_BYTE_SIZE_ADAPTER.validate_python(value))
         except Exception:
             return default
 

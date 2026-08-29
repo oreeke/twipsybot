@@ -26,6 +26,10 @@ def _fatal_file_path() -> Path:
     return Path("run") / "twipsybot.fatal"
 
 
+def _is_docker_container() -> bool:
+    return Path("/.dockerenv").exists()
+
+
 def _termination_signals() -> tuple[signal.Signals, ...]:
     return (
         (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
@@ -168,7 +172,9 @@ def main() -> int:
             fatal_file.write_text(str(e), encoding="utf-8")
         except OSError:
             pass
-        return 128 + asyncio.run(_wait_for_termination())
+        if _is_docker_container():
+            return 128 + asyncio.run(_wait_for_termination())
+        return 2
     except APIConnectionError as e:
         logger.error(f"Startup error: {e}")
         return 4

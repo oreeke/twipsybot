@@ -60,7 +60,7 @@ class AutoPostService:
                 continue
             visibility, contents = extracted
             posted_any = await self._post_plugin_contents(
-                contents, visibility, max_posts, local_only
+                result, contents, visibility, max_posts, local_only
             )
             if posted_any:
                 return True
@@ -85,13 +85,11 @@ class AutoPostService:
         contents_value = result.get("contents")
         if isinstance(contents_value, list):
             return [c for c in contents_value if isinstance(c, str) and c]
-        content_value = result.get("content")
-        if isinstance(content_value, str) and content_value:
-            return [content_value]
         return []
 
     async def _post_plugin_contents(
         self,
+        result: dict[str, Any],
         contents: list[str],
         visibility: str | None,
         max_posts: int,
@@ -104,6 +102,7 @@ class AutoPostService:
             await self.bot.misskey.create_note(
                 content, visibility=visibility, local_only=local_only
             )
+            await self.bot.plugin_manager.confirm_auto_post_published(result, content)
             self.post_count()
             posted_any = True
             logger.info(f"Auto-post succeeded: {self.bot.format_log_text(content)}")
@@ -118,9 +117,8 @@ class AutoPostService:
         plugin_prompt = ""
         timestamp_override = None
         for result in plugin_results:
-            if result and result.get("modify_prompt"):
-                if result.get("plugin_prompt"):
-                    plugin_prompt = result.get("plugin_prompt")
+            if result and "prompt" in result:
+                plugin_prompt = result["prompt"]
                 if result.get("timestamp"):
                     timestamp_override = result.get("timestamp")
                 logger.info(

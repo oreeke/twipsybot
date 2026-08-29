@@ -45,6 +45,9 @@ Thumbs.db
 # SQLite files
 data/
 
+# Runtime files
+/run/
+
 # Security
 *.pem
 *.key

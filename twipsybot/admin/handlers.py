@@ -4,13 +4,13 @@ from typing import Any
 
 import aiosqlite
 
-from twipsybot.clients.misskey.antenna import (
+from ..clients.misskey.antenna import (
     build_antenna_index,
     resolve_antenna_selector,
 )
-from twipsybot.clients.misskey.channels import ChannelType
-from twipsybot.shared.config_keys import ConfigKeys
-from twipsybot.shared.utils import (
+from ..clients.misskey.channels import ChannelType
+from ..shared.config_keys import ConfigKeys
+from ..shared.utils import (
     format_duration_hms,
     get_memory_usage,
     get_system_info,
@@ -27,6 +27,23 @@ _PLUGIN_FAILURE_REASONS = {
 
 
 class CmdHandlersMixin:
+    bot: Any
+    global_config: Any
+    db: Any
+    plugin_manager: Any
+    misskey: Any
+    openai: Any
+    name: str
+    commands: dict[str, Any]
+    allowed_users: frozenset[str]
+    _baseline_antenna_selectors: list[str]
+
+    def _set_global_config_value(self, path: str, value: Any) -> None:
+        raise NotImplementedError
+
+    def _log_plugin_action(self, action: str, details: str = "") -> None:
+        raise NotImplementedError
+
     def _get_uptime_text(self, bot: Any) -> str | None:
         started_at = bot.runtime.startup_time
         seconds = (datetime.now(UTC) - started_at).total_seconds()
@@ -124,16 +141,11 @@ class CmdHandlersMixin:
         cleared = []
         getters = {
             "chat": lambda b: getattr(b, "_chat_histories", None),
-            "locks": lambda b: getattr(
-                getattr(b, "pipeline", None), "_user_locks", None
-            ),
             "events": lambda b: getattr(
                 getattr(b, "streaming", None), "processed_events", None
             ),
         }
-        selected = (
-            ("chat", "locks", "events") if not target or target == "all" else (target,)
-        )
+        selected = ("chat", "events") if not target or target == "all" else (target,)
         for key in selected:
             getter = getters.get(key)
             if not getter:

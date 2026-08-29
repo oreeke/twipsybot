@@ -10,9 +10,9 @@ from openai import (
     APIError as OpenAIError,
 )
 from openai import (
+    APIStatusError,
     APITimeoutError,
     BadRequestError,
-    NotFoundError,
     RateLimitError,
     Timeout,
 )
@@ -101,6 +101,7 @@ class OpenAIAPI:
         call_type: str,
         response_format: dict[str, Any] | None = None,
     ) -> str:
+        messages = self._to_chat_completions_messages(messages)
         try:
             response = await make_chat_completions_request(
                 client=self.client,
@@ -128,6 +129,71 @@ class OpenAIAPI:
             return False
         return should_use_responses(api_mode=self.api_mode)
 
+    @property
+    def uses_responses_api(self) -> bool:
+        return self._should_use_responses()
+
+    @staticmethod
+    def _to_chat_completions_messages(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        converted: list[dict[str, Any]] = []
+        for message in messages:
+            content = message.get("content")
+            if not isinstance(content, list):
+                converted.append(message)
+                continue
+            parts: list[Any] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    parts.append(part)
+                elif part.get("type") == "input_text":
+                    parts.append({"type": "text", "text": part.get("text", "")})
+                elif part.get("type") == "input_image":
+                    parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": part.get("image_url", "")},
+                        }
+                    )
+                else:
+                    parts.append(part)
+            converted.append({**message, "content": parts})
+        return converted
+
+    @staticmethod
+    def _is_responses_unavailable(error: Any) -> bool:
+        if getattr(error, "status_code", None) in {404, 405, 501}:
+            return True
+        code = getattr(error, "code", None)
+        if code in {"unsupported_api", "unsupported_endpoint", "not_implemented"}:
+            return True
+        message = str(error).lower()
+        return any(
+            marker in message
+            for marker in (
+                "responses api is not supported",
+                "responses api not supported",
+                "does not support the responses api",
+                "doesn't support the responses api",
+                "does not support responses api",
+                "unsupported endpoint: /responses",
+                "unknown endpoint: /responses",
+                "unrecognized request url: /v1/responses",
+            )
+        )
+
+    @retry_async(
+        max_retries=API_MAX_RETRIES,
+        retryable_exceptions=(
+            RateLimitError,
+            APITimeoutError,
+            Timeout,
+            OpenAIError,
+            OpenAIConnectionError,
+            OSError,
+        ),
+    )
     async def _call_api(
         self,
         messages: list[dict[str, Any]],
@@ -156,7 +222,12 @@ class OpenAIAPI:
         except OpenAIAuthenticationError as e:
             logger.error(f"API authentication failed: {e}")
             raise AuthenticationError(self._safe_error_message(e)) from e
-        except (NotFoundError, BadRequestError) as e:
+        except APIStatusError as e:
+            if not self._is_responses_unavailable(e):
+                if not isinstance(e, BadRequestError):
+                    raise
+                logger.error(f"API request parameter error: {e}")
+                raise ValueError(self._safe_error_message(e)) from e
             self._responses_disabled = True
             logger.warning(
                 f"Responses API unavailable; falling back to Chat Completions: {e}"
@@ -168,6 +239,17 @@ class OpenAIAPI:
             logger.error(f"Invalid API response format: {e}")
             raise ValueError(self._safe_error_message(e)) from e
 
+    @retry_async(
+        max_retries=API_MAX_RETRIES,
+        retryable_exceptions=(
+            RateLimitError,
+            APITimeoutError,
+            Timeout,
+            OpenAIError,
+            OpenAIConnectionError,
+            OSError,
+        ),
+    )
     async def _call_api_structured(
         self,
         messages: list[dict[str, Any]],
@@ -204,7 +286,12 @@ class OpenAIAPI:
         except OpenAIAuthenticationError as e:
             logger.error(f"API authentication failed: {e}")
             raise AuthenticationError(self._safe_error_message(e)) from e
-        except (NotFoundError, BadRequestError) as e:
+        except APIStatusError as e:
+            if not self._is_responses_unavailable(e):
+                if not isinstance(e, BadRequestError):
+                    raise
+                logger.error(f"API request parameter error: {e}")
+                raise ValueError(self._safe_error_message(e)) from e
             self._responses_disabled = True
             logger.warning(
                 f"Responses API unavailable; falling back to Chat Completions: {e}"

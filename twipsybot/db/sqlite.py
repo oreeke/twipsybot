@@ -1,6 +1,5 @@
 import asyncio
 from collections.abc import Sequence
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -127,13 +126,13 @@ class DBManager:
             """,
         ]
         index_statements = [
-            "CREATE INDEX IF NOT EXISTS idx_plugin_data_name_key ON plugin_data(plugin_name, key)",
             "CREATE INDEX IF NOT EXISTS idx_response_limit_state_updated ON response_limit_state(updated_at)",
         ]
         await conn.execute("BEGIN")
         try:
             for statement in schema_statements:
                 await conn.execute(statement)
+            await conn.execute("DROP INDEX IF EXISTS idx_plugin_data_name_key")
             for index_sql in index_statements:
                 await conn.execute(index_sql)
             await conn.commit()
@@ -179,8 +178,14 @@ class DBManager:
 
     async def set_plugin_data(self, plugin_name: str, key: str, value: str) -> None:
         await self._execute_write(
-            "INSERT OR REPLACE INTO plugin_data (plugin_name, key, value, updated_at) VALUES (?, ?, ?, ?)",
-            (plugin_name, key, value, datetime.now().isoformat()),
+            """
+            INSERT INTO plugin_data (plugin_name, key, value, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(plugin_name, key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            (plugin_name, key, value),
         )
 
     async def get_response_limit_state(
@@ -206,16 +211,20 @@ class DBManager:
     ) -> None:
         await self._execute_write(
             """
-            INSERT OR REPLACE INTO response_limit_state
+            INSERT INTO response_limit_state
                 (user_id, last_reply_ts, turns, blocked_until_ts, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                last_reply_ts = excluded.last_reply_ts,
+                turns = excluded.turns,
+                blocked_until_ts = excluded.blocked_until_ts,
+                updated_at = excluded.updated_at
             """,
             (
                 user_id,
                 last_reply_ts,
                 int(turns),
                 blocked_until_ts,
-                datetime.now().isoformat(),
             ),
         )
 
@@ -230,10 +239,9 @@ class DBManager:
             return 0
         if max_age_days == 0:
             return await self._execute_write("DELETE FROM response_limit_state")
-        cutoff = int(datetime.now().timestamp() - (max_age_days * 86400))
         return await self._execute_write(
-            "DELETE FROM response_limit_state WHERE CAST(strftime('%s', updated_at) AS INTEGER) < ?",
-            (cutoff,),
+            "DELETE FROM response_limit_state WHERE updated_at < datetime('now', ?)",
+            (f"-{max_age_days} days",),
         )
 
     async def delete_plugin_data(self, plugin_name: str, key: str | None = None) -> int:

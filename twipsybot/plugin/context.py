@@ -1,11 +1,17 @@
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
+
+from .contracts import BotControl, MisskeyService, OpenAIService, PluginStorage
 
 __all__ = ("PluginContext",)
 
 
+@dataclass(frozen=True, slots=True)
 class PluginContext:
-    def __init__(self, name: str, config: dict[str, Any], **context_objects):
-        self.name = name
-        self.config = config
-        for key, value in context_objects.items():
-            setattr(self, key, value)
+    name: str
+    config: Mapping[str, Any]
+    storage: PluginStorage
+    misskey: MisskeyService
+    openai: OpenAIService
+    bot: BotControl

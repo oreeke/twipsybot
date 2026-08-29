@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Awaitable, Callable
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -7,6 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from cachetools import TTLCache
 from loguru import logger
 
+from ...admin import AdminCommandService
 from ...clients.misskey.misskey_api import MisskeyAPI
 from ...clients.misskey.streaming import StreamingClient
 from ...clients.misskey.transport import TCPClient
@@ -63,21 +64,18 @@ class MisskeyBot:
         self.plugin_manager = PluginManager(
             config,
             db=self.db,
-            context_objects={
-                "misskey": self.misskey,
-                "drive": self.misskey.drive,
-                "openai": self.openai,
-                "streaming": self.streaming,
-                "runtime": self.runtime,
-                "bot": self,
-            },
+            misskey=self.misskey,
+            openai=self.openai,
+            bot=self,
         )
         self.pipeline = ResponsePipeline(limits=self.limits)
         self.system_prompt = config.get(ConfigKeys.BOT_SYSTEM_PROMPT, "")
         self.bot_user_id = None
         self.bot_username = None
         self._chat_histories: TTLCache[str, list[dict[str, str]]] = TTLCache(
-            maxsize=CHAT_CACHE_MAX_USERS, ttl=CHAT_CACHE_TTL
+            maxsize=CHAT_CACHE_MAX_USERS,
+            ttl=CHAT_CACHE_TTL,
+            timer=time.monotonic,
         )
         self.handlers = BotHandlers(self)
         self.connect = StreamingConnector(
@@ -87,33 +85,14 @@ class MisskeyBot:
             runtime=self.runtime,
             handlers=self.handlers,
         )
+        admin_config = config.get("bot.admin", {})
+        self.admin = AdminCommandService(
+            self, admin_config if isinstance(admin_config, dict) else {}
+        )
         logger.info("Bot initialized")
 
     def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
         return self.limits.is_response_blacklisted_user(user_id=user_id, handle=handle)
-
-    async def get_response_block_reply(
-        self, *, user_id: str, handle: str | None
-    ) -> str | None:
-        return await self.limits.get_response_block_reply(
-            user_id=user_id, handle=handle
-        )
-
-    async def maybe_send_blocked_reply(
-        self,
-        *,
-        user_id: str,
-        handle: str | None,
-        send_reply: Callable[[str], Awaitable[None]],
-    ) -> bool:
-        return await self.limits.maybe_send_blocked_reply(
-            user_id=user_id,
-            handle=handle,
-            send_reply=send_reply,
-        )
-
-    async def record_response(self, user_id: str, *, count_turn: bool) -> None:
-        await self.limits.record_response(user_id, count_turn=count_turn)
 
     def load_timeline_channels(self) -> set[str]:
         return self.connect.load_timeline_channels()
@@ -123,9 +102,6 @@ class MisskeyBot:
 
     def set_timeline_channels(self, channels: set[str]) -> set[str]:
         return self.connect.set_timeline_channels(channels)
-
-    async def get_streaming_channels(self):
-        return await self.connect.get_streaming_channels()
 
     async def restart_streaming(self) -> None:
         await self.connect.restart_streaming()
@@ -218,7 +194,9 @@ class MisskeyBot:
             f"Connected to Misskey instance: bot_id={self.bot_user_id}, @{self.bot_username}"
         )
         await self.plugin_manager.load_plugins()
-        await self.plugin_manager.call_plugin_hook("on_startup")
+        if self.config.get(ConfigKeys.BOT_ADMIN_ENABLED):
+            await self.admin.start()
+        await self.plugin_manager.startup_plugins()
 
     def _setup_scheduler(self) -> None:
         cron_jobs = [
@@ -253,7 +231,7 @@ class MisskeyBot:
         logger.info("Stopping services...")
         self.runtime.running = False
         try:
-            await self.plugin_manager.call_plugin_hook("on_shutdown")
+            await self.plugin_manager.shutdown_plugins()
             await self.plugin_manager.cleanup_plugins()
             if self.scheduler.running:
                 self.scheduler.shutdown(wait=False)

@@ -60,6 +60,8 @@ services:
       - OPENAI_MAX_TOKENS=1000                                     # 最大生成 token 数
       - OPENAI_TEMPERATURE=0.8                                     # 温度参数
       - BOT_SYSTEM_PROMPT=你是一个可爱的AI助手...                    # 系统提示词（支持文件导入："prompts/*.txt"）
+      - BOT_ADMIN_ENABLED=false                                    # 是否启用聊天管理命令
+      - BOT_ADMIN_ALLOWED_USERS=admin@example.com                  # 管理员用户 ID 或 username@host
       - BOT_AUTO_POST_ENABLED=true                                 # 是否启用自动发帖
       - BOT_AUTO_POST_INTERVAL=180                                 # 发帖间隔（分钟）
       - BOT_AUTO_POST_MAX_PER_DAY=8                                # 每日最大发帖数量（凌晨 0 点重置计数器）
@@ -98,14 +100,6 @@ volumes:
 <summary><kbd>📃 plugins/config.yaml</kbd></summary>
 
 ```yaml
-cmd:
-  enabled: false                                 # 插件开关
-  priority: 999                                  # 插件优先级（数字越大越先执行）
-  allowed_users:                                 # 允许使用命令的用户列表
-    - "admin@example.com"                        # 用户 ID 或 username@host
-    - "user1"
-    - "user2"
-
 keyact:
   enabled: false                                 # 插件开关
   priority: 990                                  # 插件优先级（数字越大越先执行）
@@ -198,6 +192,11 @@ bot:
   system_prompt: |                                  # 系统提示词（支持文件导入："prompts/*.txt"）
     你是一个可爱的AI助手，运行在Misskey平台上。
     请用简短、友好的方式发帖和回答问题。
+
+  admin:
+    enabled: false                                  # 是否启用聊天管理命令
+    allowed_users:
+      - "admin@example.com"                         # 用户 ID 或 username@host
 
   timeline:
     enabled: false                                  # 是否订阅时间线（仅用于 Radar）
@@ -292,7 +291,7 @@ systemctl start twipsybot.service
 > [!TIP]
 >
 > - 虽然自动发帖会尽量绕过 [Prompt caching](https://platform.openai.com/docs/guides/prompt-caching)，但想让内容更丰富请配置并启用 [Topics](./plugins/topics)
-> - 切换模型仅需修改 `api_key` `model` `api_base`，相同 `api_base` 的模型可通过 [Cmd](./plugins/cmd) 实时切换
+> - 切换模型仅需修改 `api_key` `model` `api_base`，相同 `api_base` 的模型可通过聊天管理命令实时切换
 > - 使用推理模型时，思维链消耗大，适当增加 `max_tokens` 可以避免 AI 回复中断
 > - 机器人使用 [Radar](./plugins/radar) + `antenna` 时间线接收帖子，非必要无需订阅其他时间线（日志噪音大）
 > - Docker 部署时，数据库、日志存放于 `twipsybot` 卷，查看可用 `docker compose logs -f twipsybot`
@@ -300,7 +299,7 @@ systemctl start twipsybot.service
 > [!NOTE]
 >
 > - 请遵守联邦规则，启用机器人账号并在实例内部测试功能，避免设置不当影响其他实例
-> - `db.clear` 会重置对用户的回复限制，手动删除数据库文件会丢失 [Cmd](./plugins/cmd) 设置的黑白名单
+> - `db.clear` 会重置对用户的回复限制，手动删除数据库文件会丢失聊天管理命令设置的黑白名单
 
 ## 生态
 
@@ -318,9 +317,10 @@ systemctl start twipsybot.service
 
 ### 插件系统
 
+[Plugin API v1 开发指南](./plugins/README.md)
+
 | 插件 | 功能描述 |
 | :---: | --- |
-| [Cmd](./plugins/cmd) | 在聊天中使用 `^` 开头的命令管理机器人 |
 | [KeyAct](./plugins/keyact) | 匹配自定义关键词触发回复，绕过 AI |
 | [Radar](./plugins/radar) | 与天线推送的帖子互动（反应、回复、转发、引用） |
 | [Topics](./plugins/topics) | 为自动发帖提供内容源（文本主题 / RSS） |

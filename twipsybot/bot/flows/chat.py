@@ -38,8 +38,24 @@ class ChatHandler:
     def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
 
+    async def _call_extensions(self, message: dict[str, Any]) -> list[dict[str, Any]]:
+        if self.bot.config.get(ConfigKeys.BOT_ADMIN_ENABLED):
+            if response := await self.bot.admin.on_message(message):
+                return [
+                    {
+                        "handled": True,
+                        "plugin_name": "Admin",
+                        "response": response,
+                    }
+                ]
+        return await self.bot.plugin_manager.call_plugin_hook("on_message", message)
+
     async def handle(self, message: dict[str, Any]) -> None:
-        if not self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT):
+        chat_enabled = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT)
+        admin_command = self.bot.config.get(
+            ConfigKeys.BOT_ADMIN_ENABLED
+        ) and extract_chat_text(message).startswith("^")
+        if not chat_enabled and not admin_command:
             return
         if not message.get("id"):
             logger.debug("Missing id; skipping")
@@ -159,9 +175,7 @@ class ChatHandler:
             handle=ctx.handle or ctx.mention_to,
             log_incoming=log_incoming,
             send_reply=send_reply,
-            plugin_call=lambda: self.bot.plugin_manager.call_plugin_hook(
-                "on_message", message
-            ),
+            plugin_call=lambda: self._call_extensions(message),
             plugin_kind="Chat",
             plugin_log_sent=log_plugin_sent,
             plugin_after_sent=plugin_after_sent,

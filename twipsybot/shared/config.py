@@ -22,6 +22,8 @@ _ENV_TO_KEY = {
     "OPENAI_MAX_TOKENS": ConfigKeys.OPENAI_MAX_TOKENS,
     "OPENAI_TEMPERATURE": ConfigKeys.OPENAI_TEMPERATURE,
     "BOT_SYSTEM_PROMPT": ConfigKeys.BOT_SYSTEM_PROMPT,
+    "BOT_ADMIN_ENABLED": ConfigKeys.BOT_ADMIN_ENABLED,
+    "BOT_ADMIN_ALLOWED_USERS": ConfigKeys.BOT_ADMIN_ALLOWED_USERS,
     "BOT_AUTO_POST_ENABLED": ConfigKeys.BOT_AUTO_POST_ENABLED,
     "BOT_AUTO_POST_INTERVAL": ConfigKeys.BOT_AUTO_POST_INTERVAL,
     "BOT_AUTO_POST_MAX_PER_DAY": ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY,
@@ -206,8 +208,15 @@ class ResponseConfig(BaseModel):
         return v
 
 
+class AdminConfig(BaseModel):
+    enabled: bool = False
+    allowed_users: list[str] | str = []
+    commands: dict[str, Any] = Field(default_factory=dict)
+
+
 class BotConfig(BaseModel):
     system_prompt: str = ""
+    admin: AdminConfig = AdminConfig()
     timeline: TimelineConfig = TimelineConfig()
     auto_post: AutoPostConfig = AutoPostConfig()
     response: ResponseConfig = ResponseConfig()

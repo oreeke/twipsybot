@@ -36,6 +36,7 @@ class ResponseLimiter:
         self._response_limits: TTLCache[str, _ResponseLimitState] = TTLCache(
             maxsize=RESPONSE_LIMIT_CACHE_MAX,
             ttl=RESPONSE_LIMIT_CACHE_TTL,
+            timer=time.monotonic,
         )
 
     @staticmethod

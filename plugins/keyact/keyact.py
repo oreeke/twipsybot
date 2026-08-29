@@ -2,8 +2,13 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from twipsybot.plugin import PluginBase, PluginHookResult
-from twipsybot.shared.utils import extract_chat_text, normalize_payload
+from twipsybot.plugin import (
+    PLUGIN_API_VERSION,
+    HandledResult,
+    MentionEvent,
+    MessageEvent,
+    PluginBase,
+)
 
 _MENTION_TOKEN_RE = re.compile(r"@[\w.@-]+\s*")
 
@@ -13,17 +18,19 @@ class _Rule:
     keywords: tuple[str, ...]
     response: str
     case_sensitive: bool
-    enabled: bool
 
 
 class KeyActPlugin(PluginBase):
+    api_version = PLUGIN_API_VERSION
     description = "KeyAct 插件：匹配自定义关键词直接回复，绕过 AI"
 
     def __init__(self, context):
         super().__init__(context)
-        self.mention_enabled = bool(self.config.get("mention_enabled", True))
-        self.chat_enabled = bool(self.config.get("chat_enabled", True))
-        self.default_case_sensitive = bool(self.config.get("case_sensitive", False))
+        self.mention_enabled = bool(self.context.config.get("mention_enabled", True))
+        self.chat_enabled = bool(self.context.config.get("chat_enabled", True))
+        self.default_case_sensitive = bool(
+            self.context.config.get("case_sensitive", False)
+        )
         self.rules: tuple[_Rule, ...] = ()
 
     async def initialize(self) -> bool:
@@ -33,10 +40,6 @@ class KeyActPlugin(PluginBase):
             f"rules={len(self.rules)}, mention={self.mention_enabled}, chat={self.chat_enabled}",
         )
         return True
-
-    def _get_text(self, data: dict[str, Any], *, kind: str) -> str:
-        data = normalize_payload(data, kind=kind)
-        return extract_chat_text(data)
 
     def _clean_text(self, text: str, *, case_sensitive: bool) -> str:
         text = _MENTION_TOKEN_RE.sub("", text).strip()
@@ -69,11 +72,10 @@ class KeyActPlugin(PluginBase):
             keywords=keywords,
             response=response,
             case_sensitive=case_sensitive,
-            enabled=True,
         )
 
     def _load_rules(self) -> tuple[_Rule, ...]:
-        raw = self.config.get("rules")
+        raw = self.context.config.get("rules")
         if not isinstance(raw, list) or not raw:
             return ()
         rules = (self._parse_rule_item(item) for item in raw if isinstance(item, dict))
@@ -86,15 +88,14 @@ class KeyActPlugin(PluginBase):
                 return True
         return False
 
-    def _handle(self, data: dict[str, Any], *, kind: str) -> PluginHookResult | None:
+    def _handle(self, text: str) -> HandledResult | None:
         if not self.rules:
             return None
-        text_raw = self._get_text(data, kind=kind)
-        if not text_raw:
+        if not text:
             return None
         for rule in self.rules:
             text_clean = self._clean_text(
-                text_raw,
+                text,
                 case_sensitive=rule.case_sensitive,
             )
             if not text_clean:
@@ -103,12 +104,12 @@ class KeyActPlugin(PluginBase):
                 return self.handled(rule.response)
         return None
 
-    async def on_mention(self, mention_data: dict[str, Any]) -> PluginHookResult | None:
+    async def on_mention(self, event: MentionEvent) -> HandledResult | None:
         if not self.mention_enabled:
             return None
-        return self._handle(mention_data, kind="mention")
+        return self._handle(event.text)
 
-    async def on_message(self, message_data: dict[str, Any]) -> PluginHookResult | None:
+    async def on_message(self, event: MessageEvent) -> HandledResult | None:
         if not self.chat_enabled:
             return None
-        return self._handle(message_data, kind="chat")
+        return self._handle(event.text)

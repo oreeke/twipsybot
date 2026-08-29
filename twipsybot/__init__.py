@@ -21,8 +21,6 @@ def _patch_broken_windows_cert_store() -> None:
 
 _patch_broken_windows_cert_store()
 
-_PLUGIN_MODULE = ".plugin"
-
 _EXPORTS: dict[str, tuple[str, str]] = {
     "MisskeyBot": (".bot.infra.core", "MisskeyBot"),
     "BotRunner": (".app.main", "BotRunner"),
@@ -36,9 +34,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ChannelType": (".clients.misskey.channels", "ChannelType"),
     "DBManager": (".db.sqlite", "DBManager"),
     "ConnectionPool": (".db.sqlite", "ConnectionPool"),
-    "PluginBase": (_PLUGIN_MODULE, "PluginBase"),
-    "PluginContext": (_PLUGIN_MODULE, "PluginContext"),
-    "PluginManager": (_PLUGIN_MODULE, "PluginManager"),
     "TCPClient": (".clients.misskey.transport", "TCPClient"),
 }
 

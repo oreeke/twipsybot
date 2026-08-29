@@ -2,18 +2,11 @@ from typing import Any
 
 from loguru import logger
 
-from twipsybot.clients.misskey.antenna import build_antenna_index
-from twipsybot.clients.misskey.channels import ChannelType
-from twipsybot.plugin import PluginBase
-from twipsybot.shared.config_keys import ConfigKeys
-from twipsybot.shared.utils import (
-    extract_user_handle,
-    extract_user_id,
-    extract_username,
-)
+from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase, TimelineNoteEvent
 
 
 class RadarPlugin(PluginBase):
+    api_version = PLUGIN_API_VERSION
     description = "雷达插件：与天线推送的帖子互动（反应、回复、转发、引用）"
 
     DEFAULT_REPLY_AI_PROMPT = (
@@ -25,30 +18,27 @@ class RadarPlugin(PluginBase):
 
     def __init__(self, context):
         super().__init__(context)
-        self.reaction = self._normalize_str(self.config.get("reaction"))
-        self.reply_enabled = self._parse_bool(self.config.get("reply"), False)
-        self.reply_text = self._normalize_str(self.config.get("reply_text"))
-        self.reply_ai = self._parse_bool(self.config.get("reply_ai"), False)
-        self.reply_ai_prompt = self._normalize_str(self.config.get("reply_ai_prompt"))
-        self.reply_local_only = self._parse_bool(
-            self.config.get("reply_local_only"), False
-        )
-        self.quote_enabled = self._parse_bool(self.config.get("quote"), False)
-        self.quote_text = self._normalize_str(self.config.get("quote_text"))
-        self.quote_ai = self._parse_bool(self.config.get("quote_ai"), False)
-        self.quote_ai_prompt = self._normalize_str(self.config.get("quote_ai_prompt"))
+        config = self.context.config
+        self.reaction = self._normalize_str(config.get("reaction"))
+        self.reply_enabled = self._parse_bool(config.get("reply"), False)
+        self.reply_text = self._normalize_str(config.get("reply_text"))
+        self.reply_ai = self._parse_bool(config.get("reply_ai"), False)
+        self.reply_ai_prompt = self._normalize_str(config.get("reply_ai_prompt"))
+        self.reply_local_only = self._parse_bool(config.get("reply_local_only"), False)
+        self.quote_enabled = self._parse_bool(config.get("quote"), False)
+        self.quote_text = self._normalize_str(config.get("quote_text"))
+        self.quote_ai = self._parse_bool(config.get("quote_ai"), False)
+        self.quote_ai_prompt = self._normalize_str(config.get("quote_ai_prompt"))
         self.quote_visibility = self._normalize_visibility(
-            self.config.get("quote_visibility")
+            config.get("quote_visibility")
         )
-        self.quote_local_only = self._parse_bool(
-            self.config.get("quote_local_only"), False
-        )
-        self.renote_enabled = self._parse_bool(self.config.get("renote"), False)
+        self.quote_local_only = self._parse_bool(config.get("quote_local_only"), False)
+        self.renote_enabled = self._parse_bool(config.get("renote"), False)
         self.renote_visibility = self._normalize_visibility(
-            self.config.get("renote_visibility")
+            config.get("renote_visibility")
         )
         self.renote_local_only = self._parse_bool(
-            self.config.get("renote_local_only"), False
+            config.get("renote_local_only"), False
         )
         self.skip_self = True
 
@@ -57,12 +47,11 @@ class RadarPlugin(PluginBase):
         return True
 
     async def _format_antenna_sources(self) -> str:
-        bot = self.bot
-        selectors = bot.connect.load_antenna_selectors()
+        selectors = self.context.bot.load_antenna_selectors()
         if not selectors:
             return "Antenna: (empty)"
         id_to_name = await self._get_antenna_name_map()
-        resolved_ids = await self._resolve_antenna_ids(bot, selectors)
+        resolved_ids = await self._resolve_antenna_ids(selectors)
         return self._format_antenna_source_display(selectors, resolved_ids, id_to_name)
 
     @staticmethod
@@ -70,13 +59,16 @@ class RadarPlugin(PluginBase):
         return list(dict.fromkeys(items))
 
     async def _get_antenna_name_map(self) -> dict[str, str]:
-        antennas = await self.misskey.list_antennas()
-        _, _, id_to_name = build_antenna_index(antennas)
-        return id_to_name
+        antennas = await self.context.misskey.list_antennas()
+        return {
+            str(item["id"]): str(item["name"])
+            for item in antennas
+            if item.get("id") and item.get("name")
+        }
 
-    async def _resolve_antenna_ids(self, bot, selectors: list[str]) -> list[str]:
+    async def _resolve_antenna_ids(self, selectors: list[str]) -> list[str]:
         try:
-            ids = await bot.connect.resolve_antenna_ids(selectors)
+            ids = await self.context.bot.resolve_antenna_ids(selectors)
         except Exception:
             return []
         ids = [v.strip() for v in ids if isinstance(v, str) and v.strip()]
@@ -132,21 +124,6 @@ class RadarPlugin(PluginBase):
             return v
         return None
 
-    @staticmethod
-    def _extract_user_variants(note: dict[str, Any]) -> set[str]:
-        user = note.get("user")
-        if not isinstance(user, dict):
-            return set()
-        username = user.get("username")
-        if not isinstance(username, str) or not username.strip():
-            return set()
-        base = username.strip()
-        variants = {base.lower()}
-        host = user.get("host")
-        if isinstance(host, str) and host.strip():
-            variants.add(f"{base}@{host.strip()}".lower())
-        return variants
-
     def _effective_text(self, note: dict[str, Any]) -> str:
         parts: list[str] = []
         for k in ("cw", "text"):
@@ -158,25 +135,28 @@ class RadarPlugin(PluginBase):
             parts.append(self._effective_text(renote))
         return "\n".join(p for p in parts if p).strip()
 
-    def _should_skip_self(self, note: dict[str, Any], variants: set[str]) -> bool:
+    def _should_skip_self(self, event: TimelineNoteEvent) -> bool:
         if not self.skip_self:
             return False
-        bot = self.bot
-        bot_id = bot.bot_user_id
-        note_user_id = extract_user_id(note)
-        if bot_id and note_user_id == bot_id:
-            return True
-        bot_name = bot.bot_username
+        bot_id = self.context.bot.user_id
+        if bot_id and event.user.id:
+            return event.user.id == bot_id
+        if event.user.host:
+            return False
+        bot_name = self.context.bot.username
         if not isinstance(bot_name, str) or not bot_name:
             return False
-        return bot_name.lower() in variants
+        return bot_name.lower() == event.user.username.lower()
 
     @staticmethod
     def _format_reply_text(template: str, note: dict[str, Any]) -> str:
         if "{username}" not in template:
             return template
-        username = extract_username(note)
-        return template.replace("{username}", username)
+        user = note.get("user")
+        username = user.get("username") if isinstance(user, dict) else None
+        return template.replace(
+            "{username}", username if isinstance(username, str) else "unknown"
+        )
 
     async def _generate_ai(
         self, note: dict[str, Any], prompt_template: str
@@ -184,38 +164,24 @@ class RadarPlugin(PluginBase):
         if not (content := self._effective_text(note)):
             return None
         prompt = prompt_template.format(content=content)
-        system_prompt = (
-            self.global_config.get(ConfigKeys.BOT_SYSTEM_PROMPT, "") or ""
-        ).strip()
-        reply = await self.openai.generate_text(
+        reply = await self.context.openai.generate_text(
             prompt,
-            system_prompt or None,
-            max_tokens=self.global_config.get(ConfigKeys.OPENAI_MAX_TOKENS),
-            temperature=self.global_config.get(ConfigKeys.OPENAI_TEMPERATURE),
+            self.context.openai.system_prompt or None,
+            max_tokens=self.context.openai.max_tokens,
+            temperature=self.context.openai.temperature,
         )
         return reply.strip() or None
 
-    async def on_timeline_note(
-        self, note_data: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        channel = note_data.get("streamingChannel")
-        if not isinstance(channel, str) or channel != ChannelType.ANTENNA.value:
+    async def on_timeline_note(self, event: TimelineNoteEvent) -> None:
+        if event.channel != "antenna" or not event.id:
             return None
-        note_id = note_data.get("id")
-        if not isinstance(note_id, str) or not note_id:
+        if self._should_skip_self(event):
             return None
-        variants = self._extract_user_variants(note_data)
-        if self._should_skip_self(note_data, variants):
-            return None
-        username = extract_user_handle(note_data) or extract_username(note_data)
         try:
-            async with self.bot.pipeline.lock_actor(
-                extract_user_id(note_data), username
-            ):
-                await self._act(note_data, note_id, channel)
+            async with self.context.bot.actor_lock(event.user.id, event.user.handle):
+                await self._act(dict(event.raw), event.id, event.channel)
         except Exception as e:
             logger.error(f"Radar interaction failed: {e!r}")
-        return None
 
     async def _maybe_react(
         self, note_data: dict[str, Any], note_id: str, channel: str
@@ -223,7 +189,7 @@ class RadarPlugin(PluginBase):
         if not self.reaction or note_data.get("myReaction"):
             return
         try:
-            await self.misskey.create_reaction(note_id, self.reaction)
+            await self.context.misskey.create_reaction(note_id, self.reaction)
             self._log_plugin_action("reacted", f"{note_id} {self.reaction} [{channel}]")
         except Exception as e:
             logger.error(f"Radar reaction failed: {e!r}")
@@ -251,7 +217,7 @@ class RadarPlugin(PluginBase):
         if not (text := await self._build_reply_text(note_data)):
             return
         try:
-            await self.misskey.create_note(
+            await self.context.misskey.create_note(
                 text=text, reply_id=note_id, local_only=self.reply_local_only
             )
             self._log_plugin_action("replied", f"{note_id} [{channel}]")
@@ -281,7 +247,7 @@ class RadarPlugin(PluginBase):
         if not (text := await self._build_quote_text(note_data)):
             return False
         try:
-            await self.misskey.create_renote(
+            await self.context.misskey.create_renote(
                 note_id,
                 visibility=self.quote_visibility,
                 text=text,
@@ -299,7 +265,7 @@ class RadarPlugin(PluginBase):
         if not self.renote_enabled:
             return
         try:
-            await self.misskey.create_renote(
+            await self.context.misskey.create_renote(
                 note_id,
                 visibility=self.renote_visibility,
                 local_only=self.renote_local_only,

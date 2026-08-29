@@ -8,6 +8,8 @@ class ConfigKeys:
     OPENAI_MAX_TOKENS = "openai.max_tokens"
     OPENAI_TEMPERATURE = "openai.temperature"
     BOT_SYSTEM_PROMPT = "bot.system_prompt"
+    BOT_ADMIN_ENABLED = "bot.admin.enabled"
+    BOT_ADMIN_ALLOWED_USERS = "bot.admin.allowed_users"
     BOT_AUTO_POST_ENABLED = "bot.auto_post.enabled"
     BOT_AUTO_POST_INTERVAL = "bot.auto_post.interval_minutes"
     BOT_AUTO_POST_MAX_PER_DAY = "bot.auto_post.max_posts_per_day"

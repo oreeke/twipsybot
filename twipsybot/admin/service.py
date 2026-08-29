@@ -1,28 +1,39 @@
 import asyncio
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
 
 from loguru import logger
 
-from twipsybot.plugin import PluginBase, PluginHookResult
-from twipsybot.shared.config_keys import ConfigKeys
-from twipsybot.shared.utils import (
+from ..shared.config_keys import ConfigKeys
+from ..shared.utils import (
     extract_first_text,
     extract_user_handle,
     extract_user_id,
     extract_username,
     normalize_tokens,
 )
-
 from .handlers import CmdHandlersMixin
 
 
-class CmdPlugin(CmdHandlersMixin, PluginBase):
-    description = "命令插件，在聊天中使用 ^ 开头的命令管理机器人"
-
-    def __init__(self, context):
-        super().__init__(context)
-        self.allowed_users = self.config.get("allowed_users", [])
+class AdminCommandService(CmdHandlersMixin):
+    def __init__(self, bot: Any, config: Mapping[str, Any]):
+        self.bot = bot
+        self.config = dict(config)
+        self.name = "Admin"
+        self.global_config = bot.config
+        self.db = bot.db
+        self.plugin_manager = bot.plugin_manager
+        self.misskey = bot.misskey
+        self.openai = bot.openai
+        self.streaming = bot.streaming
+        self.runtime = bot.runtime
+        self.allowed_users = frozenset(
+            normalize_tokens(self.config.get("allowed_users", []))
+        )
+        self._allowed_users_lower = frozenset(
+            value.lower() for value in self.allowed_users
+        )
         self.commands = self.config.get("commands", {})
         self._setup_default_commands()
         self._init_baselines()
@@ -139,7 +150,7 @@ class CmdPlugin(CmdHandlersMixin, PluginBase):
                 },
                 "cache": {"description": "内存使用情况", "aliases": []},
                 "cacheclear": {
-                    "description": "清理内存缓存 (用法: cacheclear [chat|locks|events|all])",
+                    "description": "清理内存缓存 (用法: cacheclear [chat|events|all])",
                     "aliases": [],
                 },
                 "whitelist": {
@@ -157,11 +168,8 @@ class CmdPlugin(CmdHandlersMixin, PluginBase):
                 },
             }
 
-    async def initialize(self) -> bool:
+    async def start(self) -> None:
         self._log_plugin_action("initialized", f"Command groups: {len(self.commands)}")
-        return True
-
-    async def on_startup(self) -> None:
         model = await self.db.get_plugin_data(self.name, ConfigKeys.OPENAI_MODEL)
         if model:
             self.openai.model = model
@@ -169,6 +177,13 @@ class CmdPlugin(CmdHandlersMixin, PluginBase):
             self._log_plugin_action("applied model override", model)
         await self._apply_saved_response_user_list(ConfigKeys.BOT_RESPONSE_WHITELIST)
         await self._apply_saved_response_user_list(ConfigKeys.BOT_RESPONSE_BLACKLIST)
+
+    @staticmethod
+    def handled(response: str) -> str:
+        return response
+
+    def _log_plugin_action(self, action: str, details: str = "") -> None:
+        logger.info(f"Admin {action}{': ' + details if details else ''}")
 
     def _set_global_config_value(self, path: str, value: Any) -> None:
         keys = path.split(".")
@@ -181,7 +196,7 @@ class CmdPlugin(CmdHandlersMixin, PluginBase):
 
     def _is_authorized(self, user_id: str, handle: str | None) -> bool:
         return user_id in self.allowed_users or (
-            handle is not None and handle in self.allowed_users
+            handle is not None and handle.lower() in self._allowed_users_lower
         )
 
     def _canonical_handle(self, username: str, handle: str | None) -> str | None:
@@ -233,7 +248,7 @@ class CmdPlugin(CmdHandlersMixin, PluginBase):
             logger.error(f"Error executing command {command}: {e}")
             return f"命令执行失败: {e!s}"
 
-    async def on_message(self, message_data: dict[str, Any]) -> PluginHookResult | None:
+    async def on_message(self, message_data: dict[str, Any]) -> str | None:
         text = extract_first_text(message_data, "text", "content")
         if not text.startswith("^"):
             return None

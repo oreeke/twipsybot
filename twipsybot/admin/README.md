@@ -1,4 +1,4 @@
-## 命令插件
+## 聊天管理命令
 
 ### 功能描述
 
@@ -6,7 +6,7 @@
 
 ### 使用方法
 
-复制 `config.yaml.example` 为 `config.yaml` 并修改配置<br>
+在 `config.yaml` 的 `bot.admin` 中启用并配置授权用户<br>
 在与机器人的聊天页面中使用命令：
 | 命令 | 说明 |
 | --- | --- |
@@ -34,11 +34,11 @@
 | `^antenna add <天线名\|ID>` | 添加天线订阅 |
 | `^antenna del <天线名\|ID>` | 移除天线订阅 |
 | `^antenna <天线名\|ID>` | 切换天线 |
-| `^antenna set <天线名\|ID>` | 覆盖天线订阅集合 |
+| `^antenna set <天线名\|ID>` | 覆盖订阅集合 |
 | `^antenna clear` | 清空天线订阅 |
-| `^antenna reset` | 按配置文件恢复天线订阅集合 |
+| `^antenna reset` | 按配置文件恢复订阅集合 |
 | `^cache` | 内存使用情况 |
-| `^cacheclear [chat\|locks\|events\|all]` | 清理内存缓存 |
+| `^cacheclear [chat\|events\|all]` | 清理内存缓存 |
 | `^whitelist [list\|add\|del\|set\|clear\|reset]` | 查看/修改白名单 |
 | `^blacklist [list\|add\|del\|set\|clear\|reset]` | 查看/修改黑名单 |
 | `^dbstats` | 数据库统计 |

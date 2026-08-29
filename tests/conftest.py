@@ -18,6 +18,7 @@ __all__ = (
     "FakeMisskeyServer",
     "FakeOpenAIServer",
     "MakeBot",
+    "MakePluginDir",
     "WriteConfig",
 )
 
@@ -25,7 +26,7 @@ DEFAULT_AI_REPLY = "这是 AI 生成的回复"
 
 
 class WriteConfig(Protocol):
-    def __call__(self, *, blacklist: list[str] | None = None) -> Config: ...
+    def __call__(self, **overrides: Any) -> Config: ...
 
 
 class MakeBot(Protocol):
@@ -34,31 +35,52 @@ class MakeBot(Protocol):
     ) -> MisskeyBot: ...
 
 
+class MakePluginDir(Protocol):
+    def __call__(
+        self, name: str, source: str, *, config: str = "enabled: true\n"
+    ) -> Path: ...
+
+
 class FakeMisskeyServer:
-    def __init__(self, server: TestServer, calls: dict[str, list[dict[str, Any]]]):
+    def __init__(
+        self,
+        server: TestServer,
+        calls: dict[str, list[dict[str, Any]]],
+        responses: dict[str, Any],
+    ):
         self._server = server
         self.calls = calls
+        self._responses = responses
 
     @property
     def url(self) -> str:
         return str(self._server.make_url("/")).rstrip("/")
 
+    def set_response(self, endpoint: str, response: Any) -> None:
+        self._responses[endpoint] = response
 
-def _build_misskey_app(calls: dict[str, list[dict[str, Any]]]) -> web.Application:
+
+def _build_misskey_app(
+    calls: dict[str, list[dict[str, Any]]], responses: dict[str, Any]
+) -> web.Application:
     note_ids = itertools.count(1)
-    responses: dict[str, Any] = {
-        "i": lambda payload: {"id": "bot-id", "username": "testbot"},
-        "notes/create": lambda payload: {
-            "createdNote": {
-                "id": f"note-{next(note_ids)}",
-                "visibility": payload.get("visibility", "public"),
-            }
-        },
-        "notes/show": lambda payload: {"visibility": "public"},
-        "chat/messages/create-to-user": lambda payload: {"id": "msg-1"},
-        "chat/messages/create-to-room": lambda payload: {"id": "msg-1"},
-        "antennas/list": lambda payload: [],
-    }
+    responses.update(
+        {
+            "i": lambda payload: {"id": "bot-id", "username": "testbot"},
+            "notes/create": lambda payload: {
+                "createdNote": {
+                    "id": f"note-{next(note_ids)}",
+                    "visibility": payload.get("visibility", "public"),
+                }
+            },
+            "notes/show": lambda payload: {"visibility": "public"},
+            "chat/messages/create-to-user": lambda payload: {"id": "msg-1"},
+            "chat/messages/create-to-room": lambda payload: {"id": "msg-1"},
+            "chat/messages/user-timeline": lambda payload: [],
+            "chat/messages/room-timeline": lambda payload: [],
+            "antennas/list": lambda payload: [],
+        }
+    )
 
     async def handle(request: web.Request) -> web.Response:
         endpoint = request.match_info["endpoint"]
@@ -75,10 +97,11 @@ def _build_misskey_app(calls: dict[str, list[dict[str, Any]]]) -> web.Applicatio
 @pytest_asyncio.fixture
 async def misskey_server() -> AsyncIterator[FakeMisskeyServer]:
     calls: dict[str, list[dict[str, Any]]] = {}
-    server = TestServer(_build_misskey_app(calls))
+    responses: dict[str, Any] = {}
+    server = TestServer(_build_misskey_app(calls, responses))
     await server.start_server()
     try:
-        yield FakeMisskeyServer(server, calls)
+        yield FakeMisskeyServer(server, calls, responses)
     finally:
         await server.close()
 
@@ -142,7 +165,14 @@ async def openai_server() -> AsyncIterator[FakeOpenAIServer]:
 def write_config(
     tmp_path: Path, misskey_server: FakeMisskeyServer, openai_server: FakeOpenAIServer
 ) -> WriteConfig:
-    def _write(*, blacklist: list[str] | None = None) -> Config:
+    def merge(target: dict[str, Any], updates: dict[str, Any]) -> None:
+        for key, value in updates.items():
+            if isinstance(value, dict) and isinstance(target.get(key), dict):
+                merge(target[key], value)
+            else:
+                target[key] = value
+
+    def _write(**overrides: Any) -> Config:
         data: dict[str, Any] = {
             "misskey": {
                 "instance_url": misskey_server.url,
@@ -160,8 +190,9 @@ def write_config(
             "db": {"path": str(tmp_path / "test.db")},
             "log": {"path": str(tmp_path / "test.log")},
         }
-        if blacklist:
+        if blacklist := overrides.pop("blacklist", None):
             data["bot"]["response"] = {"blacklist": blacklist}
+        merge(data, overrides)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(
             yaml.safe_dump(data, allow_unicode=True), encoding="utf-8"
@@ -174,18 +205,32 @@ def write_config(
 
 
 @pytest.fixture
-def echo_plugin_dir(tmp_path: Path) -> Path:
-    plugin_dir = tmp_path / "plugins" / "echo"
-    plugin_dir.mkdir(parents=True)
-    (plugin_dir / "config.yaml").write_text("enabled: true\n", encoding="utf-8")
-    (plugin_dir / "echo.py").write_text(
-        "from twipsybot.plugin import PluginBase\n\n\n"
+def make_plugin_dir(tmp_path: Path) -> MakePluginDir:
+    plugins_dir = tmp_path / "plugins"
+
+    def _make(name: str, source: str, *, config: str = "enabled: true\n") -> Path:
+        plugin_dir = plugins_dir / name
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+        (plugin_dir / "config.yaml").write_text(config, encoding="utf-8")
+        (plugin_dir / f"{name}.py").write_text(source, encoding="utf-8")
+        return plugins_dir
+
+    return _make
+
+
+@pytest.fixture
+def echo_plugin_dir(make_plugin_dir: MakePluginDir) -> Path:
+    return make_plugin_dir(
+        "echo",
+        "from twipsybot.plugin import PLUGIN_API_VERSION, MessageEvent, PluginBase\n\n\n"
         "class EchoPlugin(PluginBase):\n"
-        "    async def on_message(self, message_data):\n"
+        "    api_version = PLUGIN_API_VERSION\n\n"
+        "    async def on_message(self, event: MessageEvent):\n"
+        "        assert event.id == 'msg-1'\n"
+        "        assert event.text == '你好，机器人'\n"
+        "        assert event.user.username == 'bob'\n"
         "        return self.handled('echo: plugin took over')\n",
-        encoding="utf-8",
     )
-    return plugin_dir.parent
 
 
 @pytest_asyncio.fixture
@@ -201,12 +246,17 @@ async def make_bot(tmp_path: Path) -> AsyncIterator[MakeBot]:
         bot.bot_user_id = current_user.get("id")
         bot.bot_username = current_user.get("username")
         await bot.plugin_manager.load_plugins()
+        if config.get("bot.admin.enabled"):
+            await bot.admin.start()
+        await bot.plugin_manager.startup_plugins()
         created.append(bot)
         return bot
 
     yield _make
 
     for bot in created:
+        await bot.plugin_manager.shutdown_plugins()
+        await bot.plugin_manager.cleanup_plugins()
         await bot.streaming.close()
         await bot.misskey.close()
         await bot.openai.close()

@@ -12,30 +12,37 @@ import feedparser
 from bs4 import BeautifulSoup
 from loguru import logger
 
-from twipsybot.plugin import PluginBase
+from twipsybot.plugin import (
+    PLUGIN_API_VERSION,
+    AutoPostEvent,
+    AutoPostResult,
+    PluginBase,
+    PromptModificationResult,
+)
 
 
 class TopicsPlugin(PluginBase):
+    api_version = PLUGIN_API_VERSION
     description = "主题插件，为自动发帖提供内容源"
 
     def __init__(self, context):
         super().__init__(context)
-        self.source = str(self.config.get("source") or "txt").strip().lower()
-        self.txt_ai_prefix = self.config.get("txt_ai_prefix") or ""
-        self.txt_start_line = self.config.get("txt_start_line", 1)
-        self.rss_list = self.config.get("rss_list") or []
-        self.rss_ai = bool(self.config.get("rss_ai", False))
-        self.rss_post_mode = (
-            str(self.config.get("rss_post_mode") or "batch").strip().lower()
-        )
+        config = self.context.config
+        self.source = str(config.get("source") or "txt").strip().lower()
+        self.txt_ai_prefix = config.get("txt_ai_prefix") or ""
+        self.txt_start_line = config.get("txt_start_line", 1)
+        self.rss_list = config.get("rss_list") or []
+        self.rss_ai = bool(config.get("rss_ai", False))
+        self.rss_post_mode = str(config.get("rss_post_mode") or "batch").strip().lower()
         if self.rss_post_mode not in {"batch", "rotate"}:
             self.rss_post_mode = "batch"
         self.rss_ai_prefix = (
-            self.config.get("rss_ai_prefix")
+            config.get("rss_ai_prefix")
             or "发表一段感想和相关知识（不超过150字），"
             "不加链接，不加引号：\n\n{summary}\n\n{title}\n{link}"
         )
         self.topics = []
+        self._pending_rss: dict[str, list[tuple[str, int | None]]] = {}
 
     async def initialize(self) -> bool:
         try:
@@ -59,21 +66,21 @@ class TopicsPlugin(PluginBase):
             logger.error(f"Topics plugin initialization failed: {e}")
             return False
 
-    async def on_auto_post(self) -> dict[str, Any] | None:
+    async def on_auto_post(
+        self, event: AutoPostEvent
+    ) -> AutoPostResult | PromptModificationResult | None:
         try:
             if self.source == "rss":
                 if contents := await self._get_next_rss_posts():
                     self._log_plugin_action("direct post", f"count={len(contents)}")
-                    return {"contents": contents, "plugin_name": self.name}
+                    return {"contents": contents}
                 return None
             topic = await self._get_next_topic()
             if self._is_pure_url(topic):
                 self._log_plugin_action("direct post", topic)
-                return {"content": topic, "plugin_name": self.name}
+                return {"contents": [topic]}
             return {
-                "modify_prompt": True,
-                "plugin_prompt": self.txt_ai_prefix.format(topic=topic),
-                "plugin_name": self.name,
+                "prompt": self.txt_ai_prefix.format(topic=topic),
             }
         except asyncio.CancelledError:
             raise
@@ -93,14 +100,12 @@ class TopicsPlugin(PluginBase):
 
     async def _initialize_plugin_data(self) -> None:
         try:
-            last_used_line = await self.db.get_plugin_data("Topics", "last_used_line")
+            last_used_line = await self.context.storage.get("last_used_line")
             if last_used_line is None:
                 initial_index = max(0, self.txt_start_line - 1)
                 if self.topics:
                     initial_index %= len(self.topics)
-                await self.db.set_plugin_data(
-                    "Topics", "last_used_line", str(initial_index)
-                )
+                await self.context.storage.set("last_used_line", str(initial_index))
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -109,12 +114,12 @@ class TopicsPlugin(PluginBase):
 
     async def _initialize_rss_data(self) -> None:
         try:
-            recent = await self.db.get_plugin_data("Topics", "rss_recent_keys")
+            recent = await self.context.storage.get("rss_recent_keys")
             if recent is None:
-                await self.db.set_plugin_data("Topics", "rss_recent_keys", "[]")
-            last_feed_idx = await self.db.get_plugin_data("Topics", "rss_last_feed_idx")
+                await self.context.storage.set("rss_recent_keys", "[]")
+            last_feed_idx = await self.context.storage.get("rss_last_feed_idx")
             if last_feed_idx is None:
-                await self.db.set_plugin_data("Topics", "rss_last_feed_idx", "0")
+                await self.context.storage.set("rss_last_feed_idx", "0")
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -148,6 +153,7 @@ class TopicsPlugin(PluginBase):
             self._use_default_topics()
 
     async def _get_next_rss_posts(self) -> list[str]:
+        self._pending_rss.clear()
         urls = self._get_rss_urls()
         if not urls:
             logger.warning("RSS source enabled but rss_list is empty")
@@ -163,10 +169,9 @@ class TopicsPlugin(PluginBase):
         if not selected:
             return []
 
-        contents, updated_recent = await self._render_selected_rss_entries(
-            selected, recent_keys
-        )
-        await self._set_recent_rss_keys(updated_recent)
+        contents = await self._render_selected_rss_entries(selected)
+        for content, entry in zip(contents, selected, strict=True):
+            self._pending_rss.setdefault(content, []).append((entry["key"], None))
         return contents
 
     async def _get_next_rss_posts_rotate(self, urls: list[str]) -> list[str]:
@@ -195,11 +200,11 @@ class TopicsPlugin(PluginBase):
                 if not best:
                     continue
 
-                contents, updated_recent = await self._render_selected_rss_entries(
-                    [best], recent_keys
-                )
-                await self._set_recent_rss_keys(updated_recent)
-                await self._set_last_rss_feed_idx((feed_idx + 1) % len(urls))
+                contents = await self._render_selected_rss_entries([best])
+                if contents:
+                    self._pending_rss.setdefault(contents[0], []).append(
+                        (best["key"], (feed_idx + 1) % len(urls))
+                    )
                 return contents
 
         await self._set_last_rss_feed_idx((start_idx + 1) % len(urls))
@@ -257,18 +262,30 @@ class TopicsPlugin(PluginBase):
         return max(entries, key=lambda c: (c["ts"], -c["entry_idx"]))
 
     async def _render_selected_rss_entries(
-        self, selected: list[dict[str, Any]], recent_keys: list[str]
-    ) -> tuple[list[str], list[str]]:
+        self, selected: list[dict[str, Any]]
+    ) -> list[str]:
         contents: list[str] = []
-        updated_recent = recent_keys
         for entry in selected:
             primary = await self._render_rss_primary_text(entry)
             link = entry["link"]
             contents.append(f"📡 {primary}\n\n📎 {link}")
-            updated_recent = self._append_recent_key(
-                updated_recent, entry["key"], limit=200
-            )
-        return contents, updated_recent
+        return contents
+
+    async def _on_auto_post_published(self, content: str) -> None:
+        pending = self._pending_rss.get(content)
+        if not pending:
+            return
+        key, next_feed_idx = pending.pop(0)
+        if not pending:
+            self._pending_rss.pop(content, None)
+        recent_keys = await self._get_recent_rss_keys()
+        updated = self._append_recent_key(recent_keys, key, limit=200)
+        if not await self._set_recent_rss_keys(updated):
+            raise RuntimeError("failed to persist published RSS entry")
+        if next_feed_idx is not None and not await self._set_last_rss_feed_idx(
+            next_feed_idx
+        ):
+            raise RuntimeError("failed to persist RSS feed position")
 
     async def _render_rss_primary_text(self, entry: dict[str, Any]) -> str:
         title = entry["title"]
@@ -365,14 +382,6 @@ class TopicsPlugin(PluginBase):
     async def _rewrite_rss_title_with_ai(
         self, title: str, link: str, *, summary: str
     ) -> str:
-        openai = getattr(getattr(self, "bot", None), "openai", None) or getattr(
-            self, "openai", None
-        )
-        if not openai:
-            return title
-        system_prompt = getattr(getattr(self, "bot", None), "system_prompt", None)
-        ai_config = dict(getattr(getattr(self, "bot", None), "ai_config", {}) or {})
-
         try:
             prompt = str(self.rss_ai_prefix).format(
                 title=title, link=link, summary=summary
@@ -381,7 +390,12 @@ class TopicsPlugin(PluginBase):
             logger.warning(f"Invalid rss_ai_prefix format: {e}")
             return title
         try:
-            text = await openai.generate_text(prompt, system_prompt, **ai_config)
+            text = await self.context.openai.generate_text(
+                prompt,
+                self.context.openai.system_prompt or None,
+                max_tokens=self.context.openai.max_tokens,
+                temperature=self.context.openai.temperature,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -392,7 +406,7 @@ class TopicsPlugin(PluginBase):
 
     async def _get_recent_rss_keys(self) -> list[str]:
         try:
-            raw = await self.db.get_plugin_data("Topics", "rss_recent_keys")
+            raw = await self.context.storage.get("rss_recent_keys")
             if not raw:
                 return []
             obj = json.loads(raw)
@@ -405,17 +419,19 @@ class TopicsPlugin(PluginBase):
             logger.warning(f"Failed to load rss_recent_keys: {e}")
             return []
 
-    async def _set_recent_rss_keys(self, keys: list[str]) -> None:
+    async def _set_recent_rss_keys(self, keys: list[str]) -> bool:
         try:
-            await self.db.set_plugin_data("Topics", "rss_recent_keys", json.dumps(keys))
+            await self.context.storage.set("rss_recent_keys", json.dumps(keys))
+            return True
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.warning(f"Failed to save rss_recent_keys: {e}")
+            return False
 
     async def _get_last_rss_feed_idx(self) -> int:
         try:
-            raw = await self.db.get_plugin_data("Topics", "rss_last_feed_idx")
+            raw = await self.context.storage.get("rss_last_feed_idx")
             return max(0, int(raw)) if raw else 0
         except asyncio.CancelledError:
             raise
@@ -423,15 +439,15 @@ class TopicsPlugin(PluginBase):
             logger.warning(f"Failed to load rss_last_feed_idx: {e}")
             return 0
 
-    async def _set_last_rss_feed_idx(self, idx: int) -> None:
+    async def _set_last_rss_feed_idx(self, idx: int) -> bool:
         try:
-            await self.db.set_plugin_data(
-                "Topics", "rss_last_feed_idx", str(max(0, idx))
-            )
+            await self.context.storage.set("rss_last_feed_idx", str(max(0, idx)))
+            return True
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.warning(f"Failed to save rss_last_feed_idx: {e}")
+            return False
 
     @staticmethod
     def _append_recent_key(keys: list[str], key: str, *, limit: int) -> list[str]:
@@ -461,7 +477,7 @@ class TopicsPlugin(PluginBase):
 
     async def _get_last_used_line(self) -> int:
         try:
-            result = await self.db.get_plugin_data("Topics", "last_used_line")
+            result = await self.context.storage.get("last_used_line")
             return max(0, int(result)) if result else 0
         except asyncio.CancelledError:
             raise
@@ -471,7 +487,7 @@ class TopicsPlugin(PluginBase):
 
     async def _update_last_used_line(self, line_number: int) -> None:
         try:
-            await self.db.set_plugin_data("Topics", "last_used_line", str(line_number))
+            await self.context.storage.set("last_used_line", str(line_number))
         except asyncio.CancelledError:
             raise
         except Exception as e:

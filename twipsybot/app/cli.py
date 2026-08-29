@@ -1,4 +1,5 @@
 import atexit
+import json
 import os
 import subprocess
 import sys
@@ -34,17 +35,54 @@ def _write_stop_file(stop_file: Path) -> None:
         return
 
 
-def _read_pid(pid_file: Path) -> int | None:
+def _read_pid_record(pid_file: Path) -> tuple[int, float | None] | None:
     try:
         raw = pid_file.read_text(encoding="utf-8").strip()
-    except OSError:
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
         return None
-    if not raw:
+    if isinstance(data, int) and not isinstance(data, bool):
+        return data, None
+    if not isinstance(data, dict):
         return None
+    pid = data.get("pid")
+    create_time = data.get("create_time")
+    if (
+        not isinstance(pid, int)
+        or isinstance(create_time, bool)
+        or not isinstance(create_time, (int, float))
+    ):
+        return None
+    return pid, float(create_time)
+
+
+def _read_pid(pid_file: Path) -> int | None:
+    record = _read_pid_record(pid_file)
+    return record[0] if record else None
+
+
+def _write_pid_file(pid_file: Path, proc: psutil.Process) -> None:
+    pid_file.write_text(
+        json.dumps({"pid": proc.pid, "create_time": proc.create_time()}),
+        encoding="utf-8",
+    )
+
+
+def _get_bot_process(pid_file: Path) -> psutil.Process | None:
+    record = _read_pid_record(pid_file)
+    if record is None:
+        return None
+    pid, expected_create_time = record
     try:
-        return int(raw)
-    except ValueError:
+        proc = psutil.Process(pid)
+        if (
+            expected_create_time is not None
+            and proc.create_time() != expected_create_time
+        ) or not proc.is_running():
+            return None
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
         return None
+    return proc
 
 
 def _remove_pid_file(pid_file: Path, *, expected_pid: int | None = None) -> None:
@@ -85,7 +123,7 @@ def _spawn_detached(argv: list[str], *, env: dict[str, str]) -> subprocess.Popen
 
 def _run_up_foreground(pid_file: Path) -> int:
     pid = os.getpid()
-    pid_file.write_text(str(pid), encoding="utf-8")
+    _write_pid_file(pid_file, psutil.Process(pid))
     atexit.register(_remove_pid_file, pid_file, expected_pid=pid)
     try:
         return app_main.main()
@@ -115,8 +153,8 @@ def _run_up_daemon(pid_file: Path) -> int:
                 file=sys.stderr,
             )
             return 1
-        pid = _read_pid(pid_file)
-        if pid is not None and pid == proc.pid and psutil.pid_exists(pid):
+        running = _get_bot_process(pid_file)
+        if running is not None and running.pid == proc.pid:
             return 0
         time.sleep(0.05)
     print("failed to start twipsybot", file=sys.stderr)
@@ -129,9 +167,9 @@ def _cmd_up() -> int:
     _remove_stop_file(_stop_file_path())
     _remove_stop_file(_fatal_file_path())
     if pid_file.exists():
-        pid = _read_pid(pid_file)
-        if pid and pid != os.getpid() and psutil.pid_exists(pid):
-            print(f"twipsybot is already running (pid={pid})", file=sys.stderr)
+        proc = _get_bot_process(pid_file)
+        if proc is not None and proc.pid != os.getpid():
+            print(f"twipsybot is already running (pid={proc.pid})", file=sys.stderr)
             return 2
         _remove_pid_file(pid_file)
 
@@ -157,16 +195,9 @@ def _cmd_up() -> int:
     return _run_up_foreground(pid_file)
 
 
-def _stop_process(pid_file: Path, pid: int) -> None:
+def _stop_process(pid_file: Path, proc: psutil.Process) -> None:
     stop_file = _stop_file_path()
     _write_stop_file(stop_file)
-    try:
-        proc = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        _remove_stop_file(stop_file)
-        _remove_pid_file(pid_file)
-        return
-
     try:
         proc.wait(timeout=5)
         _remove_stop_file(stop_file)
@@ -194,14 +225,15 @@ def _cmd_down() -> int:
         print("twipsybot is not running", file=sys.stderr)
         return 2
 
-    pid = _read_pid(pid_file)
-    if not pid or not psutil.pid_exists(pid):
+    proc = _get_bot_process(pid_file)
+    if proc is None:
         _remove_pid_file(pid_file)
         print("twipsybot is not running", file=sys.stderr)
         return 2
 
+    pid = proc.pid
     try:
-        _stop_process(pid_file, pid)
+        _stop_process(pid_file, proc)
         print(f"twipsybot stopped (pid={pid})", file=sys.stdout)
         return 0
     except psutil.NoSuchProcess:
@@ -217,11 +249,12 @@ def _cmd_restart() -> int:
     pid_file = _pid_file_path()
     print("twipsybot restarting...", file=sys.stdout)
     if pid_file.exists():
-        pid = _read_pid(pid_file)
-        if pid and psutil.pid_exists(pid):
+        proc = _get_bot_process(pid_file)
+        if proc is not None:
+            pid = proc.pid
             print(f"stopping twipsybot (pid={pid})...", file=sys.stdout)
             try:
-                _stop_process(pid_file, pid)
+                _stop_process(pid_file, proc)
             except psutil.NoSuchProcess:
                 pass
             except Exception as e:
@@ -239,19 +272,13 @@ def _cmd_status() -> int:
         print("stopped", file=sys.stdout)
         return 2
 
-    pid = _read_pid(pid_file)
-    if not pid or not psutil.pid_exists(pid):
+    proc = _get_bot_process(pid_file)
+    if proc is None:
         _remove_pid_file(pid_file)
         print("stopped", file=sys.stdout)
         return 2
 
-    try:
-        proc = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        _remove_pid_file(pid_file)
-        print("stopped", file=sys.stdout)
-        return 2
-
+    pid = proc.pid
     is_tty = sys.stdout.isatty()
     try:
         while True:

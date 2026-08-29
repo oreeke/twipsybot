@@ -1,23 +1,27 @@
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
-from cachetools import TTLCache
 from loguru import logger
 
-from ...shared.constants import USER_LOCK_CACHE_MAX, USER_LOCK_TTL
 from .limits import ResponseLimiter
 
 __all__ = ("ResponsePipeline",)
 
 
+@dataclass(slots=True)
+class _ActorLock:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
+
+
 class ResponsePipeline:
     def __init__(self, *, limits: ResponseLimiter):
         self._limits = limits
-        self._user_locks: TTLCache[str, asyncio.Lock] = TTLCache(
-            maxsize=USER_LOCK_CACHE_MAX, ttl=USER_LOCK_TTL
-        )
+        self._actor_locks: dict[str, _ActorLock] = {}
 
     @staticmethod
     def _actor_key(user_id: str | None, username: str | None) -> str | None:
@@ -27,18 +31,24 @@ class ResponsePipeline:
             return f"name:{username}"
         return None
 
-    def _get_actor_lock(
+    @asynccontextmanager
+    async def lock_actor(
         self, user_id: str | None, username: str | None
-    ) -> asyncio.Lock:
+    ) -> AsyncIterator[None]:
         key = self._actor_key(user_id, username)
         if not key:
-            return asyncio.Lock()
-        if key not in self._user_locks:
-            self._user_locks[key] = asyncio.Lock()
-        return self._user_locks[key]
-
-    def lock_actor(self, user_id: str | None, username: str | None):
-        return self._get_actor_lock(user_id, username)
+            async with asyncio.Lock():
+                yield
+            return
+        entry = self._actor_locks.setdefault(key, _ActorLock())
+        entry.users += 1
+        try:
+            async with entry.lock:
+                yield
+        finally:
+            entry.users -= 1
+            if entry.users == 0 and self._actor_locks.get(key) is entry:
+                self._actor_locks.pop(key)
 
     async def apply_handled_plugin_result(
         self,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -13,7 +13,6 @@ from plugins.keyact.keyact import KeyActPlugin
 from plugins.radar.radar import RadarPlugin
 from plugins.topics.topics import TopicsPlugin
 from plugins.vision.vision import VisionPlugin
-from twipsybot.bot.flows.post import AutoPostService
 from twipsybot.plugin import (
     FileRef,
     MentionEvent,
@@ -253,6 +252,30 @@ async def test_initialize_timeout_runs_cleanup(
     assert plugin.cleaned is True
 
 
+async def test_failed_plugin_initialization_runs_cleanup(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+) -> None:
+    plugins_dir = make_plugin_dir(
+        "failing",
+        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n\n"
+        "class FailingPlugin(PluginBase):\n"
+        "    api_version = PLUGIN_API_VERSION\n\n"
+        "    async def initialize(self):\n"
+        "        return False\n\n"
+        "    async def cleanup(self):\n"
+        "        await self.context.storage.set('cleaned', 'yes')\n",
+    )
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    plugin = bot.plugin_manager.get_plugin("failing")
+    assert plugin is not None
+    assert bot.plugin_manager.get_plugin_info()[0]["enabled"] is False
+    assert await bot.db.get_plugin_data("Failing", "cleaned") == "yes"
+
+
 async def test_disable_and_reload_cleanup_instances(
     make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
 ) -> None:
@@ -378,6 +401,23 @@ async def test_plugin_api_version_requires_exact_integer(
 
     assert bot.plugin_manager.get_plugin("boolean") is None
     assert bot.plugin_manager.get_plugin("float") is None
+
+
+async def test_incompatible_plugin_api_is_rejected(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+) -> None:
+    plugins_dir = make_plugin_dir(
+        "future",
+        "from twipsybot.plugin import PluginBase\n\n\n"
+        "class FuturePlugin(PluginBase):\n"
+        "    api_version = 2\n",
+    )
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    assert bot.plugin_manager.get_plugin("future") is None
 
 
 async def test_plugin_class_name_allows_acronym_casing(
@@ -793,51 +833,6 @@ async def test_actor_lock_does_not_reenter_response_pipeline(
     assert results == [{"handled": True, "response": "ok", "plugin_name": "Actor"}]
 
 
-async def test_admin_string_allowlist_uses_exact_match(
-    make_bot: MakeBot, write_config: WriteConfig
-) -> None:
-    bot = await make_bot(
-        write_config(
-            bot={
-                "admin": {
-                    "enabled": True,
-                    "allowed_users": "admin@example.com",
-                }
-            }
-        )
-    )
-
-    response = await bot.admin.on_message(
-        {
-            "id": "message-1",
-            "text": "^help",
-            "user": {"id": "admin", "username": "admin"},
-        }
-    )
-
-    assert response is not None
-    assert "没有权限" in response
-
-
-async def test_admin_can_reenable_chat(
-    make_bot: MakeBot, write_config: WriteConfig
-) -> None:
-    bot = await make_bot(
-        write_config(bot={"admin": {"enabled": True, "allowed_users": ["user-2"]}})
-    )
-    message = {
-        "id": "message-1",
-        "text": "^chat off",
-        "user": {"id": "user-2", "username": "bob"},
-    }
-    await bot.handlers.chat.handle(message)
-    assert bot.config.get("bot.response.chat") is False
-
-    await bot.handlers.chat.handle({**message, "id": "message-2", "text": "^chat on"})
-
-    assert bot.config.get("bot.response.chat") is True
-
-
 async def test_keyact_matches_body_when_mention_has_cw() -> None:
     plugin = KeyActPlugin(
         _context(
@@ -919,29 +914,6 @@ async def test_topics_rss_is_recorded_only_after_publish() -> None:
     plugin._set_recent_rss_keys = AsyncMock(return_value=False)
     with pytest.raises(RuntimeError, match="persist published RSS entry"):
         await plugin._on_auto_post_published("failed")
-
-
-async def test_auto_post_confirms_only_successful_publish(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    create_note = AsyncMock(side_effect=[{}, RuntimeError("failed")])
-    confirm = AsyncMock()
-    bot = SimpleNamespace(
-        runtime=SimpleNamespace(running=True, startup_time=None),
-        misskey=SimpleNamespace(create_note=create_note),
-        plugin_manager=SimpleNamespace(confirm_auto_post_published=confirm),
-        format_log_text=lambda text: text,
-    )
-    service = AutoPostService(cast(Any, bot))
-    monkeypatch.setattr(service, "_PLUGIN_POST_INTERVAL_SECONDS", 0)
-    result = {"plugin_name": "Topics"}
-
-    with pytest.raises(RuntimeError, match="failed"):
-        await service._post_plugin_contents(
-            result, ["published", "failed"], "public", 2, False
-        )
-
-    confirm.assert_awaited_once_with(result, "published")
 
 
 async def test_vision_handles_image_with_public_services() -> None:

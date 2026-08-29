@@ -224,6 +224,16 @@ class MisskeyBot:
     async def _setup_streaming(self) -> None:
         await self.connect.setup_streaming()
 
+    @staticmethod
+    async def _run_stop_steps(steps: tuple[tuple[str, Any], ...]) -> None:
+        for action, operation in steps:
+            try:
+                await operation()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.exception(f"Error {action}: {e}")
+
     async def stop(self) -> None:
         if not self.runtime.running:
             logger.warning("Bot is already stopped")
@@ -231,19 +241,26 @@ class MisskeyBot:
         logger.info("Stopping services...")
         self.runtime.running = False
         try:
-            await self.plugin_manager.shutdown_plugins()
-            await self.plugin_manager.cleanup_plugins()
-            if self.scheduler.running:
-                self.scheduler.shutdown(wait=False)
-            await self.runtime.cleanup_tasks()
-            await self.streaming.close()
-            await self.misskey.close()
-            await self.openai.close()
-            await self.db.close()
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.exception(f"Error stopping bot: {e}")
+            await self._run_stop_steps(
+                (
+                    ("shutting down plugins", self.plugin_manager.shutdown_plugins),
+                    ("cleaning up plugins", self.plugin_manager.cleanup_plugins),
+                )
+            )
+            try:
+                if self.scheduler.running:
+                    self.scheduler.shutdown(wait=False)
+            except Exception as e:
+                logger.exception(f"Error stopping scheduler: {e}")
+            await self._run_stop_steps(
+                (
+                    ("cleaning up tasks", self.runtime.cleanup_tasks),
+                    ("closing streaming client", self.streaming.close),
+                    ("closing Misskey client", self.misskey.close),
+                    ("closing OpenAI client", self.openai.close),
+                    ("closing database", self.db.close),
+                )
+            )
         finally:
             logger.info("Services stopped")
 

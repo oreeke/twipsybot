@@ -4,29 +4,18 @@ from typing import Any
 import openai
 from loguru import logger
 from openai import (
-    APIConnectionError as OpenAIConnectionError,
-)
-from openai import (
-    APIError as OpenAIError,
-)
-from openai import (
     APIStatusError,
-    APITimeoutError,
     BadRequestError,
-    RateLimitError,
-    Timeout,
 )
 from openai import (
     AuthenticationError as OpenAIAuthenticationError,
 )
 
 from ...shared.constants import (
-    API_MAX_RETRIES,
     API_TIMEOUT,
     OPENAI_MAX_CONCURRENCY,
 )
 from ...shared.exceptions import APIConnectionError, AuthenticationError
-from ...shared.utils import retry_async
 from .extract import (
     build_structured_formats,
     extract_responses_text,
@@ -70,7 +59,10 @@ class OpenAIAPI:
         self._semaphore = asyncio.Semaphore(OPENAI_MAX_CONCURRENCY)
         try:
             self.client = openai.AsyncOpenAI(
-                api_key=self.api_key, base_url=self.api_base, timeout=API_TIMEOUT
+                api_key=self.api_key,
+                base_url=self.api_base,
+                timeout=API_TIMEOUT,
+                max_retries=2,
             )
             self._initialized = False
         except Exception as e:
@@ -82,17 +74,6 @@ class OpenAIAPI:
             logger.info(f"OpenAI API client initialized: {self.api_base}")
             self._initialized = True
 
-    @retry_async(
-        max_retries=API_MAX_RETRIES,
-        retryable_exceptions=(
-            RateLimitError,
-            APITimeoutError,
-            Timeout,
-            OpenAIError,
-            OpenAIConnectionError,
-            OSError,
-        ),
-    )
     async def _call_api_common(
         self,
         messages: list[dict[str, Any]],
@@ -183,17 +164,6 @@ class OpenAIAPI:
             )
         )
 
-    @retry_async(
-        max_retries=API_MAX_RETRIES,
-        retryable_exceptions=(
-            RateLimitError,
-            APITimeoutError,
-            Timeout,
-            OpenAIError,
-            OpenAIConnectionError,
-            OSError,
-        ),
-    )
     async def _call_api(
         self,
         messages: list[dict[str, Any]],
@@ -239,17 +209,6 @@ class OpenAIAPI:
             logger.error(f"Invalid API response format: {e}")
             raise ValueError(self._safe_error_message(e)) from e
 
-    @retry_async(
-        max_retries=API_MAX_RETRIES,
-        retryable_exceptions=(
-            RateLimitError,
-            APITimeoutError,
-            Timeout,
-            OpenAIError,
-            OpenAIConnectionError,
-            OSError,
-        ),
-    )
     async def _call_api_structured(
         self,
         messages: list[dict[str, Any]],

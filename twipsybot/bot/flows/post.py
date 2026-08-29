@@ -119,7 +119,7 @@ class AutoPostService:
         for result in plugin_results:
             if result and "prompt" in result:
                 plugin_prompt = result["prompt"]
-                if result.get("timestamp"):
+                if result.get("timestamp") is not None:
                     timestamp_override = result.get("timestamp")
                 logger.info(
                     f"Plugin {result.get('plugin_name')} requested prompt modification: {plugin_prompt}"
@@ -149,7 +149,11 @@ class AutoPostService:
     ) -> str:
         if not prompt:
             raise ValueError("Missing prompt")
-        timestamp_min = timestamp_override or int(datetime.now(UTC).timestamp() // 60)
+        timestamp_min = (
+            timestamp_override
+            if timestamp_override is not None
+            else int(datetime.now(UTC).timestamp() // 60)
+        )
         full_prompt = f"[{timestamp_min}] {plugin_prompt}{prompt}"
         return await self.bot.openai.generate_text(
             full_prompt, system_prompt, **self.bot.ai_config

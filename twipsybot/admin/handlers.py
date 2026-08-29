@@ -37,6 +37,7 @@ class CmdHandlersMixin:
     commands: dict[str, Any]
     allowed_users: frozenset[str]
     _baseline_antenna_selectors: list[str]
+    _default_model: str
 
     def _set_global_config_value(self, path: str, value: Any) -> None:
         raise NotImplementedError
@@ -247,8 +248,7 @@ class CmdHandlersMixin:
             )
         if arg.lower() in {"reset", "default"}:
             await self.db.delete_plugin_data(self.name, ConfigKeys.OPENAI_MODEL)
-            self.global_config.load()
-            model = self.global_config.get(ConfigKeys.OPENAI_MODEL)
+            model = self._default_model
             self.openai.model = model
             self._set_global_config_value(ConfigKeys.OPENAI_MODEL, model)
             return f"已恢复默认模型: {model}"

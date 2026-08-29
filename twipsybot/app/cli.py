@@ -41,8 +41,6 @@ def _read_pid_record(pid_file: Path) -> tuple[int, float | None] | None:
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError):
         return None
-    if isinstance(data, int) and not isinstance(data, bool):
-        return data, None
     if not isinstance(data, dict):
         return None
     pid = data.get("pid")

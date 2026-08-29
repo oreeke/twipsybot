@@ -13,6 +13,7 @@ from ...shared.constants import (
     STREAM_DEDUP_CACHE_TTL,
     STREAM_QUEUE_MAX,
     STREAM_QUEUE_PUT_TIMEOUT,
+    STREAM_SEND_BUFFER_MAX,
     STREAM_WORKERS,
 )
 from ...shared.exceptions import WebSocketConnectionError
@@ -57,7 +58,7 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         self._chat_user_channel_ids: dict[str, str] = {}
         self._chat_channel_other_ids: dict[str, str] = {}
         self._chat_user_cache: dict[str, dict[str, Any]] = {}
-        self._send_buffer: deque[dict[str, Any]] = deque()
+        self._send_buffer: deque[dict[str, Any]] = deque(maxlen=STREAM_SEND_BUFFER_MAX)
         self._ws_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
         self._lifecycle_lock = asyncio.Lock()

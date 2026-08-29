@@ -26,6 +26,7 @@ class AdminCommandService(CmdHandlersMixin):
         self.plugin_manager = bot.plugin_manager
         self.misskey = bot.misskey
         self.openai = bot.openai
+        self._default_model = self.openai.model
         self.streaming = bot.streaming
         self.runtime = bot.runtime
         self.allowed_users = frozenset(

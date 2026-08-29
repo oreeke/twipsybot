@@ -6,7 +6,6 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 import aiohttp
 from loguru import logger
 
-from ...shared.constants import STREAM_SEND_BUFFER_MAX
 from ...shared.exceptions import WebSocketConnectionError, WebSocketReconnectError
 from ...shared.utils import redact_misskey_access_token
 
@@ -19,8 +18,6 @@ class _StreamingSocketMixin:
         return self.ws_connection is not None and not self.ws_connection.closed
 
     def _buffer_outgoing(self, message: dict[str, Any]) -> None:
-        if len(self._send_buffer) >= STREAM_SEND_BUFFER_MAX:
-            self._send_buffer.popleft()
         self._send_buffer.append(message)
 
     async def _send_or_buffer(self, message: dict[str, Any]) -> None:
@@ -106,10 +103,10 @@ class _StreamingSocketMixin:
                 self.ws_connection = ws
             logger.debug(f"WebSocket connected: {safe_url}")
         except WebSocketConnectionError:
-            await self._cleanup_failed_connection()
+            await self._close_websocket()
             raise
         except (aiohttp.ClientError, OSError) as e:
-            await self._cleanup_failed_connection()
+            await self._close_websocket()
             error_msg = redact_misskey_access_token(str(e))
             logger.error(f"WebSocket connection failed: {error_msg}")
             raise WebSocketConnectionError() from e
@@ -149,9 +146,3 @@ class _StreamingSocketMixin:
                 except Exception:
                     pass
             self.ws_connection = None
-
-    async def _cleanup_failed_connection(self) -> None:
-        try:
-            await self._close_websocket()
-        except Exception as e:
-            logger.error(f"Error cleaning up failed connection: {e}")

@@ -12,6 +12,7 @@ from ..shared.config_keys import ConfigKeys
 __all__ = ("ConnectionPool", "DBManager")
 
 Row = Sequence[Any]
+_POOL_CLOSED_ERROR = "connection pool is closed"
 
 
 class ConnectionPool:
@@ -20,43 +21,75 @@ class ConnectionPool:
         self.max_connections = max_connections
         self._pool = asyncio.Queue(maxsize=max_connections)
         self._created_connections = 0
-        self._lock = asyncio.Lock()
+        self._condition = asyncio.Condition()
+        self._closed = False
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
 
     async def get_connection(self) -> aiosqlite.Connection:
-        try:
-            return self._pool.get_nowait()
-        except asyncio.QueueEmpty:
-            async with self._lock:
+        async with self._condition:
+            while True:
+                if self._closed:
+                    raise RuntimeError(_POOL_CLOSED_ERROR)
+                try:
+                    return self._pool.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
                 if self._created_connections < self.max_connections:
-                    conn = await aiosqlite.connect(
-                        self.db_path, timeout=30.0, isolation_level=None
-                    )
-                    await conn.execute("PRAGMA journal_mode=WAL")
-                    await conn.execute("PRAGMA synchronous=NORMAL")
-                    await conn.execute("PRAGMA cache_size=10000")
-                    await conn.execute("PRAGMA busy_timeout=30000")
                     self._created_connections += 1
-                    return conn
-            return await self._pool.get()
+                    break
+                await self._condition.wait()
+        conn = None
+        try:
+            conn = await aiosqlite.connect(
+                self.db_path, timeout=30.0, isolation_level=None
+            )
+            await conn.execute("PRAGMA journal_mode=WAL")
+            await conn.execute("PRAGMA synchronous=NORMAL")
+            await conn.execute("PRAGMA cache_size=10000")
+            await conn.execute("PRAGMA busy_timeout=30000")
+            async with self._condition:
+                if self._closed:
+                    raise RuntimeError(_POOL_CLOSED_ERROR)
+                return conn
+        except BaseException:
+            if conn is not None:
+                await asyncio.shield(conn.close())
+            async with self._condition:
+                self._created_connections -= 1
+                self._condition.notify()
+            raise
 
     async def return_connection(self, conn: aiosqlite.Connection) -> None:
-        try:
-            self._pool.put_nowait(conn)
-        except asyncio.QueueFull:
-            await conn.close()
-            async with self._lock:
+        async with self._condition:
+            if self._closed:
                 self._created_connections -= 1
+            else:
+                try:
+                    self._pool.put_nowait(conn)
+                    self._condition.notify()
+                    return
+                except asyncio.QueueFull:
+                    self._created_connections -= 1
+        await conn.close()
 
     async def close_all(self) -> None:
-        connections = []
-        while not self._pool.empty():
-            try:
-                connections.append(self._pool.get_nowait())
-            except asyncio.QueueEmpty:
-                break
+        async with self._condition:
+            if self._closed:
+                return
+            self._closed = True
+            connections = []
+            while not self._pool.empty():
+                try:
+                    connections.append(self._pool.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+            self._created_connections -= len(connections)
+            self._condition.notify_all()
         for conn in connections:
             await conn.close()
-        self._created_connections = 0
 
 
 class DBManager:
@@ -73,6 +106,7 @@ class DBManager:
         if not isinstance(resolved_db_path, str) or not resolved_db_path.strip():
             resolved_db_path = "data/twipsybot.db"
         self.db_path = Path(resolved_db_path)
+        self._max_connections = max_connections
         self._pool = ConnectionPool(str(self.db_path), max_connections)
         self._initialized = False
 
@@ -87,12 +121,15 @@ class DBManager:
     async def initialize(self) -> None:
         if self._initialized:
             return
+        if self._pool.closed:
+            self._pool = ConnectionPool(str(self.db_path), self._max_connections)
         await self._create_tables()
         self._initialized = True
         logger.info(f"DB manager initialized: {self.db_path}")
 
     async def close(self) -> None:
         await self._pool.close_all()
+        self._initialized = False
         logger.debug("DB manager closed")
 
     async def _create_tables(self) -> None:

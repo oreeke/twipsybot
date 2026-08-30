@@ -1,13 +1,15 @@
 import asyncio
+import os
 import signal
 import sys
+from collections.abc import Callable
 from io import TextIOWrapper
 from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
 
-from ..bot.infra.core import MisskeyBot
+from ..bot.engine.core import MisskeyBot
 from ..shared.banner import BANNER
 from ..shared.config import Config
 from ..shared.config_keys import ConfigKeys
@@ -18,18 +20,6 @@ from ..shared.exceptions import (
 )
 
 
-def _stop_file_path() -> Path:
-    return Path("run") / "twipsybot.stop"
-
-
-def _fatal_file_path() -> Path:
-    return Path("run") / "twipsybot.fatal"
-
-
-def _is_docker_container() -> bool:
-    return Path("/.dockerenv").exists()
-
-
 def _termination_signals() -> tuple[signal.Signals, ...]:
     return (
         (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
@@ -38,11 +28,32 @@ def _termination_signals() -> tuple[signal.Signals, ...]:
     )
 
 
+def _set_termination_handlers(
+    handler: Callable[[signal.Signals], None],
+) -> None:
+    loop = asyncio.get_running_loop()
+    for sig in _termination_signals():
+        try:
+            loop.add_signal_handler(sig, handler, sig)
+        except NotImplementedError:
+            signal.signal(
+                sig,
+                lambda received, _: loop.call_soon_threadsafe(
+                    handler, signal.Signals(received)
+                ),
+            )
+
+
+async def _hold_until_terminated() -> None:
+    terminated = asyncio.Event()
+    _set_termination_handlers(lambda _: terminated.set())
+    await terminated.wait()
+
+
 class BotRunner:
     def __init__(self):
         self.bot: MisskeyBot | None = None
         self.shutdown_event: asyncio.Event | None = None
-        self._stop_file_task: asyncio.Task[None] | None = None
         self._shutdown_called = False
 
     async def run(self) -> None:
@@ -65,13 +76,6 @@ class BotRunner:
             enqueue=True,
         )
         print(BANNER)
-        stop_file = _stop_file_path()
-        stop_file.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            stop_file.unlink(missing_ok=True)
-        except OSError:
-            pass
-        self._stop_file_task = asyncio.create_task(self._watch_stop_file(stop_file))
         logger.info("Starting bot...")
         try:
             self.bot = MisskeyBot(config)
@@ -86,72 +90,22 @@ class BotRunner:
             except Exception:
                 logger.exception("Error during shutdown")
 
-    async def _watch_stop_file(self, stop_file: Path) -> None:
-        while True:
-            if self.shutdown_event and self.shutdown_event.is_set():
-                return
-            try:
-                should_stop = stop_file.exists()
-            except OSError:
-                should_stop = False
-            if should_stop:
-                try:
-                    stop_file.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                if self.shutdown_event and not self.shutdown_event.is_set():
-                    self.shutdown_event.set()
-                return
-            await asyncio.sleep(1.0)
-
     def _setup_monitoring_and_signals(self) -> None:
-        def signal_handler(sig, _):
-            logger.info(
-                f"Received signal {signal.Signals(sig).name}; preparing to shut down..."
-            )
+        def signal_handler(sig: signal.Signals) -> None:
+            logger.info(f"Received signal {sig.name}; preparing to shut down...")
             if self.shutdown_event and not self.shutdown_event.is_set():
                 self.shutdown_event.set()
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.call_soon_threadsafe(lambda: None)
-                except RuntimeError:
-                    pass
 
-        for sig in _termination_signals():
-            try:
-                signal.signal(sig, signal_handler)
-            except Exception:
-                logger.warning(f"Failed to register signal handler: {sig}")
+        _set_termination_handlers(signal_handler)
 
     async def shutdown(self) -> None:
         if self._shutdown_called:
             return
         self._shutdown_called = True
-        if self._stop_file_task:
-            self._stop_file_task.cancel()
-            self._stop_file_task = None
         logger.info("Shutting down bot...")
         if self.bot:
             await self.bot.stop()
         logger.info("Bot shut down")
-
-
-async def _wait_for_termination() -> int:
-    stop = asyncio.Event()
-    received = signal.SIGTERM
-
-    def handler(sig, _):
-        nonlocal received
-        received = sig
-        stop.set()
-
-    for sig in _termination_signals():
-        try:
-            signal.signal(sig, handler)
-        except Exception:
-            pass
-    await stop.wait()
-    return received
 
 
 def main() -> int:
@@ -166,14 +120,10 @@ def main() -> int:
         return 130
     except (ConfigurationError, AuthenticationError) as e:
         logger.error(f"FATAL startup error: {e}")
-        fatal_file = _fatal_file_path()
-        try:
-            fatal_file.parent.mkdir(parents=True, exist_ok=True)
-            fatal_file.write_text(str(e), encoding="utf-8")
-        except OSError:
-            pass
-        if _is_docker_container():
-            return 128 + asyncio.run(_wait_for_termination())
+        if os.environ.get("TWIPSYBOT_HOLD_ON_STARTUP_ERROR") == "1":
+            logger.error("Startup suspended until the container is stopped")
+            asyncio.run(_hold_until_terminated())
+            return 0
         return 2
     except APIConnectionError as e:
         logger.error(f"Startup error: {e}")

@@ -22,19 +22,8 @@ def _patch_broken_windows_cert_store() -> None:
 _patch_broken_windows_cert_store()
 
 _EXPORTS: dict[str, tuple[str, str]] = {
-    "MisskeyBot": (".bot.infra.core", "MisskeyBot"),
-    "BotRunner": (".app.main", "BotRunner"),
-    "BotRuntime": (".bot.infra.runtime", "BotRuntime"),
+    "MisskeyBot": (".bot.engine.core", "MisskeyBot"),
     "Config": (".shared.config", "Config"),
-    "ConfigKeys": (".shared.config_keys", "ConfigKeys"),
-    "MisskeyAPI": (".clients.misskey.misskey_api", "MisskeyAPI"),
-    "MisskeyDrive": (".clients.misskey.drive", "MisskeyDrive"),
-    "OpenAIAPI": (".clients.openai.openai_api", "OpenAIAPI"),
-    "StreamingClient": (".clients.misskey.streaming", "StreamingClient"),
-    "ChannelType": (".clients.misskey.channels", "ChannelType"),
-    "DBManager": (".db.sqlite", "DBManager"),
-    "ConnectionPool": (".db.sqlite", "ConnectionPool"),
-    "TCPClient": (".clients.misskey.transport", "TCPClient"),
 }
 
 __all__ = list(_EXPORTS)

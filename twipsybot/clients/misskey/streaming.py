@@ -64,13 +64,6 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         self._lifecycle_lock = asyncio.Lock()
         self._connect_task: asyncio.Task[None] | None = None
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
-        return False
-
     async def close(self) -> None:
         await self.disconnect()
         await self._stop_workers()

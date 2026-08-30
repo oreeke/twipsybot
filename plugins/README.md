@@ -81,16 +81,13 @@ return {"prompt": "以天气为主题，"}
 __init__ -> initialize -> on_startup -> hooks -> on_shutdown -> cleanup
 ```
 
-方法均可缺省，但必须使用 `async def`；生命周期方法不得要求额外参数，Hook 必须能接收事件参数。生命周期超时 30 秒，Hook 超时 60 秒。
+方法均可缺省，但必须 `async def`；生命周期方法不得要求额外参数，Hook 必须能接收事件参数。生命周期超时 30 秒，Hook 超时 60 秒。
 
 - 初始化或启动失败：cleanup 并禁用。
-- disable：cleanup 并卸载。
-- reload：cleanup 后创建新实例。
 - Bot 停止：on_shutdown 后 cleanup。
 - Hook 异常或超时只隔离本次调用。
 
-`on_startup/on_shutdown` 仅对应 Bot 启停；运行期 enable/reload 只调用 initialize/cleanup。
-shutdown、disable 和 reload 会等待正在执行的 Hook 完成。
+插件配置在进程启动时读取，修改配置后需重启 Bot。关闭时会等待正在执行的 Hook 完成。
 
 ### 边界
 

@@ -9,94 +9,15 @@ from loguru import logger
 from ..shared.config import Config
 from ..shared.config_keys import ConfigKeys
 
-__all__ = ("ConnectionPool", "DBManager")
+__all__ = ("DBManager",)
 
 Row = Sequence[Any]
-_POOL_CLOSED_ERROR = "connection pool is closed"
-
-
-class ConnectionPool:
-    def __init__(self, db_path: str, max_connections: int = 10):
-        self.db_path = db_path
-        self.max_connections = max_connections
-        self._pool = asyncio.Queue(maxsize=max_connections)
-        self._created_connections = 0
-        self._condition = asyncio.Condition()
-        self._closed = False
-
-    @property
-    def closed(self) -> bool:
-        return self._closed
-
-    async def get_connection(self) -> aiosqlite.Connection:
-        async with self._condition:
-            while True:
-                if self._closed:
-                    raise RuntimeError(_POOL_CLOSED_ERROR)
-                try:
-                    return self._pool.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
-                if self._created_connections < self.max_connections:
-                    self._created_connections += 1
-                    break
-                await self._condition.wait()
-        conn = None
-        try:
-            conn = await aiosqlite.connect(
-                self.db_path, timeout=30.0, isolation_level=None
-            )
-            await conn.execute("PRAGMA journal_mode=WAL")
-            await conn.execute("PRAGMA synchronous=NORMAL")
-            await conn.execute("PRAGMA cache_size=10000")
-            await conn.execute("PRAGMA busy_timeout=30000")
-            async with self._condition:
-                if self._closed:
-                    raise RuntimeError(_POOL_CLOSED_ERROR)
-                return conn
-        except BaseException:
-            if conn is not None:
-                await asyncio.shield(conn.close())
-            async with self._condition:
-                self._created_connections -= 1
-                self._condition.notify()
-            raise
-
-    async def return_connection(self, conn: aiosqlite.Connection) -> None:
-        async with self._condition:
-            if self._closed:
-                self._created_connections -= 1
-            else:
-                try:
-                    self._pool.put_nowait(conn)
-                    self._condition.notify()
-                    return
-                except asyncio.QueueFull:
-                    self._created_connections -= 1
-        await conn.close()
-
-    async def close_all(self) -> None:
-        async with self._condition:
-            if self._closed:
-                return
-            self._closed = True
-            connections = []
-            while not self._pool.empty():
-                try:
-                    connections.append(self._pool.get_nowait())
-                except asyncio.QueueEmpty:
-                    break
-            self._created_connections -= len(connections)
-            self._condition.notify_all()
-        for conn in connections:
-            await conn.close()
 
 
 class DBManager:
     def __init__(
         self,
         db_path: str | None = None,
-        max_connections: int = 10,
         config: Config | None = None,
     ):
         self.config = config or Config()
@@ -106,38 +27,45 @@ class DBManager:
         if not isinstance(resolved_db_path, str) or not resolved_db_path.strip():
             resolved_db_path = "data/twipsybot.db"
         self.db_path = Path(resolved_db_path)
-        self._max_connections = max_connections
-        self._pool = ConnectionPool(str(self.db_path), max_connections)
+        self._connection: aiosqlite.Connection | None = None
+        self._lock = asyncio.Lock()
         self._initialized = False
-
-    async def __aenter__(self):
-        await self.initialize()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
-        return False
 
     async def initialize(self) -> None:
         if self._initialized:
             return
-        if self._pool.closed:
-            self._pool = ConnectionPool(str(self.db_path), self._max_connections)
-        await self._create_tables()
-        self._initialized = True
+        async with self._lock:
+            if self._initialized:
+                return
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            connection = await aiosqlite.connect(
+                self.db_path, timeout=30.0, isolation_level=None
+            )
+            try:
+                await connection.execute("PRAGMA journal_mode=WAL")
+                await connection.execute("PRAGMA synchronous=NORMAL")
+                await connection.execute("PRAGMA cache_size=10000")
+                await connection.execute("PRAGMA busy_timeout=30000")
+                await self._execute_schema(connection)
+            except BaseException:
+                await asyncio.shield(connection.close())
+                raise
+            self._connection = connection
+            self._initialized = True
         logger.info(f"DB manager initialized: {self.db_path}")
 
     async def close(self) -> None:
-        await self._pool.close_all()
-        self._initialized = False
+        async with self._lock:
+            connection, self._connection = self._connection, None
+            self._initialized = False
+            if connection is not None:
+                await connection.close()
         logger.debug("DB manager closed")
 
-    async def _create_tables(self) -> None:
-        conn = await self._pool.get_connection()
-        try:
-            await self._execute_schema(conn)
-        finally:
-            await self._pool.return_connection(conn)
+    def _get_connection(self) -> aiosqlite.Connection:
+        if self._connection is None:
+            raise RuntimeError("database is not initialized")
+        return self._connection
 
     @staticmethod
     async def _execute_schema(conn: aiosqlite.Connection) -> None:
@@ -178,33 +106,22 @@ class DBManager:
             raise
 
     async def _fetch_one(self, query: str, params: tuple[Any, ...] = ()) -> Row | None:
-        conn = await self._pool.get_connection()
-        try:
+        async with self._lock:
+            conn = self._get_connection()
             async with conn.execute(query, params) as cursor:
                 return await cursor.fetchone()
-        finally:
-            await self._pool.return_connection(conn)
-
-    async def _fetch_all(self, query: str, params: tuple[Any, ...] = ()) -> list[Row]:
-        conn = await self._pool.get_connection()
-        try:
-            async with conn.execute(query, params) as cursor:
-                return list(await cursor.fetchall())
-        finally:
-            await self._pool.return_connection(conn)
 
     async def _execute_write(self, query: str, params: tuple[Any, ...] = ()) -> int:
-        conn = await self._pool.get_connection()
-        try:
-            async with conn.execute(query, params) as cursor:
-                await conn.commit()
-                return cursor.rowcount
-        except aiosqlite.Error as e:
-            await conn.rollback()
-            logger.error(f"Database write operation failed: {e}")
-            raise
-        finally:
-            await self._pool.return_connection(conn)
+        async with self._lock:
+            conn = self._get_connection()
+            try:
+                async with conn.execute(query, params) as cursor:
+                    await conn.commit()
+                    return cursor.rowcount
+            except aiosqlite.Error as e:
+                await conn.rollback()
+                logger.error(f"Database write operation failed: {e}")
+                raise
 
     async def get_plugin_data(self, plugin_name: str, key: str) -> str | None:
         result = await self._fetch_one(
@@ -290,42 +207,12 @@ class DBManager:
             params = (plugin_name,)
         return await self._execute_write(query, params)
 
-    async def get_table_stats(self) -> dict[str, Any]:
-        tables_query = "SELECT name FROM sqlite_master WHERE type='table'"
-        tables_result = await self._fetch_all(tables_query)
-        table_stats: dict[str, Any] = {}
-        for table_row in tables_result:
-            table_name = table_row[0] if table_row else None
-            if not isinstance(table_name, str):
-                continue
-            if not table_name.replace("_", "").isalnum():
-                continue
-            count_query = f'SELECT COUNT(*) FROM "{table_name}"'
-            count_result = await self._fetch_one(count_query)
-            size_query = "SELECT SUM(pgsize) FROM dbstat WHERE name = ?"
-            size_result = await self._fetch_one(size_query, (table_name,))
-            size_bytes = 0
-            if size_result and size_result[0]:
-                size_bytes = int(size_result[0])
-            row_count = 0
-            if count_result and count_result[0] is not None:
-                row_count = int(count_result[0])
-            table_stats[table_name] = {
-                "row_count": row_count,
-                "size_bytes": size_bytes,
-                "size_kb": round(size_bytes / 1024, 2),
-                "size_mb": round(size_bytes / 1024 / 1024, 2),
-            }
-        return table_stats
-
     async def vacuum(self) -> None:
-        conn = await self._pool.get_connection()
-        try:
-            await conn.execute("VACUUM")
-            logger.debug("Database vacuum completed")
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.error(f"Database vacuum failed: {e}")
-        finally:
-            await self._pool.return_connection(conn)
+        async with self._lock:
+            try:
+                await self._get_connection().execute("VACUUM")
+                logger.debug("Database vacuum completed")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Database vacuum failed: {e}")

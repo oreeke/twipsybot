@@ -17,6 +17,7 @@ from twipsybot.plugin import (
     FileRef,
     MentionEvent,
     MessageEvent,
+    PluginBase,
     TimelineNoteEvent,
     UserRef,
 )
@@ -33,6 +34,58 @@ def _context(config: dict[str, Any], **services: Any) -> Any:
     }
     defaults.update(services)
     return SimpleNamespace(**defaults)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, False),
+        (True, True),
+        (False, False),
+        ("true", True),
+        ("false", False),
+    ],
+)
+def test_parse_bool(value: Any, expected: bool) -> None:
+    assert PluginBase._parse_bool(value, False) is expected
+
+
+@pytest.mark.parametrize("value", ("", "maybe", 0, 1, [], {}))
+def test_parse_bool_rejects_invalid_values(value: Any) -> None:
+    with pytest.raises(ValueError, match="invalid boolean value"):
+        PluginBase._parse_bool(value, False)
+
+
+def test_keyact_parses_boolean_strings() -> None:
+    plugin = KeyActPlugin(
+        _context(
+            {
+                "enabled": True,
+                "mention_enabled": "false",
+                "chat_enabled": "true",
+                "case_sensitive": "false",
+                "rules": [],
+            }
+        )
+    )
+
+    assert plugin.mention_enabled is False
+    assert plugin.chat_enabled is True
+    assert plugin.default_case_sensitive is False
+
+
+def test_builtin_plugins_parse_boolean_strings() -> None:
+    radar = RadarPlugin(
+        _context({"enabled": "true", "reply": "false", "quote": "true"})
+    )
+    topics = TopicsPlugin(_context({"enabled": "true", "rss_ai": "false"}))
+    vision = VisionPlugin(_context({"enabled": "true", "use_thumbnail": "false"}))
+
+    assert radar._enabled is True
+    assert radar.reply_enabled is False
+    assert radar.quote_enabled is True
+    assert topics.rss_ai is False
+    assert vision.use_thumbnail is False
 
 
 async def test_all_hooks_receive_stable_events(
@@ -276,31 +329,6 @@ async def test_failed_plugin_initialization_runs_cleanup(
     assert await bot.db.get_plugin_data("Failing", "cleaned") == "yes"
 
 
-async def test_disable_and_reload_cleanup_instances(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "reloadable",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class ReloadablePlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def initialize(self):\n"
-        "        value = int(await self.context.storage.get('initialized') or 0) + 1\n"
-        "        await self.context.storage.set('initialized', str(value))\n"
-        "        return True\n"
-        "    async def cleanup(self):\n"
-        "        value = int(await self.context.storage.get('cleaned') or 0) + 1\n"
-        "        await self.context.storage.set('cleaned', str(value))\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-
-    assert await bot.plugin_manager.reload_plugin("reloadable") == ""
-    assert await bot.db.get_plugin_data("Reloadable", "initialized") == "2"
-    assert await bot.db.get_plugin_data("Reloadable", "cleaned") == "1"
-    assert await bot.plugin_manager.set_plugin_enabled("reloadable", False) == ""
-    assert await bot.db.get_plugin_data("Reloadable", "cleaned") == "2"
-
-
 async def test_invalid_hook_results_are_rejected(
     make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
 ) -> None:
@@ -522,26 +550,6 @@ async def test_non_bool_initialize_and_startup_failure_cleanup(
     assert startup.cleaned is True
 
 
-async def test_reload_disabled_config_updates_status(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "toggle",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class TogglePlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    (plugins_dir / "toggle" / "config.yaml").write_text(
-        "enabled: false\n", encoding="utf-8"
-    )
-
-    assert await bot.plugin_manager.reload_plugin("toggle") == ""
-
-    assert bot.plugin_manager.get_plugin("toggle") is None
-    assert bot.plugin_manager.get_plugin_info()[0]["enabled"] is False
-
-
 async def test_context_uses_isolated_service_adapters(
     make_bot: MakeBot,
     make_plugin_dir: MakePluginDir,
@@ -661,153 +669,6 @@ async def test_auto_post_plugins_share_trigger_time(
     assert timestamps[0] == timestamps[1]
 
 
-async def test_reload_waits_for_inflight_hook(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "drain",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class DrainPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    plugin = bot.plugin_manager.get_plugin("drain")
-    assert plugin is not None
-    entered = asyncio.Event()
-    release = asyncio.Event()
-    events: list[str] = []
-
-    async def on_message(event):
-        events.append("hook-start")
-        entered.set()
-        await release.wait()
-        events.append("hook-end")
-
-    async def cleanup():
-        events.append("cleanup")
-
-    plugin.on_message = on_message
-    plugin.cleanup = cleanup
-    hook_task = asyncio.create_task(
-        bot.plugin_manager.call_plugin_hook(
-            "on_message", {"id": "message-1", "user": {"username": "alice"}}
-        )
-    )
-    await entered.wait()
-    reload_task = asyncio.create_task(bot.plugin_manager.reload_plugin("drain"))
-    await asyncio.sleep(0)
-
-    assert events == ["hook-start"]
-    assert not reload_task.done()
-    release.set()
-    await hook_task
-    assert await reload_task == ""
-    assert events == ["hook-start", "hook-end", "cleanup"]
-
-
-async def test_concurrent_reloads_are_serialized(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "serial",
-        "import asyncio\n"
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class SerialPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def initialize(self):\n"
-        "        value = int(await self.context.storage.get('initialized') or 0) + 1\n"
-        "        await asyncio.sleep(0.01)\n"
-        "        await self.context.storage.set('initialized', str(value))\n"
-        "        return True\n"
-        "    async def cleanup(self):\n"
-        "        value = int(await self.context.storage.get('cleaned') or 0) + 1\n"
-        "        await self.context.storage.set('cleaned', str(value))\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-
-    results = await asyncio.gather(
-        bot.plugin_manager.reload_plugin("serial"),
-        bot.plugin_manager.reload_plugin("serial"),
-    )
-
-    assert results == ["", ""]
-    assert await bot.db.get_plugin_data("Serial", "initialized") == "3"
-    assert await bot.db.get_plugin_data("Serial", "cleaned") == "2"
-    assert bot.plugin_manager.get_plugin("serial") is not None
-
-
-async def test_cancelled_reload_while_draining_restores_dispatch(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "cancelwait",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class CancelwaitPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    plugin = bot.plugin_manager.get_plugin("cancelwait")
-    assert plugin is not None
-    entered = asyncio.Event()
-    release = asyncio.Event()
-
-    async def on_message(event):
-        entered.set()
-        await release.wait()
-        return plugin.handled("ok")
-
-    plugin.on_message = on_message
-    hook_task = asyncio.create_task(
-        bot.plugin_manager.call_plugin_hook(
-            "on_message", {"id": "message-1", "user": {"username": "alice"}}
-        )
-    )
-    await entered.wait()
-    reload_task = asyncio.create_task(bot.plugin_manager.reload_plugin("cancelwait"))
-    await asyncio.sleep(0)
-    reload_task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await reload_task
-    release.set()
-    await hook_task
-
-    results = await bot.plugin_manager.call_plugin_hook(
-        "on_message", {"id": "message-2", "user": {"username": "alice"}}
-    )
-    assert results == [{"handled": True, "response": "ok", "plugin_name": "Cancelwait"}]
-
-
-async def test_cancelled_reload_completes_consistently(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "cancelrun",
-        "import asyncio\n"
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class CancelrunPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def initialize(self):\n"
-        "        await asyncio.sleep(0.02)\n"
-        "        await self.context.storage.set('initialized', 'yes')\n"
-        "        return True\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    reload_task = asyncio.create_task(bot.plugin_manager.reload_plugin("cancelrun"))
-    await asyncio.sleep(0.005)
-    reload_task.cancel()
-    await asyncio.sleep(0)
-    reload_task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await reload_task
-
-    plugin = bot.plugin_manager.get_plugin("cancelrun")
-    assert plugin is not None
-    assert await bot.db.get_plugin_data("Cancelrun", "initialized") == "yes"
-    assert bot.plugin_manager.get_plugin_info()[0]["enabled"] is True
-
-
 async def test_actor_lock_does_not_reenter_response_pipeline(
     make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
 ) -> None:
@@ -855,6 +716,28 @@ async def test_keyact_matches_body_when_mention_has_cw() -> None:
     assert await plugin.on_mention(event) == {"handled": True, "response": "pong"}
 
 
+async def test_keyact_normalizes_case_once_when_loading_rules() -> None:
+    plugin = KeyActPlugin(
+        _context(
+            {
+                "enabled": True,
+                "rules": [{"keyword": "PING", "response": "pong"}],
+            }
+        )
+    )
+    await plugin.initialize()
+    event = MessageEvent(
+        id="message-1",
+        text="ping",
+        user=UserRef(id="user-1", username="alice", host=None),
+        room_id=None,
+        files=(),
+        raw={},
+    )
+
+    assert await plugin.on_message(event) == {"handled": True, "response": "pong"}
+
+
 async def test_topics_rss_ai_uses_public_openai_service() -> None:
     generate_text = AsyncMock(return_value="rewritten title\nignored")
     openai = SimpleNamespace(
@@ -881,6 +764,15 @@ async def test_topics_rss_ai_uses_public_openai_service() -> None:
         max_tokens=100,
         temperature=0.5,
     )
+
+
+async def test_topics_initializes_rss_storage_defaults() -> None:
+    storage = SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock())
+    plugin = TopicsPlugin(_context({"enabled": True, "source": "rss"}, storage=storage))
+
+    assert await plugin.initialize() is True
+    storage.set.assert_any_await("rss_recent_keys", "[]")
+    storage.set.assert_any_await("rss_last_feed_idx", "0")
 
 
 async def test_topics_rss_is_recorded_only_after_publish() -> None:
@@ -914,6 +806,42 @@ async def test_topics_rss_is_recorded_only_after_publish() -> None:
     plugin._set_recent_rss_keys = AsyncMock(return_value=False)
     with pytest.raises(RuntimeError, match="persist published RSS entry"):
         await plugin._on_auto_post_published("failed")
+
+
+async def test_topics_rotate_advances_only_after_publish() -> None:
+    stored = {"rss_recent_keys": "[]", "rss_last_feed_idx": "0"}
+    storage = SimpleNamespace(
+        get=AsyncMock(side_effect=lambda key: stored.get(key)), set=AsyncMock()
+    )
+    plugin = TopicsPlugin(
+        _context(
+            {
+                "enabled": True,
+                "source": "rss",
+                "rss_post_mode": "rotate",
+            },
+            storage=storage,
+        )
+    )
+    entry = {
+        "key": "entry-key",
+        "title": "title",
+        "link": "https://example.com/post",
+        "summary": "",
+        "ts": 1,
+        "entry_idx": 0,
+        "feed_idx": 0,
+    }
+    plugin._fetch_rss_candidates = AsyncMock(return_value=[entry])
+    plugin._render_selected_rss_entries = AsyncMock(return_value=["content"])
+
+    assert await plugin._get_next_rss_posts_rotate(["feed"]) == ["content"]
+    storage.set.assert_not_awaited()
+
+    await plugin._on_auto_post_published("content")
+
+    storage.set.assert_any_await("rss_recent_keys", '["entry-key"]')
+    storage.set.assert_any_await("rss_last_feed_idx", "0")
 
 
 async def test_vision_handles_image_with_public_services() -> None:
@@ -956,6 +884,31 @@ async def test_vision_handles_image_with_public_services() -> None:
         "response": "image reply",
     }
     generate_chat.assert_awaited_once()
+
+
+async def test_vision_resolves_missing_mime_once() -> None:
+    drive = SimpleNamespace(
+        fetch_bytes=AsyncMock(return_value=b"image"),
+        show_file=AsyncMock(return_value={"type": "image/png"}),
+        download_bytes=AsyncMock(),
+    )
+    plugin = VisionPlugin(
+        _context({"enabled": True}, misskey=SimpleNamespace(drive=drive))
+    )
+    file = FileRef(
+        id="file-1",
+        mime_type=None,
+        url="https://example.com/image.png",
+        thumbnail_url=None,
+        raw={},
+    )
+
+    result = await plugin._to_image_part(file, use_responses=False)
+
+    assert result is not None
+    assert result["type"] == "image_url"
+    drive.show_file.assert_awaited_once_with("file-1")
+    drive.download_bytes.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -1019,3 +972,33 @@ async def test_radar_reacts_through_public_misskey_service() -> None:
         raw={},
     )
     assert plugin._should_skip_self(remote_same_name) is False
+
+
+async def test_radar_preserves_reply_and_quote_precedence() -> None:
+    misskey = SimpleNamespace(
+        create_reaction=AsyncMock(return_value={}),
+        create_note=AsyncMock(return_value={}),
+        create_renote=AsyncMock(return_value={}),
+    )
+    plugin = RadarPlugin(
+        _context(
+            {
+                "enabled": True,
+                "reply": True,
+                "reply_text": "hello {username}",
+                "quote": True,
+                "quote_text": "quote",
+                "renote": True,
+            },
+            misskey=misskey,
+        )
+    )
+
+    await plugin._act({"user": {"username": "alice"}}, "note-1", "antenna")
+
+    misskey.create_note.assert_awaited_once_with(
+        text="hello alice", reply_id="note-1", local_only=False
+    )
+    misskey.create_renote.assert_awaited_once_with(
+        "note-1", visibility=None, text="quote", local_only=False
+    )

@@ -7,7 +7,7 @@ from loguru import logger
 from ...shared.config_keys import ConfigKeys
 
 if TYPE_CHECKING:
-    from ..infra.core import MisskeyBot
+    from ..engine.core import MisskeyBot
 
 
 class AutoPostService:

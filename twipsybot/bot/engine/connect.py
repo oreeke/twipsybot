@@ -1,4 +1,6 @@
 import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from loguru import logger
 
@@ -7,13 +9,12 @@ from ...clients.misskey.antenna import (
     dedupe_non_empty,
     resolve_antenna_selector,
 )
+from ...clients.misskey.api import MisskeyAPI
 from ...clients.misskey.channels import ChannelSpec, ChannelType
-from ...clients.misskey.misskey_api import MisskeyAPI
 from ...clients.misskey.streaming import StreamingClient
 from ...shared.config import Config
 from ...shared.config_keys import ConfigKeys
 from ...shared.utils import normalize_tokens
-from .handlers import BotHandlers
 from .runtime import BotRuntime
 
 
@@ -25,29 +26,22 @@ class StreamingConnector:
         misskey: MisskeyAPI,
         streaming: StreamingClient,
         runtime: BotRuntime,
-        handlers: BotHandlers,
+        on_mention: Callable[[dict[str, Any]], Awaitable[None]],
+        on_message: Callable[[dict[str, Any]], Awaitable[None]],
+        on_notification: Callable[[dict[str, Any]], Awaitable[None]],
+        on_timeline_note: Callable[[dict[str, Any]], Awaitable[Any]],
     ):
         self._config = config
         self._misskey = misskey
         self._streaming = streaming
         self._runtime = runtime
-        self._handlers = handlers
+        self._on_mention = on_mention
+        self._on_message = on_message
+        self._on_notification = on_notification
+        self._on_timeline_note = on_timeline_note
         self._timeline_channels = self._load_timeline_channels()
-
-    def load_timeline_channels(self) -> set[str]:
-        self._timeline_channels = self._load_timeline_channels()
-        return set(self._timeline_channels)
-
-    def get_timeline_channels(self) -> set[str]:
-        return set(self._timeline_channels)
-
-    def set_timeline_channels(self, channels: set[str]) -> set[str]:
-        self._timeline_channels = set(channels)
-        return set(self._timeline_channels)
 
     def _load_timeline_channels(self) -> set[str]:
-        if not self._config.get(ConfigKeys.BOT_TIMELINE_ENABLED):
-            return set()
         mapping = {
             ConfigKeys.BOT_TIMELINE_HOME: ChannelType.HOME_TIMELINE.value,
             ConfigKeys.BOT_TIMELINE_LOCAL: ChannelType.LOCAL_TIMELINE.value,
@@ -92,21 +86,12 @@ class StreamingConnector:
             result.append((ChannelType.ANTENNA.value, {"antennaId": antenna_id}))
         return result
 
-    async def restart_streaming(self) -> None:
-        if (task := self._runtime.tasks.get("streaming")) and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        await self._streaming.disconnect()
-        channels = await self.get_streaming_channels()
-        await self._streaming.connect_once(channels)
-        self._runtime.add_task("streaming", self._streaming.connect(channels))
-
     async def setup_streaming(self) -> None:
         try:
-            self._streaming.on_mention(self._handlers.on_mention)
-            self._streaming.on_message(self._handlers.on_message)
-            self._streaming.on_notification(self._handlers.on_notification)
-            self._streaming.on_note(self._handlers.on_timeline_note)
+            self._streaming.on_mention(self._on_mention)
+            self._streaming.on_message(self._on_message)
+            self._streaming.on_notification(self._on_notification)
+            self._streaming.on_note(self._on_timeline_note)
             channels = await self.get_streaming_channels()
             await self._streaming.connect_once(channels)
             self._runtime.add_task("streaming", self._streaming.connect(channels))

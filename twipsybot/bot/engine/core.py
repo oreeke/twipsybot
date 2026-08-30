@@ -10,7 +10,7 @@ from cachetools import TTLCache
 from loguru import logger
 
 from ...admin import AdminCommandService
-from ...clients.misskey.misskey_api import MisskeyAPI
+from ...clients.misskey.api import MisskeyAPI
 from ...clients.misskey.streaming import StreamingClient
 from ...clients.misskey.transport import TCPClient
 from ...clients.openai import OpenAIAPI
@@ -20,11 +20,13 @@ from ...shared.config import Config
 from ...shared.config_keys import ConfigKeys
 from ...shared.constants import CHAT_CACHE_MAX_USERS, CHAT_CACHE_TTL
 from ...shared.exceptions import ConfigurationError
-from ...shared.utils import get_memory_usage, resolve_history_limit
+from ..flows.chat import ChatHandler, _resolve_history_limit
+from ..flows.mention import MentionHandler
+from ..flows.notification import NotificationHandler
+from ..flows.post import AutoPostService
 from .connect import StreamingConnector
-from .handlers import BotHandlers
 from .limits import ResponseLimiter
-from .pipe import ResponsePipeline
+from .pipeline import ResponsePipeline
 from .runtime import BotRuntime
 
 __all__ = ("MisskeyBot",)
@@ -57,7 +59,7 @@ class MisskeyBot:
             logger.error(f"Initialization failed: {e}")
             raise ConfigurationError() from e
         self.db = DBManager(config.get(ConfigKeys.DB_PATH), config=config)
-        self.runtime = BotRuntime(self)
+        self.runtime = BotRuntime()
         self.limits = ResponseLimiter(
             config=config,
             db=self.db,
@@ -79,13 +81,21 @@ class MisskeyBot:
             ttl=CHAT_CACHE_TTL,
             timer=time.monotonic,
         )
-        self.handlers = BotHandlers(self)
+        self.chat = ChatHandler(self)
+        self.mention = MentionHandler(self)
+        self.notification = NotificationHandler(self)
+        self.auto_post = AutoPostService(self)
         self.connect = StreamingConnector(
             config=config,
             misskey=self.misskey,
             streaming=self.streaming,
             runtime=self.runtime,
-            handlers=self.handlers,
+            on_mention=self.mention.handle,
+            on_message=self.chat.handle,
+            on_notification=self.notification.handle,
+            on_timeline_note=lambda note: self.plugin_manager.call_plugin_hook(
+                "on_timeline_note", note
+            ),
         )
         admin_config = config.get("bot.admin", {})
         self.admin = AdminCommandService(
@@ -96,18 +106,6 @@ class MisskeyBot:
     def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
         return self.limits.is_response_blacklisted_user(user_id=user_id, handle=handle)
 
-    def load_timeline_channels(self) -> set[str]:
-        return self.connect.load_timeline_channels()
-
-    def get_timeline_channels(self) -> set[str]:
-        return self.connect.get_timeline_channels()
-
-    def set_timeline_channels(self, channels: set[str]) -> set[str]:
-        return self.connect.set_timeline_channels(channels)
-
-    async def restart_streaming(self) -> None:
-        await self.connect.restart_streaming()
-
     async def get_or_load_chat_history(
         self,
         conversation_id: str,
@@ -116,14 +114,14 @@ class MisskeyBot:
         user_id: str | None = None,
         room_id: str | None = None,
     ) -> list[dict[str, str]]:
-        limit_value = resolve_history_limit(
+        limit_value = _resolve_history_limit(
             self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
         )
         if (cached := self._chat_histories.get(conversation_id)) is not None:
             return self._trim_chat_history(list(cached), limit_value)
         if conversation_id.startswith("room:"):
             room_id = room_id or conversation_id.removeprefix("room:")
-        history = await self.handlers.chat.get_chat_history(
+        history = await self.chat.get_chat_history(
             user_id=user_id, room_id=room_id, limit=limit_value
         )
         trimmed = self._trim_chat_history(history, limit_value)
@@ -143,7 +141,7 @@ class MisskeyBot:
         assistant_text: str,
         limit: int | None,
     ) -> None:
-        limit_value = resolve_history_limit(
+        limit_value = _resolve_history_limit(
             self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
         )
         history = list(self._chat_histories.get(conversation_id) or [])
@@ -165,14 +163,6 @@ class MisskeyBot:
             history, limit_value
         )
 
-    async def __aenter__(self):
-        await self.start()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.stop()
-        return False
-
     async def start(self) -> None:
         if self.runtime.running:
             logger.warning("Bot is already running")
@@ -181,10 +171,8 @@ class MisskeyBot:
         self.runtime.running = True
         await self._initialize_services()
         self._setup_scheduler()
-        await self._setup_streaming()
+        await self.connect.setup_streaming()
         logger.info("Services ready; awaiting new tasks...")
-        memory_usage = get_memory_usage()
-        logger.debug(f"Memory usage: {memory_usage['rss_mb']} MB")
 
     async def _initialize_services(self) -> None:
         await self.db.initialize()
@@ -201,29 +189,26 @@ class MisskeyBot:
 
     def _setup_scheduler(self) -> None:
         cron_jobs = [
-            (self.handlers.auto_post.reset_daily_counters, 0),
+            (self.auto_post.reset_daily_counters, 0),
             (self.db.vacuum, 2),
             (self.db.cleanup_response_limit_state, 3),
         ]
         for func, hour in cron_jobs:
             self.scheduler.add_job(func, "cron", hour=hour, minute=0, second=0)
-        interval_minutes = self.config.get(ConfigKeys.BOT_AUTO_POST_INTERVAL)
+        interval = self.config.get(ConfigKeys.BOT_AUTO_POST_INTERVAL)
         enabled = bool(self.config.get(ConfigKeys.BOT_AUTO_POST_ENABLED))
         logger.info(
-            f"Auto-post scheduler ready; enabled={enabled}; interval: {interval_minutes} minutes"
+            f"Auto-post scheduler ready; enabled={enabled}; interval: {interval}"
         )
         self.scheduler.add_job(
-            self.handlers.on_auto_post,
+            self.auto_post.run,
             "interval",
-            minutes=interval_minutes,
+            seconds=interval.total_seconds(),
             next_run_time=datetime.now(UTC) + timedelta(minutes=1),
             id="auto_post",
             replace_existing=True,
         )
         self.scheduler.start()
-
-    async def _setup_streaming(self) -> None:
-        await self.connect.setup_streaming()
 
     @staticmethod
     async def _run_stop_steps(steps: tuple[tuple[str, Any], ...]) -> None:

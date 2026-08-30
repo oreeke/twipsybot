@@ -1,27 +1,29 @@
 from __future__ import annotations
 
-import asyncio
-import json
+import signal
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
-import psutil
 import pytest
 import yaml
 from conftest import MakeBot, WriteConfig
 from httpx2 import Request, Response
 from openai import APIStatusError
+from tenacity import wait_none
 
 from twipsybot import Config, MisskeyBot
-from twipsybot.app.cli import _write_pid_file
+from twipsybot.app import cli as app_cli
+from twipsybot.app import main as app_main
+from twipsybot.bot.engine.limits import ResponseLimiter
 from twipsybot.bot.flows.post import AutoPostService
-from twipsybot.bot.infra.limits import ResponseLimiter
-from twipsybot.clients.openai.openai_api import OpenAIAPI
-from twipsybot.db.sqlite import ConnectionPool
+from twipsybot.clients.misskey.api import MisskeyAPI
+from twipsybot.clients.misskey.socket import _redact_access_token
+from twipsybot.clients.openai.api import OpenAIAPI
 from twipsybot.shared.config_keys import ConfigKeys
-from twipsybot.shared.exceptions import ConfigurationError
+from twipsybot.shared.exceptions import APIConnectionError, ConfigurationError
 
 
 class _BadRequest:
@@ -37,6 +39,26 @@ class _BadRequest:
 
     def __str__(self) -> str:
         return self.message
+
+
+def test_misskey_access_token_is_redacted() -> None:
+    text = 'https://example.com/streaming?i=secret&x=1 {"i":"token"}'
+
+    assert _redact_access_token(text) == (
+        'https://example.com/streaming?i=***&x=1 {"i":"***"}'
+    )
+
+
+async def test_misskey_api_retries_connection_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = AsyncMock(side_effect=[APIConnectionError(), {"ok": True}])
+    api = object.__new__(MisskeyAPI)
+    api._make_request_once = request
+    monkeypatch.setattr(MisskeyAPI.make_request.retry, "wait", wait_none())
+
+    assert await api.make_request("test") == {"ok": True}
+    assert request.await_count == 2
 
 
 @pytest.mark.parametrize(
@@ -80,6 +102,69 @@ def test_invalid_config_fails_fast(tmp_path: Path) -> None:
         config.load()
 
 
+@pytest.mark.parametrize(
+    "unknown_config",
+    [
+        {"unexpected": True},
+        {"bot": {"response": {"caht": False}}},
+    ],
+)
+def test_unknown_config_fields_fail_fast(
+    tmp_path: Path, unknown_config: dict[str, Any]
+) -> None:
+    data = {
+        "misskey": {
+            "instance_url": "http://example.invalid",
+            "access_token": "token",
+        },
+        "openai": {"api_key": "key"},
+        **unknown_config,
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    config = Config(config_path=str(config_path))
+
+    with pytest.raises(ConfigurationError, match="Extra inputs are not permitted"):
+        config.load()
+
+
+def test_cli_propagates_run_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["twipsybot", "run"])
+    monkeypatch.setattr(app_cli.app_main, "main", lambda: 4)
+
+    assert app_cli.main() == 4
+
+
+@pytest.mark.parametrize(("hold", "expected"), ((False, 2), (True, 0)))
+def test_startup_error_hold_is_container_only(
+    monkeypatch: pytest.MonkeyPatch, hold: bool, expected: int
+) -> None:
+    async def fail_start(_: app_main.BotRunner) -> None:
+        raise ConfigurationError("invalid")
+
+    wait = AsyncMock()
+    monkeypatch.setattr(app_main.BotRunner, "run", fail_start)
+    monkeypatch.setattr(app_main, "_hold_until_terminated", wait)
+    if hold:
+        monkeypatch.setenv("TWIPSYBOT_HOLD_ON_STARTUP_ERROR", "1")
+    else:
+        monkeypatch.delenv("TWIPSYBOT_HOLD_ON_STARTUP_ERROR", raising=False)
+
+    assert app_main.main() == expected
+    assert wait.await_count == int(hold)
+
+
+async def test_startup_error_hold_stops_on_termination_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def terminate(handler: Any) -> None:
+        handler(signal.SIGTERM)
+
+    monkeypatch.setattr(app_main, "_set_termination_handlers", terminate)
+
+    await app_main._hold_until_terminated()
+
+
 def test_environment_overrides_yaml_config(
     monkeypatch: pytest.MonkeyPatch,
     write_config: WriteConfig,
@@ -106,6 +191,45 @@ def test_environment_overrides_yaml_config(
         == 3
     )
     assert config.get(ConfigKeys.DB_CLEAR) == 30
+
+
+def test_timeline_channels_are_independently_enabled(write_config: WriteConfig) -> None:
+    config = write_config(bot={"timeline": {"home": True, "local": False}})
+    bot = MisskeyBot(config)
+
+    assert bot.connect._timeline_channels == {"homeTimeline"}
+
+
+def test_legacy_auto_post_interval_field_is_rejected(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "misskey": {
+                    "instance_url": "http://example.invalid",
+                    "access_token": "token",
+                },
+                "openai": {"api_key": "key"},
+                "bot": {"auto_post": {"interval_minutes": 180}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = Config(config_path=str(config_path))
+
+    with pytest.raises(ConfigurationError, match="interval_minutes"):
+        config.load()
+
+
+@pytest.mark.parametrize("interval", (180, "180", "3h"))
+def test_auto_post_interval_accepts_minutes_and_units(
+    write_config: WriteConfig, interval: int | str
+) -> None:
+    config = write_config(bot={"auto_post": {"interval": interval}})
+
+    assert config.get(ConfigKeys.BOT_AUTO_POST_INTERVAL).total_seconds() == 10800
 
 
 @pytest.mark.parametrize(
@@ -159,105 +283,6 @@ async def test_database_persists_updates_and_cleans_expired_state(
     assert await bot.db.get_response_limit_state("old-user") is not None
     assert await bot.db.cleanup_response_limit_state(max_age_days=30) == 1
     assert await bot.db.get_response_limit_state("old-user") is None
-
-
-async def test_connection_returned_after_pool_close_is_closed(tmp_path: Path) -> None:
-    pool = ConnectionPool(str(tmp_path / "pool.db"), max_connections=1)
-    connection = await pool.get_connection()
-
-    await pool.close_all()
-    await pool.return_connection(connection)
-
-    assert pool._pool.empty()
-    assert pool._created_connections == 0
-    with pytest.raises(RuntimeError, match="closed"):
-        await pool.get_connection()
-
-
-async def test_pool_close_releases_connection_waiters(tmp_path: Path) -> None:
-    pool = ConnectionPool(str(tmp_path / "waiting.db"), max_connections=1)
-    connection = await pool.get_connection()
-    waiting = asyncio.create_task(pool.get_connection())
-    await asyncio.sleep(0)
-
-    await pool.close_all()
-
-    with pytest.raises(RuntimeError, match="closed"):
-        await asyncio.wait_for(waiting, timeout=0.2)
-    await pool.return_connection(connection)
-
-
-async def test_cancelled_pool_waiter_does_not_consume_connection() -> None:
-    pool = ConnectionPool("unused.db", max_connections=1)
-    connection: Any = SimpleNamespace(close=AsyncMock())
-    pool._created_connections = 1
-    waiting = asyncio.create_task(pool.get_connection())
-    await asyncio.sleep(0)
-
-    waiting.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await waiting
-    await pool.return_connection(connection)
-
-    assert pool._pool.get_nowait() is connection
-
-
-async def test_pool_close_during_connection_creation_closes_connection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import twipsybot.db.sqlite as sqlite_module
-
-    connection = SimpleNamespace(execute=AsyncMock(), close=AsyncMock())
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def connect(*args: Any, **kwargs: Any) -> Any:
-        started.set()
-        await release.wait()
-        return connection
-
-    monkeypatch.setattr(sqlite_module.aiosqlite, "connect", connect)
-    pool = ConnectionPool("unused.db", max_connections=1)
-    acquiring = asyncio.create_task(pool.get_connection())
-    await started.wait()
-
-    await pool.close_all()
-    release.set()
-
-    with pytest.raises(RuntimeError, match="closed"):
-        await acquiring
-    connection.close.assert_awaited_once()
-    assert pool._created_connections == 0
-
-
-async def test_cancel_during_connection_handoff_closes_connection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import twipsybot.db.sqlite as sqlite_module
-
-    connection = SimpleNamespace(execute=AsyncMock(), close=AsyncMock())
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def connect(*args: Any, **kwargs: Any) -> Any:
-        started.set()
-        await release.wait()
-        return connection
-
-    monkeypatch.setattr(sqlite_module.aiosqlite, "connect", connect)
-    pool = ConnectionPool("unused.db", max_connections=1)
-    acquiring = asyncio.create_task(pool.get_connection())
-    await started.wait()
-
-    async with pool._condition:
-        release.set()
-        await asyncio.sleep(0)
-        acquiring.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await acquiring
-    connection.close.assert_awaited_once()
-    assert pool._created_connections == 0
 
 
 async def test_database_manager_can_reinitialize_after_close(
@@ -328,10 +353,10 @@ async def test_admin_can_reenable_chat(
         "text": "^chat off",
         "user": {"id": "user-2", "username": "bob"},
     }
-    await bot.handlers.chat.handle(message)
+    await bot.chat.handle(message)
     assert bot.config.get("bot.response.chat") is False
 
-    await bot.handlers.chat.handle({**message, "id": "message-2", "text": "^chat on"})
+    await bot.chat.handle({**message, "id": "message-2", "text": "^chat on"})
 
     assert bot.config.get("bot.response.chat") is True
 
@@ -382,18 +407,6 @@ async def test_auto_post_confirms_only_successful_publish(
     confirm.assert_awaited_once_with(result, "published")
 
 
-def test_pid_file_uses_process_identity(tmp_path: Path) -> None:
-    pid_file = tmp_path / "twipsybot.pid"
-    process = psutil.Process()
-
-    _write_pid_file(pid_file, process)
-
-    assert json.loads(pid_file.read_text(encoding="utf-8")) == {
-        "pid": process.pid,
-        "create_time": process.create_time(),
-    }
-
-
 @pytest.mark.parametrize(
     "message",
     (
@@ -422,7 +435,7 @@ def test_responses_unavailable_recognizes_http_status(status_code: int) -> None:
 async def test_http_405_falls_back_to_chat_completions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import twipsybot.clients.openai.openai_api as module
+    import twipsybot.clients.openai.api as module
 
     error = APIStatusError(
         "method not allowed",

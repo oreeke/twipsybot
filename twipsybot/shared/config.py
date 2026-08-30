@@ -1,9 +1,18 @@
 import os
+import re
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import durationpy
 import yaml
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
 
 from .config_keys import ConfigKeys
 from .exceptions import ConfigurationError
@@ -11,6 +20,11 @@ from .exceptions import ConfigurationError
 __all__ = ("Config",)
 
 _MISSING = object()
+_AUTO_POST_INTERVAL_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?[mhd]\s*)+")
+_MINUTES_PATTERN = re.compile(r"\d+(?:\.\d+)?")
+_AUTO_POST_INTERVAL_ERROR = "auto-post interval must use minutes, hours, or days"
+_RESPONSE_DURATION_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?[smhd]\s*)+")
+_RESPONSE_DURATION_ERROR = "limits must use seconds, minutes, hours, or days"
 
 _ENV_TO_KEY = {
     "MISSKEY_INSTANCE_URL": ConfigKeys.MISSKEY_INSTANCE_URL,
@@ -40,7 +54,6 @@ _ENV_TO_KEY = {
     "BOT_RESPONSE_MAX_TURNS_RELEASE": ConfigKeys.BOT_RESPONSE_MAX_TURNS_RELEASE,
     "BOT_RESPONSE_WHITELIST": ConfigKeys.BOT_RESPONSE_WHITELIST,
     "BOT_RESPONSE_BLACKLIST": ConfigKeys.BOT_RESPONSE_BLACKLIST,
-    "BOT_TIMELINE_ENABLED": ConfigKeys.BOT_TIMELINE_ENABLED,
     "BOT_TIMELINE_HOME": ConfigKeys.BOT_TIMELINE_HOME,
     "BOT_TIMELINE_LOCAL": ConfigKeys.BOT_TIMELINE_LOCAL,
     "BOT_TIMELINE_HYBRID": ConfigKeys.BOT_TIMELINE_HYBRID,
@@ -98,12 +111,16 @@ def _maybe_load_text_file(
     return resolved.read_text(encoding="utf-8").strip()
 
 
-class MisskeyConfig(BaseModel):
+class _ConfigModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class MisskeyConfig(_ConfigModel):
     instance_url: str
     access_token: str
 
 
-class OpenAIConfig(BaseModel):
+class OpenAIConfig(_ConfigModel):
     api_key: str
     model: str = "deepseek-chat"
     api_base: str = "https://api.deepseek.com/v1"
@@ -134,8 +151,7 @@ class OpenAIConfig(BaseModel):
         return float(v)
 
 
-class TimelineConfig(BaseModel):
-    enabled: bool = False
+class TimelineConfig(_ConfigModel):
     home: bool = False
     local: bool = False
     hybrid: bool = False
@@ -150,20 +166,34 @@ class TimelineConfig(BaseModel):
         return v
 
 
-class AutoPostConfig(BaseModel):
+class AutoPostConfig(_ConfigModel):
     enabled: bool = True
-    interval_minutes: int = 180
+    interval: timedelta = timedelta(minutes=180)
     max_posts_per_day: int = 8
     visibility: str = "public"
     local_only: bool = False
     prompt: str = ""
 
-    @field_validator("interval_minutes")
+    @field_validator("interval", mode="before")
     @classmethod
-    def _validate_interval_minutes(cls, v: int) -> int:
-        if v <= 0:
+    def _validate_interval(cls, value: Any) -> timedelta:
+        if isinstance(value, bool):
+            raise ValueError(_AUTO_POST_INTERVAL_ERROR)
+        if isinstance(value, int | float):
+            interval = timedelta(minutes=value)
+        elif isinstance(value, str):
+            normalized = value.strip().lower()
+            if _MINUTES_PATTERN.fullmatch(normalized):
+                interval = timedelta(minutes=float(normalized))
+            elif _AUTO_POST_INTERVAL_PATTERN.fullmatch(normalized):
+                interval = durationpy.from_str(normalized)
+            else:
+                raise ValueError(_AUTO_POST_INTERVAL_ERROR)
+        else:
+            raise ValueError(_AUTO_POST_INTERVAL_ERROR)
+        if interval <= timedelta(0):
             raise ValueError("auto-post interval must be > 0")
-        return v
+        return interval
 
     @field_validator("max_posts_per_day")
     @classmethod
@@ -181,7 +211,7 @@ class AutoPostConfig(BaseModel):
         return s
 
 
-class ResponseConfig(BaseModel):
+class ResponseConfig(_ConfigModel):
     mention: bool = True
     chat: bool = True
     chat_memory: int = 10
@@ -192,6 +222,30 @@ class ResponseConfig(BaseModel):
     max_turns_release: int | str = -1
     whitelist: list[str] | str = []
     blacklist: list[str] | str = []
+
+    @field_validator("rate_limit", "max_turns_release", mode="before")
+    @classmethod
+    def _validate_duration(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError(_RESPONSE_DURATION_ERROR)
+        if isinstance(value, int):
+            if value < -1:
+                raise ValueError(_RESPONSE_DURATION_ERROR)
+            return value
+        if not isinstance(value, str):
+            raise ValueError(_RESPONSE_DURATION_ERROR)
+        normalized = value.strip().lower()
+        if normalized in {"-1", "off", "none", "unlimited"}:
+            return value
+        if normalized.isdigit():
+            return value
+        if _RESPONSE_DURATION_PATTERN.fullmatch(normalized):
+            try:
+                if durationpy.from_str(normalized) >= timedelta(0):
+                    return value
+            except Exception:
+                pass
+        raise ValueError(_RESPONSE_DURATION_ERROR)
 
     @field_validator("chat_memory")
     @classmethod
@@ -208,13 +262,13 @@ class ResponseConfig(BaseModel):
         return v
 
 
-class AdminConfig(BaseModel):
+class AdminConfig(_ConfigModel):
     enabled: bool = False
     allowed_users: list[str] | str = []
     commands: dict[str, Any] = Field(default_factory=dict)
 
 
-class BotConfig(BaseModel):
+class BotConfig(_ConfigModel):
     system_prompt: str = ""
     admin: AdminConfig = AdminConfig()
     timeline: TimelineConfig = TimelineConfig()
@@ -222,7 +276,7 @@ class BotConfig(BaseModel):
     response: ResponseConfig = ResponseConfig()
 
 
-class DBConfig(BaseModel):
+class DBConfig(_ConfigModel):
     path: str = "data/twipsybot.db"
     clear: int = -1
 
@@ -234,13 +288,13 @@ class DBConfig(BaseModel):
         return v
 
 
-class LogConfig(BaseModel):
+class LogConfig(_ConfigModel):
     path: str = "data/logs/twipsybot.log"
     level: str = "INFO"
     dump_events: bool = False
 
 
-class AppConfig(BaseModel):
+class AppConfig(_ConfigModel):
     misskey: MisskeyConfig
     openai: OpenAIConfig
     bot: BotConfig = BotConfig()

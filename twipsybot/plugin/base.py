@@ -15,11 +15,21 @@ class PluginBase:
 
     def __init__(self, context: PluginContext):
         self.context = context
-        self._enabled = bool(context.config.get("enabled", False))
+        self._enabled = self._parse_bool(context.config.get("enabled"), False)
         self._priority = int(context.config.get("priority", 0))
         self._initialized = False
         self._started = False
         self._resources_to_cleanup = []
+
+    @staticmethod
+    def _parse_bool(value: Any, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+            return value.strip().lower() == "true"
+        raise ValueError(f"invalid boolean value: {value!r}")
 
     async def initialize(self) -> bool:
         await asyncio.sleep(0)

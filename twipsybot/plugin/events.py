@@ -5,7 +5,11 @@ from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any
 
-from ..shared.utils import extract_chat_text, extract_note_text, normalize_payload
+from ..clients.misskey.payloads import (
+    extract_chat_text,
+    extract_note_text,
+    normalize_payload,
+)
 
 __all__ = (
     "AutoPostEvent",

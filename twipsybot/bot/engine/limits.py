@@ -90,9 +90,12 @@ class ResponseLimiter:
 
     @staticmethod
     def _parse_duration_seconds(value: Any) -> int | None:
-        parsed = ResponseLimiter._parse_duration_number(value)
-        if parsed is not None:
-            return parsed
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
         if not isinstance(value, str):
             return None
         s = value.strip().lower()
@@ -108,16 +111,6 @@ class ResponseLimiter:
             return int(durationpy.from_str(s).total_seconds())
         except Exception:
             return None
-
-    @staticmethod
-    def _parse_duration_number(value: Any) -> int | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            return int(value)
-        return None
 
     def _duration_config_seconds(self, key: str) -> int:
         seconds = self._parse_duration_seconds(self._config.get(key))

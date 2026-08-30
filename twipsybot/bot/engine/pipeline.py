@@ -1,53 +1,19 @@
-import asyncio
 import inspect
-from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from loguru import logger
 
+from ...shared.locks import KeyedAsyncLock, actor_key
 from .limits import ResponseLimiter
 
 __all__ = ("ResponsePipeline",)
 
 
-@dataclass(slots=True)
-class _ActorLock:
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    users: int = 0
-
-
 class ResponsePipeline:
     def __init__(self, *, limits: ResponseLimiter):
         self._limits = limits
-        self._actor_locks: dict[str, _ActorLock] = {}
-
-    @staticmethod
-    def _actor_key(user_id: str | None, username: str | None) -> str | None:
-        if user_id:
-            return f"id:{user_id}"
-        if username:
-            return f"name:{username}"
-        return None
-
-    @asynccontextmanager
-    async def lock_actor(
-        self, user_id: str | None, username: str | None
-    ) -> AsyncGenerator[None]:
-        key = self._actor_key(user_id, username)
-        if not key:
-            yield
-            return
-        entry = self._actor_locks.setdefault(key, _ActorLock())
-        entry.users += 1
-        try:
-            async with entry.lock:
-                yield
-        finally:
-            entry.users -= 1
-            if entry.users == 0 and self._actor_locks.get(key) is entry:
-                self._actor_locks.pop(key)
+        self._actor_locks = KeyedAsyncLock()
 
     async def apply_handled_plugin_result(
         self,
@@ -92,7 +58,7 @@ class ResponsePipeline:
         ai_log_sent: Callable[[str], None],
         ai_after_sent: Callable[[str], Any] | None = None,
     ) -> None:
-        async with self.lock_actor(actor_id, actor_name):
+        async with self._actor_locks.hold(actor_key(actor_id, actor_name)):
             log_incoming()
             if user_id and await self._limits.maybe_send_blocked_reply(
                 user_id=user_id, handle=handle, send_reply=send_reply

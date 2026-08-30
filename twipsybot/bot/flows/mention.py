@@ -4,18 +4,18 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from ...shared.config_keys import ConfigKeys
-from ...shared.utils import (
+from ...clients.misskey.payloads import (
     extract_note_text,
     extract_user_handle,
     extract_user_id,
     extract_username,
-    maybe_log_event_dump,
     normalize_payload,
 )
+from ...shared.config_keys import ConfigKeys
+from ...shared.utils import maybe_log_event_dump
 
 if TYPE_CHECKING:
-    from ..infra.core import MisskeyBot
+    from ..engine.core import MisskeyBot
 
 
 @dataclass(slots=True)

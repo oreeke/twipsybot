@@ -2,12 +2,16 @@ from typing import Any
 
 from loguru import logger
 
-from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase, TimelineNoteEvent
+from twipsybot.plugin import (
+    PLUGIN_API_VERSION,
+    PluginBase,
+    TimelineNoteEvent,
+)
 
 
 class RadarPlugin(PluginBase):
     api_version = PLUGIN_API_VERSION
-    description = "雷达插件：与天线推送的帖子互动（反应、回复、转发、引用）"
+    description = "雷达插件：主动与天线发现的帖子互动（反应、回复、转发、引用）"
 
     DEFAULT_REPLY_AI_PROMPT = (
         "根据帖子内容写一句自然回复，不要复述原文，不要加引号，不超过30字：\n{content}"
@@ -40,53 +44,13 @@ class RadarPlugin(PluginBase):
         self.renote_local_only = self._parse_bool(
             config.get("renote_local_only"), False
         )
-        self.skip_self = True
 
     async def initialize(self) -> bool:
-        self._log_plugin_action("initialized", await self._format_antenna_sources())
-        return True
-
-    async def _format_antenna_sources(self) -> str:
         selectors = self.context.bot.load_antenna_selectors()
-        if not selectors:
-            return "Antenna: (empty)"
-        id_to_name = await self._get_antenna_name_map()
-        resolved_ids = await self._resolve_antenna_ids(selectors)
-        return self._format_antenna_source_display(selectors, resolved_ids, id_to_name)
-
-    @staticmethod
-    def _dedupe(items: list[str]) -> list[str]:
-        return list(dict.fromkeys(items))
-
-    async def _get_antenna_name_map(self) -> dict[str, str]:
-        antennas = await self.context.misskey.list_antennas()
-        return {
-            str(item["id"]): str(item["name"])
-            for item in antennas
-            if item.get("id") and item.get("name")
-        }
-
-    async def _resolve_antenna_ids(self, selectors: list[str]) -> list[str]:
-        try:
-            ids = await self.context.bot.resolve_antenna_ids(selectors)
-        except Exception:
-            return []
-        ids = [v.strip() for v in ids if isinstance(v, str) and v.strip()]
-        return self._dedupe(ids)
-
-    def _format_antenna_source_display(
-        self,
-        selectors: list[str],
-        resolved_ids: list[str],
-        id_to_name: dict[str, str],
-    ) -> str:
-        if not resolved_ids:
-            return f"Antenna: {', '.join(selectors)}"
-        display = [
-            id_to_name.get(antenna_id, antenna_id) for antenna_id in resolved_ids
-        ]
-        display = self._dedupe(display)
-        return f"Antenna: {', '.join(display)}"
+        self._log_plugin_action(
+            "initialized", f"Antenna: {', '.join(selectors) or '(empty)'}"
+        )
+        return True
 
     @staticmethod
     def _normalize_str(value: Any) -> str | None:
@@ -96,24 +60,6 @@ class RadarPlugin(PluginBase):
             value = str(value)
         s = value.strip()
         return s or None
-
-    @staticmethod
-    def _parse_bool(value: Any, default: bool) -> bool:
-        if value is None:
-            return default
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, int):
-            return bool(value)
-        if isinstance(value, float):
-            return bool(int(value))
-        if isinstance(value, str):
-            s = value.strip().lower()
-            if s in {"true", "1", "yes", "y", "on"}:
-                return True
-            if s in {"false", "0", "no", "n", "off"}:
-                return False
-        return default
 
     def _normalize_visibility(self, value: Any) -> str | None:
         s = self._normalize_str(value)
@@ -136,8 +82,6 @@ class RadarPlugin(PluginBase):
         return "\n".join(p for p in parts if p).strip()
 
     def _should_skip_self(self, event: TimelineNoteEvent) -> bool:
-        if not self.skip_self:
-            return False
         bot_id = self.context.bot.user_id
         if bot_id and event.user.id:
             return event.user.id == bot_id
@@ -194,19 +138,26 @@ class RadarPlugin(PluginBase):
         except Exception as e:
             logger.error(f"Radar reaction failed: {e!r}")
 
-    async def _build_reply_text(self, note_data: dict[str, Any]) -> str | None:
-        if self.reply_text:
-            text = self._format_reply_text(self.reply_text, note_data).strip()
+    async def _build_action_text(
+        self,
+        note_data: dict[str, Any],
+        *,
+        text: str | None,
+        ai_enabled: bool,
+        ai_prompt: str | None,
+        default_prompt: str,
+        action: str,
+    ) -> str | None:
+        if text:
+            text = self._format_reply_text(text, note_data).strip()
             if text:
                 return text
-        if not self.reply_ai:
+        if not ai_enabled:
             return None
         try:
-            return await self._generate_ai(
-                note_data, self.reply_ai_prompt or self.DEFAULT_REPLY_AI_PROMPT
-            )
+            return await self._generate_ai(note_data, ai_prompt or default_prompt)
         except Exception as e:
-            logger.error(f"Radar AI reply failed: {e!r}")
+            logger.error(f"Radar AI {action} failed: {e!r}")
             return None
 
     async def _maybe_reply(
@@ -214,7 +165,15 @@ class RadarPlugin(PluginBase):
     ) -> None:
         if not self.reply_enabled:
             return
-        if not (text := await self._build_reply_text(note_data)):
+        text = await self._build_action_text(
+            note_data,
+            text=self.reply_text,
+            ai_enabled=self.reply_ai,
+            ai_prompt=self.reply_ai_prompt,
+            default_prompt=self.DEFAULT_REPLY_AI_PROMPT,
+            action="reply",
+        )
+        if not text:
             return
         try:
             await self.context.misskey.create_note(
@@ -224,27 +183,20 @@ class RadarPlugin(PluginBase):
         except Exception as e:
             logger.error(f"Radar reply failed: {e!r}")
 
-    async def _build_quote_text(self, note_data: dict[str, Any]) -> str | None:
-        if self.quote_text:
-            text = self._format_reply_text(self.quote_text, note_data).strip()
-            if text:
-                return text
-        if not self.quote_ai:
-            return None
-        try:
-            return await self._generate_ai(
-                note_data, self.quote_ai_prompt or self.DEFAULT_QUOTE_AI_PROMPT
-            )
-        except Exception as e:
-            logger.error(f"Radar AI quote failed: {e!r}")
-            return None
-
     async def _maybe_quote(
         self, note_data: dict[str, Any], note_id: str, channel: str
     ) -> bool:
         if not self.quote_enabled:
             return False
-        if not (text := await self._build_quote_text(note_data)):
+        text = await self._build_action_text(
+            note_data,
+            text=self.quote_text,
+            ai_enabled=self.quote_ai,
+            ai_prompt=self.quote_ai_prompt,
+            default_prompt=self.DEFAULT_QUOTE_AI_PROMPT,
+            action="quote",
+        )
+        if not text:
             return False
         try:
             await self.context.misskey.create_renote(

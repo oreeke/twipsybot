@@ -24,20 +24,17 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 \
-    TWIPSYBOT_UP_MODE=foreground
+    TWIPSYBOT_HOLD_ON_STARTUP_ERROR=1
 
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin/twipsybot /usr/local/bin/twipsybot
 
 COPY plugins /app/plugins
 RUN useradd -r -u 10001 -m -U -s /usr/sbin/nologin appuser && \
-    mkdir -p /app/data /app/run && \
-    chown -R appuser:appuser /app/data /app/run
+    mkdir -p /app/data && \
+    chown -R appuser:appuser /app/data
 
 USER appuser
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
-    CMD pid=$(python -c 'import json; print(json.load(open("run/twipsybot.pid"))["pid"])' 2>/dev/null) && test -n "$pid" && test -e "/proc/$pid" && test ! -e run/twipsybot.fatal
-
 ENTRYPOINT ["twipsybot"]
-CMD ["up"]
+CMD ["run"]

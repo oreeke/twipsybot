@@ -8,5 +8,6 @@
 
 复制 `config.yaml.example` 为 `config.yaml` 并修改配置<br>
 在实例登录机器人账号 -> 添加天线 -> 设置名称（不要空格）和过滤条件并保存<br>
-确保主配置已启用时间线 `bot.timeline.enabled: true` 并在 `bot.timeline.antenna_ids` 中填入天线名<br>
-机器人将接收符合天线设置的帖子并与之互动，不需要订阅其他时间线
+在主配置或环境变量 `bot.timeline.antenna_ids` 中填入天线名<br>
+机器人将接收符合天线设置的帖子并与之互动，不需要订阅其他时间线<br>
+天线中有什么 = 机器人看到什么，因此天线中应设置较窄匹配规则，避免大量帖子被互动

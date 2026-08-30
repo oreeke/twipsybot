@@ -4,19 +4,24 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from ...shared.config_keys import ConfigKeys
-from ...shared.utils import (
+from ...clients.misskey.payloads import (
     extract_chat_text,
     extract_first_text,
     extract_user_handle,
     extract_user_id,
     extract_username,
-    maybe_log_event_dump,
-    resolve_history_limit,
 )
+from ...shared.config_keys import ConfigKeys
+from ...shared.utils import maybe_log_event_dump
 
 if TYPE_CHECKING:
-    from ..infra.core import MisskeyBot
+    from ..engine.core import MisskeyBot
+
+
+def _resolve_history_limit(config_value: int | None, limit: int | None) -> int:
+    if isinstance(limit, int):
+        return limit
+    return config_value if isinstance(config_value, int) else 0
 
 
 @dataclass(slots=True)
@@ -277,7 +282,7 @@ class ChatHandler:
         limit: int | None = None,
     ) -> list[dict[str, str]]:
         try:
-            limit_value = resolve_history_limit(
+            limit_value = _resolve_history_limit(
                 self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
             )
             if room_id:

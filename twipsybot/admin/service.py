@@ -5,14 +5,14 @@ from urllib.parse import urlparse
 
 from loguru import logger
 
-from ..shared.config_keys import ConfigKeys
-from ..shared.utils import (
+from ..clients.misskey.payloads import (
     extract_first_text,
     extract_user_handle,
     extract_user_id,
     extract_username,
-    normalize_tokens,
 )
+from ..shared.config_keys import ConfigKeys
+from ..shared.utils import normalize_tokens
 from .handlers import CmdHandlersMixin
 
 
@@ -27,8 +27,6 @@ class AdminCommandService(CmdHandlersMixin):
         self.misskey = bot.misskey
         self.openai = bot.openai
         self._default_model = self.openai.model
-        self.streaming = bot.streaming
-        self.runtime = bot.runtime
         self.allowed_users = frozenset(
             normalize_tokens(self.config.get("allowed_users", []))
         )
@@ -52,9 +50,6 @@ class AdminCommandService(CmdHandlersMixin):
         self._baseline_response_blacklist = normalize_tokens(
             self._global_get(ConfigKeys.BOT_RESPONSE_BLACKLIST, []), lower=True
         )
-        self._baseline_antenna_selectors = normalize_tokens(
-            self._global_get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS, [])
-        )
 
     def _build_command_alias_index(self) -> dict[str, str]:
         index: dict[str, str] = {}
@@ -71,7 +66,6 @@ class AdminCommandService(CmdHandlersMixin):
         return {
             "help": lambda args: self._get_help_text(),
             "status": lambda args: self._get_status_text(),
-            "sysinfo": lambda args: self._get_system_info(),
             "model": self._handle_model,
             "autopost": lambda args: self._handle_set_bool(
                 "autopost", ConfigKeys.BOT_AUTO_POST_ENABLED, args
@@ -82,14 +76,6 @@ class AdminCommandService(CmdHandlersMixin):
             "chat": lambda args: self._handle_set_bool(
                 "chat", ConfigKeys.BOT_RESPONSE_CHAT, args
             ),
-            "plugins": lambda args: self._get_plugins_info(),
-            "enable": self._enable_plugin,
-            "disable": self._disable_plugin,
-            "reload": self._reload_plugin,
-            "timeline": self._handle_timeline,
-            "antenna": self._handle_antenna,
-            "cache": lambda args: self._get_memory_usage(),
-            "cacheclear": self._clear_memory_caches,
             "whitelist": lambda args: self._handle_response_user_list(
                 "whitelist",
                 ConfigKeys.BOT_RESPONSE_WHITELIST,
@@ -102,8 +88,6 @@ class AdminCommandService(CmdHandlersMixin):
                 args,
                 self._baseline_response_blacklist,
             ),
-            "dbstats": lambda args: self._get_db_stats(),
-            "dbclear": self._clear_plugin_data,
         }
 
     def _setup_default_commands(self):
@@ -111,7 +95,6 @@ class AdminCommandService(CmdHandlersMixin):
             self.commands = {
                 "help": {"description": "可用命令", "aliases": []},
                 "status": {"description": "机器人状态", "aliases": []},
-                "sysinfo": {"description": "系统信息", "aliases": []},
                 "model": {
                     "description": "查看/切换模型 (用法: model [模型名]|reset)",
                     "aliases": [],
@@ -128,43 +111,12 @@ class AdminCommandService(CmdHandlersMixin):
                     "description": "响应聊天开关 (用法: chat on|off)",
                     "aliases": [],
                 },
-                "plugins": {"description": "插件信息", "aliases": []},
-                "enable": {
-                    "description": "启用插件 (用法: enable <插件名>)",
-                    "aliases": [],
-                },
-                "disable": {
-                    "description": "禁用插件 (用法: disable <插件名>)",
-                    "aliases": [],
-                },
-                "reload": {
-                    "description": "重启插件 (用法: reload <插件名>)",
-                    "aliases": [],
-                },
-                "timeline": {
-                    "description": "查看/切换时间线订阅 (用法: timeline [status|add|del|set|clear|reset])",
-                    "aliases": [],
-                },
-                "antenna": {
-                    "description": "查看/切换天线订阅 (用法: antenna [status|list|add|del|set|clear|reset])",
-                    "aliases": [],
-                },
-                "cache": {"description": "内存使用情况", "aliases": []},
-                "cacheclear": {
-                    "description": "清理内存缓存 (用法: cacheclear [chat|events|all])",
-                    "aliases": [],
-                },
                 "whitelist": {
                     "description": "查看/修改白名单 (用法: whitelist [list|add|del|set|clear|reset])",
                     "aliases": [],
                 },
                 "blacklist": {
                     "description": "查看/修改黑名单 (用法: blacklist [list|add|del|set|clear|reset])",
-                    "aliases": [],
-                },
-                "dbstats": {"description": "数据库统计", "aliases": []},
-                "dbclear": {
-                    "description": "清理插件数据 (用法: dbclear <插件名> [键名])",
                     "aliases": [],
                 },
             }

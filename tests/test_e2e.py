@@ -25,6 +25,22 @@ _CHAT_MESSAGE = {
 }
 
 
+async def test_streaming_awaits_wrapped_async_handler(
+    make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    bot = await make_bot(write_config())
+    received = []
+
+    async def handler(data):
+        received.append(data)
+
+    bot.streaming.event_handlers["note"] = [lambda data: handler(data)]
+
+    await bot.streaming._call_handlers("note", {"id": "note-1"})
+
+    assert received == [{"id": "note-1"}]
+
+
 async def test_mention_triggers_ai_reply(
     make_bot: MakeBot,
     write_config: WriteConfig,
@@ -33,7 +49,7 @@ async def test_mention_triggers_ai_reply(
 ) -> None:
     bot = await make_bot(write_config())
 
-    await bot.handlers.mention.handle(dict(_MENTION_NOTE))
+    await bot.mention.handle(dict(_MENTION_NOTE))
 
     assert len(openai_server.calls) == 1
     notes = misskey_server.calls["notes/create"]
@@ -50,7 +66,7 @@ async def test_mention_text_without_bot_id_is_ignored(
 ) -> None:
     bot = await make_bot(write_config())
 
-    await bot.handlers.mention.handle({**_MENTION_NOTE, "mentions": ["other-id"]})
+    await bot.mention.handle({**_MENTION_NOTE, "mentions": ["other-id"]})
 
     assert openai_server.calls == []
     assert "notes/create" not in misskey_server.calls
@@ -65,7 +81,7 @@ async def test_chat_message_plugin_takeover(
 ) -> None:
     bot = await make_bot(write_config(), plugins_dir=echo_plugin_dir)
 
-    await bot.handlers.chat.handle(dict(_CHAT_MESSAGE))
+    await bot.chat.handle(dict(_CHAT_MESSAGE))
 
     assert openai_server.calls == []
     replies = misskey_server.calls["chat/messages/create-to-user"]
@@ -86,7 +102,7 @@ async def test_admin_command_takes_priority_over_plugins(
         plugins_dir=echo_plugin_dir,
     )
 
-    await bot.handlers.chat.handle({**_CHAT_MESSAGE, "text": "^help"})
+    await bot.chat.handle({**_CHAT_MESSAGE, "text": "^help"})
 
     assert openai_server.calls == []
     reply = misskey_server.calls["chat/messages/create-to-user"][0]
@@ -104,13 +120,13 @@ async def test_auto_post_publishes_note(
     bot = await make_bot(write_config())
     bot.runtime.running = True
 
-    await bot.handlers.auto_post.run()
+    await bot.auto_post.run()
 
     notes = misskey_server.calls["notes/create"]
     assert len(notes) == 1
     assert notes[0]["text"] == "今天天气不错"
     assert notes[0]["visibility"] == "public"
-    assert bot.handlers.auto_post.posts_today == 1
+    assert bot.auto_post.posts_today == 1
 
 
 async def test_auto_post_preserves_zero_timestamp(
@@ -130,7 +146,7 @@ async def test_auto_post_preserves_zero_timestamp(
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     bot.runtime.running = True
 
-    await bot.handlers.auto_post.run()
+    await bot.auto_post.run()
 
     prompt = openai_server.calls[0]["messages"][-1]["content"]
     assert prompt == "[0] epoch 写一条随笔"
@@ -163,7 +179,7 @@ async def test_auto_post_uses_highest_priority_prompt_and_timestamp(
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     bot.runtime.running = True
 
-    await bot.handlers.auto_post.run()
+    await bot.auto_post.run()
 
     prompt = openai_server.calls[0]["messages"][-1]["content"]
     assert prompt == "[1] high 写一条随笔"
@@ -177,7 +193,7 @@ async def test_blacklisted_user_is_ignored(
 ) -> None:
     bot = await make_bot(write_config(blacklist=["alice"]))
 
-    await bot.handlers.mention.handle(dict(_MENTION_NOTE))
+    await bot.mention.handle(dict(_MENTION_NOTE))
 
     assert openai_server.calls == []
     assert "notes/create" not in misskey_server.calls
@@ -204,7 +220,7 @@ async def test_chat_uses_history_and_replies_to_user(
     )
     bot = await make_bot(write_config())
 
-    await bot.handlers.chat.handle(dict(_CHAT_MESSAGE))
+    await bot.chat.handle(dict(_CHAT_MESSAGE))
 
     assert [message["content"] for message in openai_server.calls[0]["messages"]] == [
         "你是测试机器人",
@@ -229,12 +245,10 @@ async def test_room_chat_requires_mention_and_replies_to_room(
         "toRoom": {"id": "room-1", "name": "测试房间"},
     }
 
-    await bot.handlers.chat.handle(room_message)
+    await bot.chat.handle(room_message)
     assert openai_server.calls == []
 
-    await bot.handlers.chat.handle(
-        {**room_message, "id": "msg-2", "text": "@testbot 你好"}
-    )
+    await bot.chat.handle({**room_message, "id": "msg-2", "text": "@testbot 你好"})
 
     reply = misskey_server.calls["chat/messages/create-to-room"][0]
     assert reply["toRoomId"] == "room-1"
@@ -255,7 +269,7 @@ async def test_room_chat_does_not_match_longer_username(
         "text": "@testbot2 你好",
     }
 
-    await bot.handlers.chat.handle(room_message)
+    await bot.chat.handle(room_message)
 
     assert openai_server.calls == []
     assert "chat/messages/create-to-room" not in misskey_server.calls
@@ -281,7 +295,7 @@ async def test_reply_to_bot_triggers_ai_reply(
         },
     }
 
-    await bot.handlers.mention.handle(event)
+    await bot.mention.handle(event)
 
     prompt = openai_server.calls[0]["messages"][-1]["content"]
     assert prompt == "机器人原帖\n\n继续说说"
@@ -308,7 +322,7 @@ async def test_reply_to_same_username_with_other_id_is_ignored(
         },
     }
 
-    await bot.handlers.mention.handle(event)
+    await bot.mention.handle(event)
 
     assert openai_server.calls == []
     assert "notes/create" not in misskey_server.calls
@@ -331,8 +345,8 @@ async def test_rate_limit_returns_configured_reply_without_second_ai_call(
         )
     )
 
-    await bot.handlers.chat.handle(dict(_CHAT_MESSAGE))
-    await bot.handlers.chat.handle({**_CHAT_MESSAGE, "id": "msg-2"})
+    await bot.chat.handle(dict(_CHAT_MESSAGE))
+    await bot.chat.handle({**_CHAT_MESSAGE, "id": "msg-2"})
 
     assert len(openai_server.calls) == 1
     replies = misskey_server.calls["chat/messages/create-to-user"]
@@ -356,7 +370,7 @@ async def test_plugin_can_take_over_mention(
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    await bot.handlers.mention.handle(dict(_MENTION_NOTE))
+    await bot.mention.handle(dict(_MENTION_NOTE))
 
     assert openai_server.calls == []
     assert misskey_server.calls["notes/create"][0]["text"] == "@alice\nmention handled"
@@ -370,9 +384,9 @@ async def test_auto_post_stops_at_daily_limit(
 ) -> None:
     bot = await make_bot(write_config(bot={"auto_post": {"max_posts_per_day": 1}}))
     bot.runtime.running = True
-    bot.handlers.auto_post.posts_today = 1
+    bot.auto_post.posts_today = 1
 
-    await bot.handlers.auto_post.run()
+    await bot.auto_post.run()
 
     assert openai_server.calls == []
     assert "notes/create" not in misskey_server.calls
@@ -396,7 +410,7 @@ async def test_plugin_can_modify_auto_post_prompt(
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     bot.runtime.running = True
 
-    await bot.handlers.auto_post.run()
+    await bot.auto_post.run()
 
     prompt = openai_server.calls[0]["messages"][-1]["content"]
     assert prompt.endswith("今日主题：测试。写一条随笔")
@@ -412,8 +426,8 @@ async def test_bot_ignores_its_own_events(
     bot = await make_bot(write_config())
     own_user = {"id": "bot-id", "username": "testbot"}
 
-    await bot.handlers.chat.handle({**_CHAT_MESSAGE, "user": own_user})
-    await bot.handlers.mention.handle({**_MENTION_NOTE, "user": own_user})
+    await bot.chat.handle({**_CHAT_MESSAGE, "user": own_user})
+    await bot.mention.handle({**_MENTION_NOTE, "user": own_user})
 
     assert openai_server.calls == []
     assert "notes/create" not in misskey_server.calls

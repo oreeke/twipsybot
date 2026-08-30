@@ -7,7 +7,7 @@ from ...shared.config_keys import ConfigKeys
 from ...shared.utils import maybe_log_event_dump
 
 if TYPE_CHECKING:
-    from ..infra.core import MisskeyBot
+    from ..engine.core import MisskeyBot
 
 
 class NotificationHandler:

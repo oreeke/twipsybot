@@ -13,7 +13,9 @@
     <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-603669.svg?style=for-the-badge&labelColor=303030&logo=gnu&logoColor=ffffff"></a>
 
 <br>它有时是抽象气氛组，有时是靠谱小帮手。它把所看所想寄向联邦宇宙，也把星尘里的帖子带回家。
-<br><br>❤️<br><br>
+<br><br>❤️
+
+_v0.3.0 重要变更（减肥）：[CHANGELOG](./CHANGELOG.md#030---2026-08-30)_<br><br>
 
 </div>
 
@@ -63,7 +65,7 @@ services:
       - BOT_ADMIN_ENABLED=false                                    # 是否启用聊天管理命令
       - BOT_ADMIN_ALLOWED_USERS=admin@example.com                  # 管理员用户 ID 或 username@host
       - BOT_AUTO_POST_ENABLED=true                                 # 是否启用自动发帖
-      - BOT_AUTO_POST_INTERVAL=180                                 # 发帖间隔（分钟）
+      - BOT_AUTO_POST_INTERVAL=3h                                  # 发帖间隔；30m/2h/1d
       - BOT_AUTO_POST_MAX_PER_DAY=8                                # 每日最大发帖数量（凌晨 0 点重置计数器）
       - BOT_AUTO_POST_VISIBILITY=public                            # 发帖可见性（public/home/followers）
       - BOT_AUTO_POST_LOCAL_ONLY=false                             # 是否禁用联合（仅本地可见）
@@ -78,7 +80,6 @@ services:
       - BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h/1d
       - BOT_RESPONSE_WHITELIST=                                    # 白名单：username@host/userId，这些用户不受以上限制
       - BOT_RESPONSE_BLACKLIST=                                    # 黑名单：username@host/userId，这些用户禁止使用回复
-      - BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线（仅用于 Radar）
       - BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）
       - BOT_TIMELINE_HOME=false                                    # homeTimeline
       - BOT_TIMELINE_LOCAL=false                                   # localTimeline
@@ -199,7 +200,6 @@ bot:
       - "admin@example.com"                         # 用户 ID 或 username@host
 
   timeline:
-    enabled: false                                  # 是否订阅时间线（仅用于 Radar）
     antenna_ids: []                                 # antenna ID 或名称（逗号/空格分隔）
     home: false                                     # homeTimeline
     local: false                                    # localTimeline
@@ -208,7 +208,7 @@ bot:
 
   auto_post:
     enabled: true                                   # 是否启用自动发帖
-    interval_minutes: 180                           # 发帖间隔（分钟）
+    interval: 3h                                    # 发帖间隔（默认分钟；支持 m/h/d，不支持秒）
     max_posts_per_day: 8                            # 每日最大发帖数量（凌晨 0 点重置计数器）
     visibility: "public"                            # 发帖可见性（public/home/followers）
     local_only: false                               # 是否禁用联合（仅本地可见）
@@ -245,16 +245,14 @@ log:
 ```bash
 pip install -e .
 
-twipsybot up         # 启动
-twipsybot status     # 状态
-twipsybot down       # 关闭
-twipsybot restart    # 重启
-twipsybot help       # 帮助
+twipsybot config-check  # 检查配置
+twipsybot run           # 启动
+twipsybot --help        # 帮助
 
 # 或 uv（需安装 uv）
 uv sync
 
-uv run twipsybot up
+uv run twipsybot run
 uv run twipsybot ...
 ```
 
@@ -271,11 +269,10 @@ After=network.target
 [Service]
 Type=exec
 WorkingDirectory=/path/to/twipsybot
-ExecStart=/path/to/<venv>/bin/twipsybot up
+ExecStart=/path/to/<venv>/bin/twipsybot run
 KillMode=control-group
 TimeoutStopSec=5
-Environment=TWIPSYBOT_UP_MODE=foreground \
-            PYTHONUNBUFFERED=1 \
+Environment=PYTHONUNBUFFERED=1 \
             PYTHONIOENCODING=utf-8
 
 [Install]
@@ -299,6 +296,7 @@ systemctl start twipsybot.service
 > [!NOTE]
 >
 > - 请遵守联邦规则，启用机器人账号并在实例内部测试功能，避免设置不当影响其他实例
+> - Docker 配置或鉴权失败时容器会挂起；修正配置后重启容器即可
 > - `db.clear` 会重置对用户的回复限制，手动删除数据库文件会丢失聊天管理命令设置的黑白名单
 
 ## 生态
@@ -322,6 +320,6 @@ systemctl start twipsybot.service
 | 插件 | 功能描述 |
 | :---: | --- |
 | [KeyAct](./plugins/keyact) | 匹配自定义关键词触发回复，绕过 AI |
-| [Radar](./plugins/radar) | 与天线推送的帖子互动（反应、回复、转发、引用） |
+| [Radar](./plugins/radar) | 主动与天线发现的帖子互动（反应、回复、转发、引用） |
 | [Topics](./plugins/topics) | 为自动发帖提供内容源（文本主题 / RSS） |
 | [Vision](./plugins/vision) | 理解 @提及或聊天中的图像并生成回复 |

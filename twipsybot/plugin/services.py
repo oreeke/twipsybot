@@ -1,17 +1,9 @@
-import asyncio
 from collections.abc import Sequence
-from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import dataclass, field
 from typing import Any
 
 from ..shared.config_keys import ConfigKeys
-
-
-@dataclass(slots=True)
-class _ActorLock:
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    users: int = 0
+from ..shared.locks import KeyedAsyncLock, actor_key
 
 
 class DriveServiceAdapter:
@@ -136,7 +128,7 @@ class NamespacedPluginStorage:
 class BotControlAdapter:
     def __init__(self, bot: Any):
         self._bot = bot
-        self._actor_locks: dict[str, _ActorLock] = {}
+        self._actor_locks = KeyedAsyncLock()
 
     @property
     def user_id(self) -> str | None:
@@ -146,25 +138,8 @@ class BotControlAdapter:
     def username(self) -> str | None:
         return self._bot.bot_username
 
-    @asynccontextmanager
-    async def actor_lock(self, user_id: str | None, username: str | None):
-        key = None
-        if user_id:
-            key = f"id:{user_id}"
-        elif username:
-            key = f"name:{username}"
-        if key is None:
-            yield
-            return
-        entry = self._actor_locks.setdefault(key, _ActorLock())
-        entry.users += 1
-        try:
-            async with entry.lock:
-                yield
-        finally:
-            entry.users -= 1
-            if entry.users == 0 and self._actor_locks.get(key) is entry:
-                self._actor_locks.pop(key)
+    def actor_lock(self, user_id: str | None, username: str | None):
+        return self._actor_locks.hold(actor_key(user_id, username))
 
     def load_antenna_selectors(self) -> list[str]:
         return self._bot.connect.load_antenna_selectors()

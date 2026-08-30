@@ -24,7 +24,6 @@ bot:
       - "admin@example.com"                         # 用户 ID 或 username@host
 
   timeline:
-    enabled: false                                  # 是否订阅时间线（仅用于 Radar）
     antenna_ids: []                                 # antenna ID 或名称（逗号/空格分隔）
     home: false                                     # homeTimeline
     local: false                                    # localTimeline
@@ -33,7 +32,7 @@ bot:
 
   auto_post:
     enabled: true                                   # 是否启用自动发帖
-    interval_minutes: 180                           # 发帖间隔（分钟）
+    interval: 3h                                    # 发帖间隔；30m/2h/1d
     max_posts_per_day: 8                            # 每日最大发帖数量（凌晨 0 点重置计数器）
     visibility: "public"                            # 发帖可见性（public/home/followers）
     local_only: false                               # 是否禁用联合（仅本地可见）

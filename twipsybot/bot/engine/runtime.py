@@ -1,22 +1,13 @@
 import asyncio
 from collections.abc import Coroutine
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from .core import MisskeyBot
+from typing import Any
 
 __all__ = ("BotRuntime",)
 
 
 class BotRuntime:
-    def __init__(
-        self,
-        bot: "MisskeyBot",
-        loop: asyncio.AbstractEventLoop | None = None,
-    ):
-        self.bot = bot
-        self.loop = loop or asyncio.get_running_loop()
+    def __init__(self):
         self.startup_time = datetime.now(UTC)
         self.running = False
         self.tasks: dict[str, asyncio.Task[Any]] = {}
@@ -24,15 +15,9 @@ class BotRuntime:
     def add_task(self, name: str, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         if name in self.tasks and not self.tasks[name].done():
             self.tasks[name].cancel()
-        task = self.loop.create_task(coro)
+        task = asyncio.create_task(coro)
         self.tasks[name] = task
         return task
-
-    def cancel_task(self, name: str) -> bool:
-        if name in self.tasks and not self.tasks[name].done():
-            self.tasks[name].cancel()
-            return True
-        return False
 
     async def cleanup_tasks(self) -> None:
         for task in self.tasks.values():

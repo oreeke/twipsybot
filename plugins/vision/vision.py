@@ -25,13 +25,8 @@ class VisionPlugin(PluginBase):
         config = self.context.config
         self.max_images = int(config.get("max_images", 3))
         self.max_bytes = self._parse_size(config.get("max_bytes"), 6 * 1024 * 1024)
-        self.use_thumbnail = bool(config.get("use_thumbnail", True))
-        self.default_prompt = str(
-            config.get("default_prompt", "请描述图片内容并回答用户的问题。")
-        )
-
-    def _use_responses_api(self) -> bool:
-        return self.context.openai.uses_responses_api
+        self.use_thumbnail = self._parse_bool(config.get("use_thumbnail"), True)
+        self.default_prompt = str(config.get("default_prompt", "请描述图片内容。"))
 
     @staticmethod
     def _make_text_part(text: str, *, use_responses: bool) -> dict[str, Any]:
@@ -131,7 +126,7 @@ class VisionPlugin(PluginBase):
     async def _build_user_content(
         self, text: str, files: tuple[FileRef, ...]
     ) -> list[dict[str, Any]]:
-        use_responses = self._use_responses_api()
+        use_responses = self.context.openai.uses_responses_api
         images: list[dict[str, Any]] = []
         for file in files[: self.max_images]:
             if not (
@@ -150,17 +145,14 @@ class VisionPlugin(PluginBase):
         fid = file.id
         mime = self._normalize_image_mime(file.mime_type)
         data = await self._try_fetch_bytes_by_url(self._select_direct_url(file))
-        if data is not None and not mime:
+        if not mime:
             mime = await self._ensure_image_mime(fid, mime)
-        if data is None or not mime:
-            mime = await self._ensure_image_mime(fid, mime)
-            if not mime:
-                return None
+        if not mime:
+            return None
+        if data is None:
             data = await self._try_download_bytes_by_id(fid)
             if data is None:
                 return None
-        if not mime or data is None:
-            return None
         return self._make_image_part(mime, data, use_responses=use_responses)
 
     async def _call_vision(
@@ -169,7 +161,7 @@ class VisionPlugin(PluginBase):
         system_prompt = self.context.openai.system_prompt.strip()
         messages: list[dict[str, Any]] = []
         if system_prompt:
-            if self._use_responses_api():
+            if self.context.openai.uses_responses_api:
                 messages.append(
                     {
                         "role": "system",

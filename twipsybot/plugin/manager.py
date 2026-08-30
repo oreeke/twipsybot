@@ -4,7 +4,7 @@ import inspect
 import re
 import sys
 from collections.abc import Coroutine
-from contextlib import asynccontextmanager, suppress
+from contextlib import suppress
 from copy import deepcopy
 from pathlib import Path
 from types import MappingProxyType
@@ -70,30 +70,25 @@ class PluginManager:
         self._active_hooks = 0
         self._hooks_idle = asyncio.Event()
         self._hooks_idle.set()
-        self._management_lock = asyncio.Lock()
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.cleanup_plugins()
-        return False
 
     def _iter_plugin_dirs(self):
         for plugin_dir in self.plugins_dir.iterdir():
-            if not plugin_dir.is_dir():
-                continue
-            if plugin_dir.name.startswith("."):
-                continue
-            if plugin_dir.name in {"__pycache__"}:
-                continue
-            yield plugin_dir
+            if (
+                plugin_dir.is_dir()
+                and not plugin_dir.name.startswith(".")
+                and plugin_dir.name != "__pycache__"
+            ):
+                yield plugin_dir
 
     def _discover_plugin_dir(
         self, plugin_dir: Path, plugin_config: dict[str, Any]
     ) -> tuple[bool, bool]:
         configured = self._is_plugin_configured(plugin_dir)
-        enabled = bool(plugin_config.get("enabled", False))
+        try:
+            enabled = PluginBase._parse_bool(plugin_config.get("enabled"), False)
+        except ValueError as e:
+            logger.error(f"Invalid plugin config: plugin={plugin_dir.name}: {e}")
+            enabled = False
         key = plugin_dir.name
         name = self._camelize(key)
         self.discovered_plugins[key] = {
@@ -107,17 +102,6 @@ class PluginManager:
             logger.debug(f"Discovered plugin: {plugin_dir.name} (status: {status})")
         return configured, enabled
 
-    def _maybe_load_plugin_dir(
-        self,
-        plugin_dir: Path,
-        plugin_config: dict[str, Any],
-        *,
-        configured: bool,
-        enabled: bool,
-    ) -> None:
-        if configured and enabled:
-            self._load_plugin(plugin_dir, plugin_config)
-
     async def load_plugins(self) -> None:
         if not self.plugins_dir.exists():
             logger.info(f"Plugins directory not found: {self.plugins_dir}")
@@ -126,9 +110,8 @@ class PluginManager:
         for plugin_dir in self._iter_plugin_dirs():
             plugin_config = self._load_plugin_config(plugin_dir)
             configured, enabled = self._discover_plugin_dir(plugin_dir, plugin_config)
-            self._maybe_load_plugin_dir(
-                plugin_dir, plugin_config, configured=configured, enabled=enabled
-            )
+            if configured and enabled:
+                self._load_plugin(plugin_dir, plugin_config)
         await self._initialize_plugins()
         enabled_count = sum(plugin._enabled for plugin in self.plugins.values())
         logger.info(
@@ -336,25 +319,23 @@ class PluginManager:
         return False
 
     async def startup_plugins(self) -> None:
-        async with self._management_lock:
-            for plugin in self._iter_enabled_plugins():
-                if not plugin._initialized:
-                    continue
-                if await self._call_lifecycle(plugin, "on_startup"):
-                    plugin._started = True
-                    continue
-                await self._cleanup_plugin(plugin)
-                plugin._set_enabled(False)
-            self._restore_hook_dispatch(True)
+        for plugin in self._iter_enabled_plugins():
+            if not plugin._initialized:
+                continue
+            if await self._call_lifecycle(plugin, "on_startup"):
+                plugin._started = True
+                continue
+            await self._cleanup_plugin(plugin)
+            plugin._set_enabled(False)
+        self._accepting_hooks = True
 
     async def shutdown_plugins(self) -> None:
-        async with self._management_lock:
-            await self._pause_hook_dispatch()
-            for plugin in self._iter_enabled_plugins():
-                if not plugin._started:
-                    continue
-                await self._call_lifecycle(plugin, "on_shutdown")
-                plugin._started = False
+        await self._pause_hook_dispatch()
+        for plugin in self._iter_enabled_plugins():
+            if not plugin._started:
+                continue
+            await self._call_lifecycle(plugin, "on_shutdown")
+            plugin._started = False
 
     @staticmethod
     async def _call_lifecycle(plugin: PluginBase, method_name: str) -> bool:
@@ -377,11 +358,10 @@ class PluginManager:
         return False
 
     async def cleanup_plugins(self) -> None:
-        async with self._management_lock:
-            await self._pause_hook_dispatch()
-            for plugin in tuple(self.plugins.values()):
-                if plugin._initialized:
-                    await self._cleanup_plugin(plugin)
+        await self._pause_hook_dispatch()
+        for plugin in tuple(self.plugins.values()):
+            if plugin._initialized:
+                await self._cleanup_plugin(plugin)
 
     def _begin_hook_dispatch(self) -> bool:
         if not self._accepting_hooks:
@@ -398,19 +378,6 @@ class PluginManager:
     async def _pause_hook_dispatch(self) -> None:
         self._accepting_hooks = False
         await self._hooks_idle.wait()
-
-    def _restore_hook_dispatch(self, accepting: bool) -> None:
-        self._accepting_hooks = accepting
-
-    @asynccontextmanager
-    async def _paused_hook_dispatch(self):
-        resume = self._accepting_hooks
-        self._accepting_hooks = False
-        try:
-            await self._hooks_idle.wait()
-            yield
-        finally:
-            self._accepting_hooks = resume
 
     @staticmethod
     async def _complete_before_cancellation(
@@ -544,19 +511,13 @@ class PluginManager:
         return results
 
     def get_plugin_info(self) -> list[dict[str, Any]]:
-        loaded = {name: plugin._get_info() for name, plugin in self.plugins.items()}
-        configured = {
+        info = {
             name: info
             for name, info in self.discovered_plugins.items()
-            if info.get("configured") and name not in loaded
+            if info.get("configured")
         }
-        result: list[dict[str, Any]] = []
-        for name in sorted(loaded.keys() | configured.keys()):
-            if name in loaded:
-                result.append(loaded[name])
-            else:
-                result.append(configured[name])
-        return result
+        info.update({name: plugin._get_info() for name, plugin in self.plugins.items()})
+        return [info[name] for name in sorted(info)]
 
     def get_plugin(self, name: str) -> PluginBase | None:
         return self.plugins.get(name)
@@ -584,25 +545,6 @@ class PluginManager:
                 f"Auto-post confirmation failed: plugin={plugin.context.name}: {e}"
             )
 
-    def _find_plugin_by_name(self, name: str) -> PluginBase | None:
-        return self.plugins.get(name) or next(
-            (p for n, p in self.plugins.items() if n.lower() == name.lower()), None
-        )
-
-    def _find_plugin_dir(self, name: str) -> Path | None:
-        if not self.plugins_dir.exists():
-            return None
-        lowered = name.lower()
-        for plugin_dir in self.plugins_dir.iterdir():
-            if (
-                plugin_dir.is_dir()
-                and not plugin_dir.name.startswith(".")
-                and plugin_dir.name not in {"__pycache__"}
-                and plugin_dir.name.lower() == lowered
-            ):
-                return plugin_dir
-        return None
-
     @staticmethod
     async def _cleanup_plugin(plugin: PluginBase) -> None:
         cleanup_task = asyncio.create_task(PluginManager._run_cleanup(plugin))
@@ -627,95 +569,3 @@ class PluginManager:
         finally:
             plugin._initialized = False
             plugin._started = False
-
-    async def _cleanup_plugin_instance(self, plugin: PluginBase | None) -> None:
-        if not plugin or not plugin._initialized:
-            return
-        await self._cleanup_plugin(plugin)
-
-    @staticmethod
-    def _unload_plugin_module(key: str) -> None:
-        exact = f"plugins.{key}"
-        prefix = f"{exact}."
-        for mod_name in [n for n in sys.modules if n == exact or n.startswith(prefix)]:
-            sys.modules.pop(mod_name, None)
-
-    def _load_plugin_from_dir(self, plugin_dir: Path) -> PluginBase | None:
-        self._load_plugin(plugin_dir, self._load_plugin_config(plugin_dir))
-        return self.plugins.get(plugin_dir.name)
-
-    async def _start_plugin_instance(self, plugin: PluginBase) -> bool:
-        if not plugin._enabled:
-            return True
-        return await self._initialize_plugin(plugin)
-
-    async def set_plugin_enabled(self, name: str, enabled: bool) -> str:
-        """Return "" on success, otherwise a failure reason code."""
-        async with self._management_lock:
-            async with self._paused_hook_dispatch():
-                if not (plugin_dir := self._find_plugin_dir(name)):
-                    return "not_found"
-                self._master_config = self._load_master_config()
-                if not self._is_plugin_configured(plugin_dir):
-                    return "not_configured"
-                key = plugin_dir.name
-                if enabled:
-                    operation = self._enable_plugin_by_key(key, plugin_dir)
-                else:
-                    operation = self._disable_plugin_by_key(key)
-                return await self._complete_before_cancellation(operation)
-
-    async def _enable_plugin_by_key(self, key: str, plugin_dir: Path) -> str:
-        plugin = self._find_plugin_by_name(key)
-        if plugin and plugin._enabled and plugin._initialized:
-            return ""
-        if not plugin:
-            self._unload_plugin_module(key)
-            if not (plugin := self._load_plugin_from_dir(plugin_dir)):
-                return "load_failed"
-        plugin._set_enabled(True)
-        if key in self.discovered_plugins:
-            self.discovered_plugins[key]["enabled"] = True
-        if await self._start_plugin_instance(plugin):
-            return ""
-        return "init_failed"
-
-    async def _disable_plugin_by_key(self, key: str) -> str:
-        plugin = self._find_plugin_by_name(key)
-        await self._cleanup_plugin_instance(plugin)
-        if plugin:
-            plugin._set_enabled(False)
-        self.plugins.pop(key, None)
-        self._unload_plugin_module(key)
-        if key in self.discovered_plugins:
-            self.discovered_plugins[key]["enabled"] = False
-        return ""
-
-    async def reload_plugin(self, name: str) -> str:
-        """Return "" on success, otherwise a failure reason code."""
-        async with self._management_lock:
-            async with self._paused_hook_dispatch():
-                if not (plugin_dir := self._find_plugin_dir(name)):
-                    return "not_found"
-                return await self._complete_before_cancellation(
-                    self._reload_plugin(plugin_dir)
-                )
-
-    async def _reload_plugin(self, plugin_dir: Path) -> str:
-        self._master_config = self._load_master_config()
-        key = plugin_dir.name
-        await self._cleanup_plugin_instance(self._find_plugin_by_name(key))
-        self.plugins.pop(key, None)
-        self._unload_plugin_module(key)
-        plugin_config = self._load_plugin_config(plugin_dir)
-        self._discover_plugin_dir(plugin_dir, plugin_config)
-        self._load_plugin(plugin_dir, plugin_config)
-        if not (plugin := self.plugins.get(key)):
-            return "load_failed"
-        if not plugin._enabled:
-            self.plugins.pop(key, None)
-            self._unload_plugin_module(key)
-            return ""
-        if await self._start_plugin_instance(plugin):
-            return ""
-        return "init_failed"

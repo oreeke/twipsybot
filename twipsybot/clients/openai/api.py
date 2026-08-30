@@ -17,16 +17,12 @@ from ...shared.constants import (
 )
 from ...shared.exceptions import APIConnectionError, AuthenticationError
 from .extract import (
-    build_structured_formats,
     extract_responses_text,
-    parse_json,
     process_chat_completions_response,
-    validate_structured_output,
 )
 from .requests import (
     make_chat_completions_request,
     make_responses_request,
-    should_use_responses,
 )
 
 __all__ = ("OpenAIAPI",)
@@ -74,7 +70,6 @@ class OpenAIAPI:
         max_tokens: int | None,
         temperature: float | None,
         call_type: str,
-        response_format: dict[str, Any] | None = None,
     ) -> str:
         messages = self._to_chat_completions_messages(messages)
         try:
@@ -86,7 +81,6 @@ class OpenAIAPI:
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                response_format=response_format,
             )
             return process_chat_completions_response(response, call_type)
         except BadRequestError as e:
@@ -99,14 +93,9 @@ class OpenAIAPI:
             logger.error(f"Invalid API response format: {e}")
             raise ValueError(self._safe_error_message(e)) from e
 
-    def _should_use_responses(self) -> bool:
-        if self._responses_disabled:
-            return False
-        return should_use_responses(api_mode=self.api_mode)
-
     @property
     def uses_responses_api(self) -> bool:
-        return self._should_use_responses()
+        return not self._responses_disabled and self.api_mode != "chat"
 
     @staticmethod
     def _to_chat_completions_messages(
@@ -165,7 +154,7 @@ class OpenAIAPI:
         temperature: float | None,
         call_type: str,
     ) -> str:
-        if not self._should_use_responses():
+        if not self.uses_responses_api:
             return await self._call_api_common(
                 messages, max_tokens, temperature, call_type
             )
@@ -202,70 +191,6 @@ class OpenAIAPI:
         except (ValueError, TypeError, KeyError) as e:
             logger.error(f"Invalid API response format: {e}")
             raise ValueError(self._safe_error_message(e)) from e
-
-    async def _call_api_structured(
-        self,
-        messages: list[dict[str, Any]],
-        max_tokens: int | None,
-        temperature: float | None,
-        call_type: str,
-        *,
-        response_format: dict[str, Any] | None,
-        text_format: dict[str, Any] | None,
-    ) -> str:
-        if not self._should_use_responses():
-            return await self._call_api_common(
-                messages,
-                max_tokens,
-                temperature,
-                call_type,
-                response_format=response_format,
-            )
-        try:
-            response = await make_responses_request(
-                client=self.client,
-                semaphore=self._semaphore,
-                model=self.model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                text_format=text_format,
-            )
-            text = extract_responses_text(response)
-            logger.debug(
-                f"OpenAI API {call_type} call succeeded; output length: {len(text)}"
-            )
-            return text
-        except OpenAIAuthenticationError as e:
-            logger.error(f"API authentication failed: {e}")
-            raise AuthenticationError(self._safe_error_message(e)) from e
-        except APIStatusError as e:
-            if not self._is_responses_unavailable(e):
-                if not isinstance(e, BadRequestError):
-                    raise
-                logger.error(f"API request parameter error: {e}")
-                raise ValueError(self._safe_error_message(e)) from e
-            self._responses_disabled = True
-            logger.warning(
-                f"Responses API unavailable; falling back to Chat Completions: {e}"
-            )
-            return await self._call_api_common(
-                messages,
-                max_tokens,
-                temperature,
-                call_type,
-                response_format=response_format,
-            )
-        except (ValueError, TypeError, KeyError) as e:
-            logger.error(f"Invalid API response format: {e}")
-            raise ValueError(self._safe_error_message(e)) from e
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
-        return False
 
     async def close(self):
         if getattr(self, "client", None):
@@ -293,79 +218,6 @@ class OpenAIAPI:
         return await self._call_api(
             messages, max_tokens, temperature, "single-turn text"
         )
-
-    async def generate_structured(
-        self,
-        prompt: str,
-        system_prompt: str | None = None,
-        *,
-        schema: dict[str, Any] | None = None,
-        name: str = "result",
-        strict: bool = True,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        expected_type: type | tuple[type, ...] | None = (dict, list),
-        required_keys: tuple[str, ...] | None = None,
-        max_attempts: int = 2,
-    ) -> Any:
-        if max_attempts < 1:
-            raise ValueError()
-        rf, tf = build_structured_formats(schema, name=name, strict=strict)
-        messages = self._build_messages(prompt, system_prompt)
-        last_text = ""
-        for attempt in range(max_attempts):
-            if attempt:
-                repair = (
-                    "Output a single valid JSON only. No Markdown. No explanations.\n"
-                    f"Previous output: {last_text}\n"
-                    "Fix it into valid JSON:"
-                )
-                messages = [{"role": "user", "content": repair}]
-            last_text = await self._call_api_structured(
-                messages,
-                max_tokens,
-                temperature,
-                "single-turn structured",
-                response_format=rf,
-                text_format=tf,
-            )
-            try:
-                obj = parse_json(last_text)
-                return validate_structured_output(
-                    obj, expected_type=expected_type, required_keys=required_keys
-                )
-            except ValueError:
-                continue
-        raise ValueError()
-
-    async def generate_json(
-        self,
-        prompt: str,
-        system_prompt: str | None = None,
-        *,
-        schema: dict[str, Any] | None = None,
-        name: str = "result",
-        strict: bool = True,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        required_keys: tuple[str, ...] | None = None,
-        max_attempts: int = 2,
-    ) -> dict[str, Any]:
-        obj = await self.generate_structured(
-            prompt,
-            system_prompt,
-            schema=schema,
-            name=name,
-            strict=strict,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            expected_type=dict,
-            required_keys=required_keys,
-            max_attempts=max_attempts,
-        )
-        if not isinstance(obj, dict):
-            raise ValueError()
-        return obj
 
     async def generate_chat(
         self,

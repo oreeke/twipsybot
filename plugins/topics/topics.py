@@ -7,7 +7,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
-import anyio
 import feedparser
 from bs4 import BeautifulSoup
 from loguru import logger
@@ -19,6 +18,9 @@ from twipsybot.plugin import (
     PluginBase,
     PromptModificationResult,
 )
+
+_RSS_TIMEOUT = aiohttp.ClientTimeout(total=60)
+_RSS_HEADERS = {"User-Agent": "Twipsy-RSS"}
 
 
 class TopicsPlugin(PluginBase):
@@ -32,7 +34,7 @@ class TopicsPlugin(PluginBase):
         self.txt_ai_prefix = config.get("txt_ai_prefix") or ""
         self.txt_start_line = config.get("txt_start_line", 1)
         self.rss_list = config.get("rss_list") or []
-        self.rss_ai = bool(config.get("rss_ai", False))
+        self.rss_ai = self._parse_bool(config.get("rss_ai"), False)
         self.rss_post_mode = str(config.get("rss_post_mode") or "batch").strip().lower()
         if self.rss_post_mode not in {"batch", "rotate"}:
             self.rss_post_mode = "batch"
@@ -47,18 +49,18 @@ class TopicsPlugin(PluginBase):
     async def initialize(self) -> bool:
         try:
             if self.source == "rss":
-                await self._initialize_rss_data()
+                await self._initialize_storage(
+                    {"rss_recent_keys": "[]", "rss_last_feed_idx": "0"}
+                )
+                details = f"RSS feeds: {len(self._get_rss_urls())}"
             else:
                 await self._load_topics()
-                await self._initialize_plugin_data()
-            if self.source == "rss":
-                self._log_plugin_action(
-                    "initialized", f"RSS feeds: {len(self._get_rss_urls())}"
-                )
-            else:
-                self._log_plugin_action(
-                    "initialized", f"Custom topics: {len(self.topics)}"
-                )
+                initial_index = max(0, self.txt_start_line - 1)
+                if self.topics:
+                    initial_index %= len(self.topics)
+                await self._initialize_storage({"last_used_line": str(initial_index)})
+                details = f"Custom topics: {len(self.topics)}"
+            self._log_plugin_action("initialized", details)
             return True
         except asyncio.CancelledError:
             raise
@@ -98,32 +100,15 @@ class TopicsPlugin(PluginBase):
             return False
         return bool(parsed.netloc)
 
-    async def _initialize_plugin_data(self) -> None:
+    async def _initialize_storage(self, defaults: dict[str, str]) -> None:
         try:
-            last_used_line = await self.context.storage.get("last_used_line")
-            if last_used_line is None:
-                initial_index = max(0, self.txt_start_line - 1)
-                if self.topics:
-                    initial_index %= len(self.topics)
-                await self.context.storage.set("last_used_line", str(initial_index))
+            for key, value in defaults.items():
+                if await self.context.storage.get(key) is None:
+                    await self.context.storage.set(key, value)
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning(f"Topics plugin DB initialization failed: {e}")
-            raise
-
-    async def _initialize_rss_data(self) -> None:
-        try:
-            recent = await self.context.storage.get("rss_recent_keys")
-            if recent is None:
-                await self.context.storage.set("rss_recent_keys", "[]")
-            last_feed_idx = await self.context.storage.get("rss_last_feed_idx")
-            if last_feed_idx is None:
-                await self.context.storage.set("rss_last_feed_idx", "0")
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.warning(f"Topics plugin RSS DB initialization failed: {e}")
+            logger.warning(f"Topics plugin storage initialization failed: {e}")
             raise
 
     def _use_default_topics(self) -> None:
@@ -137,10 +122,7 @@ class TopicsPlugin(PluginBase):
                 logger.warning(f"Topics file not found: {topics_file_path}")
                 self._use_default_topics()
                 return
-            async with await anyio.open_file(
-                topics_file_path, "r", encoding="utf-8"
-            ) as f:
-                content = await f.read()
+            content = topics_file_path.read_text(encoding="utf-8")
             self.topics = [
                 line.strip() for line in content.splitlines() if line.strip()
             ]
@@ -177,13 +159,11 @@ class TopicsPlugin(PluginBase):
     async def _get_next_rss_posts_rotate(self, urls: list[str]) -> list[str]:
         recent_keys = await self._get_recent_rss_keys()
         recent_set = set(recent_keys)
-        start_idx = await self._get_last_rss_feed_idx()
+        start_idx = await self._get_stored_int("rss_last_feed_idx")
         if start_idx >= len(urls):
             start_idx = 0
 
-        timeout = aiohttp.ClientTimeout(total=60)
-        headers = {"User-Agent": "Twipsy-RSS"}
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+        async with self._rss_session() as session:
             for step in range(len(urls)):
                 feed_idx = (start_idx + step) % len(urls)
                 url = urls[feed_idx]
@@ -207,7 +187,9 @@ class TopicsPlugin(PluginBase):
                     )
                 return contents
 
-        await self._set_last_rss_feed_idx((start_idx + 1) % len(urls))
+        await self._set_storage_value(
+            "rss_last_feed_idx", str((start_idx + 1) % len(urls))
+        )
         return []
 
     def _get_rss_urls(self) -> list[str]:
@@ -215,10 +197,12 @@ class TopicsPlugin(PluginBase):
             u.strip() for u in (self.rss_list or []) if isinstance(u, str) and u.strip()
         ]
 
+    @staticmethod
+    def _rss_session() -> aiohttp.ClientSession:
+        return aiohttp.ClientSession(timeout=_RSS_TIMEOUT, headers=_RSS_HEADERS)
+
     async def _fetch_all_rss_candidates(self, urls: list[str]) -> list[dict[str, Any]]:
-        timeout = aiohttp.ClientTimeout(total=60)
-        headers = {"User-Agent": "Twipsy-RSS"}
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+        async with self._rss_session() as session:
             tasks = [
                 self._fetch_rss_candidates(session, url, feed_idx=i)
                 for i, url in enumerate(urls)
@@ -282,8 +266,8 @@ class TopicsPlugin(PluginBase):
         updated = self._append_recent_key(recent_keys, key, limit=200)
         if not await self._set_recent_rss_keys(updated):
             raise RuntimeError("failed to persist published RSS entry")
-        if next_feed_idx is not None and not await self._set_last_rss_feed_idx(
-            next_feed_idx
+        if next_feed_idx is not None and not await self._set_storage_value(
+            "rss_last_feed_idx", str(max(0, next_feed_idx))
         ):
             raise RuntimeError("failed to persist RSS feed position")
 
@@ -429,24 +413,24 @@ class TopicsPlugin(PluginBase):
             logger.warning(f"Failed to save rss_recent_keys: {e}")
             return False
 
-    async def _get_last_rss_feed_idx(self) -> int:
+    async def _get_stored_int(self, key: str) -> int:
         try:
-            raw = await self.context.storage.get("rss_last_feed_idx")
+            raw = await self.context.storage.get(key)
             return max(0, int(raw)) if raw else 0
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning(f"Failed to load rss_last_feed_idx: {e}")
+            logger.warning(f"Failed to load {key}: {e}")
             return 0
 
-    async def _set_last_rss_feed_idx(self, idx: int) -> bool:
+    async def _set_storage_value(self, key: str, value: str) -> bool:
         try:
-            await self.context.storage.set("rss_last_feed_idx", str(max(0, idx)))
+            await self.context.storage.set(key, value)
             return True
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning(f"Failed to save rss_last_feed_idx: {e}")
+            logger.warning(f"Failed to save {key}: {e}")
             return False
 
     @staticmethod
@@ -463,10 +447,12 @@ class TopicsPlugin(PluginBase):
         if not self.topics:
             return fallback
         try:
-            last_used_line = await self._get_last_used_line()
+            last_used_line = await self._get_stored_int("last_used_line")
             index = last_used_line % len(self.topics)
             topic = self.topics[index]
-            await self._update_last_used_line((index + 1) % len(self.topics))
+            await self._set_storage_value(
+                "last_used_line", str((index + 1) % len(self.topics))
+            )
             self._log_plugin_action("selected topic", f"{topic} (line: {index + 1})")
             return topic
         except asyncio.CancelledError:
@@ -474,21 +460,3 @@ class TopicsPlugin(PluginBase):
         except Exception as e:
             logger.warning(f"Failed to get next topic: {e}")
             return fallback
-
-    async def _get_last_used_line(self) -> int:
-        try:
-            result = await self.context.storage.get("last_used_line")
-            return max(0, int(result)) if result else 0
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.warning(f"Failed to get last used line: {e}")
-            return 0
-
-    async def _update_last_used_line(self, line_number: int) -> None:
-        try:
-            await self.context.storage.set("last_used_line", str(line_number))
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.warning(f"Failed to update last used line: {e}")

@@ -1,3 +1,3 @@
-from .openai_api import OpenAIAPI
+from .api import OpenAIAPI
 
 __all__ = ("OpenAIAPI",)

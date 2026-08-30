@@ -26,10 +26,11 @@ class KeyActPlugin(PluginBase):
 
     def __init__(self, context):
         super().__init__(context)
-        self.mention_enabled = bool(self.context.config.get("mention_enabled", True))
-        self.chat_enabled = bool(self.context.config.get("chat_enabled", True))
-        self.default_case_sensitive = bool(
-            self.context.config.get("case_sensitive", False)
+        config = self.context.config
+        self.mention_enabled = self._parse_bool(config.get("mention_enabled"), True)
+        self.chat_enabled = self._parse_bool(config.get("chat_enabled"), True)
+        self.default_case_sensitive = self._parse_bool(
+            config.get("case_sensitive"), False
         )
         self.rules: tuple[_Rule, ...] = ()
 
@@ -40,10 +41,6 @@ class KeyActPlugin(PluginBase):
             f"rules={len(self.rules)}, mention={self.mention_enabled}, chat={self.chat_enabled}",
         )
         return True
-
-    def _clean_text(self, text: str, *, case_sensitive: bool) -> str:
-        text = _MENTION_TOKEN_RE.sub("", text).strip()
-        return text if case_sensitive else text.lower()
 
     @staticmethod
     def _as_keywords(v: Any) -> tuple[str, ...]:
@@ -59,15 +56,19 @@ class KeyActPlugin(PluginBase):
         return ()
 
     def _parse_rule_item(self, item: dict[str, Any]) -> _Rule | None:
-        if not bool(item.get("enabled", True)):
+        if not self._parse_bool(item.get("enabled"), True):
             return None
         response = item.get("response")
         if not isinstance(response, str) or not (response := response.strip()):
             return None
+        case_sensitive = self._parse_bool(
+            item.get("case_sensitive"), self.default_case_sensitive
+        )
         keywords = self._as_keywords(item.get("keywords") or item.get("keyword"))
+        if not case_sensitive:
+            keywords = tuple(keyword.lower() for keyword in keywords)
         if not keywords:
             return None
-        case_sensitive = bool(item.get("case_sensitive", self.default_case_sensitive))
         return _Rule(
             keywords=keywords,
             response=response,
@@ -81,26 +82,14 @@ class KeyActPlugin(PluginBase):
         rules = (self._parse_rule_item(item) for item in raw if isinstance(item, dict))
         return tuple(r for r in rules if r is not None)
 
-    def _match_rule(self, rule: _Rule, *, text_clean: str) -> bool:
-        for k in rule.keywords:
-            kk = k if rule.case_sensitive else k.lower()
-            if text_clean == kk:
-                return True
-        return False
-
     def _handle(self, text: str) -> HandledResult | None:
-        if not self.rules:
+        if not self.rules or not text:
             return None
-        if not text:
-            return None
+        cleaned = _MENTION_TOKEN_RE.sub("", text).strip()
+        lowered = cleaned.lower()
         for rule in self.rules:
-            text_clean = self._clean_text(
-                text,
-                case_sensitive=rule.case_sensitive,
-            )
-            if not text_clean:
-                continue
-            if self._match_rule(rule, text_clean=text_clean):
+            candidate = cleaned if rule.case_sensitive else lowered
+            if candidate and candidate in rule.keywords:
                 return self.handled(rule.response)
         return None
 

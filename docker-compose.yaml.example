@@ -22,7 +22,7 @@ services:
       - OPENAI_TEMPERATURE=0.8                                     # 温度参数
       - BOT_SYSTEM_PROMPT=你是一个可爱的AI助手...                    # 系统提示词（支持文件导入："prompts/*.txt"）
       - BOT_AUTO_POST_ENABLED=true                                 # 是否启用自动发帖
-      - BOT_AUTO_POST_INTERVAL=180                                 # 发帖间隔（分钟）
+      - BOT_AUTO_POST_INTERVAL=3h                                  # 发帖间隔；30m/2h/1d
       - BOT_AUTO_POST_MAX_PER_DAY=8                                # 每日最大发帖数量（凌晨 0 点重置计数器）
       - BOT_AUTO_POST_VISIBILITY=public                            # 发帖可见性（public/home/followers）
       - BOT_AUTO_POST_LOCAL_ONLY=false                             # 是否禁用联合（仅本地可见）
@@ -37,7 +37,6 @@ services:
       - BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h/1d
       - BOT_RESPONSE_WHITELIST=                                    # 白名单：username@host/userId，这些用户不受以上限制
       - BOT_RESPONSE_BLACKLIST=                                    # 黑名单：username@host/userId，这些用户禁止使用回复
-      - BOT_TIMELINE_ENABLED=false                                 # 是否订阅时间线（仅用于 Radar）
       - BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）
       - BOT_TIMELINE_HOME=false                                    # homeTimeline
       - BOT_TIMELINE_LOCAL=false                                   # localTimeline

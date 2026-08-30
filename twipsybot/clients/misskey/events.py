@@ -90,15 +90,7 @@ class _StreamingEventsMixin:
             return event_type, event_data
         normalized = dict(payload)
         normalized.setdefault("type", "message")
-        msg_id = normalized.get("id")
-        if isinstance(msg_id, str) and msg_id:
-            normalized["id"] = msg_id
         return "message", normalized
-
-    @staticmethod
-    def _extract_dict(container: dict[str, Any], key: str) -> dict[str, Any] | None:
-        value = container.get(key)
-        return value if isinstance(value, dict) else None
 
     def _wrap_note_event(
         self, event_type: str, note: dict[str, Any]
@@ -214,9 +206,8 @@ class _StreamingEventsMixin:
         if event_type == "notification":
             await self._handle_main_notification(event_data)
             return
-        handler_event_type = self._main_handler_event_type(event_type)
-        if handler_event_type:
-            await self._call_handlers(handler_event_type, event_data)
+        if event_type in {"mention", "reply"}:
+            await self._call_handlers("mention", event_data)
             return
         self._log_unknown_main_event(event_type, event_data)
 
@@ -232,7 +223,8 @@ class _StreamingEventsMixin:
         )
 
     async def _handle_main_notification(self, event_data: dict[str, Any]) -> None:
-        notification = self._extract_dict(event_data, "notification")
+        value = event_data.get("notification")
+        notification = value if isinstance(value, dict) else None
         inner_type = notification.get("type") if notification else None
         if inner_type in {"mention", "reply", "newChatMessage"}:
             return
@@ -245,12 +237,6 @@ class _StreamingEventsMixin:
             await self._call_handlers(inner_type, notification)
             return
         await self._call_handlers("notification", event_data)
-
-    @staticmethod
-    def _main_handler_event_type(event_type: str) -> str | None:
-        if event_type in {"mention", "reply"}:
-            return "mention"
-        return None
 
     def _log_unknown_main_event(
         self, event_type: str, event_data: dict[str, Any]
@@ -364,7 +350,7 @@ class _StreamingEventsMixin:
             payload = event_data
         else:
             payload = dict(payload)
-        if isinstance(payload, dict) and "streamingChannel" not in payload:
+        if "streamingChannel" not in payload:
             payload["streamingChannel"] = channel_name
         logger.debug(f"Received {channel_name} note")
         if channel_name == ChannelType.ANTENNA.value:
@@ -376,10 +362,9 @@ class _StreamingEventsMixin:
         handlers = self.event_handlers.get(event_type, [])
         for handler in handlers:
             try:
-                if inspect.iscoroutinefunction(handler):
-                    await handler(data)
-                else:
-                    handler(data)
+                result = handler(data)
+                if inspect.isawaitable(result):
+                    await result
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -395,9 +380,7 @@ class _StreamingEventsMixin:
         return False
 
     def _track_event(self, event_id: str | None, event_type: str | None) -> None:
-        self._track_dedup_key(self._event_dedup_key(event_id, event_type))
-
-    def _track_dedup_key(self, dedup_key: str | None) -> None:
+        dedup_key = self._event_dedup_key(event_id, event_type)
         if dedup_key:
             self.processed_events[dedup_key] = True
 

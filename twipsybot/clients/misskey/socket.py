@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
@@ -7,9 +8,15 @@ import aiohttp
 from loguru import logger
 
 from ...shared.exceptions import WebSocketConnectionError, WebSocketReconnectError
-from ...shared.utils import redact_misskey_access_token
 
 __all__ = ("_StreamingSocketMixin",)
+
+_I_PARAM_RE = re.compile(r"([?&]i=)[^&#\s]+")
+_I_JSON_RE = re.compile(r'("i"\s*:\s*")[^"]+(")')
+
+
+def _redact_access_token(text: str) -> str:
+    return _I_JSON_RE.sub(r"\1***\2", _I_PARAM_RE.sub(r"\1***", text))
 
 
 class _StreamingSocketMixin:
@@ -31,7 +38,7 @@ class _StreamingSocketMixin:
             except (aiohttp.ClientError, OSError) as e:
                 self._buffer_outgoing(message)
                 await self._close_websocket()
-                error_msg = redact_misskey_access_token(str(e))
+                error_msg = _redact_access_token(str(e))
                 logger.debug(f"WebSocket send failed; reconnecting: {error_msg}")
 
     async def _send_control(self, message: dict[str, Any]) -> None:
@@ -43,7 +50,7 @@ class _StreamingSocketMixin:
                 await ws.send_json(message)
             except (aiohttp.ClientError, OSError) as e:
                 await self._close_websocket()
-                error_msg = redact_misskey_access_token(str(e))
+                error_msg = _redact_access_token(str(e))
                 logger.debug(f"WebSocket send failed; reconnecting: {error_msg}")
                 raise WebSocketReconnectError() from e
 
@@ -107,7 +114,7 @@ class _StreamingSocketMixin:
             raise
         except (aiohttp.ClientError, OSError) as e:
             await self._close_websocket()
-            error_msg = redact_misskey_access_token(str(e))
+            error_msg = _redact_access_token(str(e))
             logger.error(f"WebSocket connection failed: {error_msg}")
             raise WebSocketConnectionError() from e
 

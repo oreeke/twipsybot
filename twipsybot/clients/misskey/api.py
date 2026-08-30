@@ -1,11 +1,16 @@
 import asyncio
 import json
 import time
-from collections.abc import Callable
 from typing import Any
 
 import aiohttp
 from loguru import logger
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
 from ...shared.constants import (
     API_MAX_RETRIES,
@@ -23,7 +28,6 @@ from ...shared.exceptions import (
     APIRateLimitError,
     AuthenticationError,
 )
-from ...shared.utils import retry_async
 from .drive import MisskeyDrive
 from .transport import TCPClient
 
@@ -46,13 +50,6 @@ class MisskeyAPI:
         self._antennas_cache: list[dict[str, Any]] = []
         self._antennas_cache_expires_at = 0.0
         self._antennas_cache_lock = asyncio.Lock()
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
-        return False
 
     async def close(self) -> None:
         await self.transport.close_session(silent=True)
@@ -116,9 +113,13 @@ class MisskeyAPI:
         logger.error(f"API request failed: {status} - {endpoint} - {error_text}")
         raise APIConnectionError(error_text)
 
-    @retry_async(
-        max_retries=API_MAX_RETRIES,
-        retryable_exceptions=(APIConnectionError, APIRateLimitError),
+    @retry(
+        stop=stop_after_attempt(API_MAX_RETRIES),
+        wait=wait_random_exponential(multiplier=1, max=30),
+        retry=retry_if_exception_type((APIConnectionError, APIRateLimitError)),
+        before_sleep=lambda state: logger.info(
+            f"Retry attempt #{state.attempt_number}..."
+        ),
     )
     async def make_request(
         self, endpoint: str, data: dict[str, Any] | None = None
@@ -142,34 +143,6 @@ class MisskeyAPI:
         ) as e:
             logger.error(f"HTTP request error: {e}")
             raise APIConnectionError() from e
-
-    @retry_async(
-        max_retries=API_MAX_RETRIES,
-        retryable_exceptions=(APIConnectionError, APIRateLimitError),
-    )
-    async def make_multipart_request(
-        self,
-        endpoint: str,
-        build_form: Callable[[], tuple[aiohttp.FormData, list[Any]]],
-    ) -> Any:
-        url = f"{self.instance_url}/api/{endpoint}"
-        resources: list[Any] = []
-        try:
-            form, resources = build_form()
-            session: aiohttp.ClientSession = self.session
-            async with self._semaphore, session.post(url, data=form) as response:
-                return await self._process_response(response, endpoint)
-        except (aiohttp.ClientError, json.JSONDecodeError) as e:
-            logger.error(f"HTTP request error: {e}")
-            raise APIConnectionError() from e
-        finally:
-            for resource in resources:
-                try:
-                    close = getattr(resource, "close", None)
-                    if callable(close):
-                        close()
-                except (OSError, AttributeError):
-                    pass
 
     @staticmethod
     def _determine_reply_visibility(

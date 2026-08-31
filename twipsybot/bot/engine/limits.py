@@ -31,10 +31,12 @@ class ResponseLimiter:
         config: Config,
         db: DBManager,
         instance_url: str | None,
+        blacklist_user: Callable[[str], Awaitable[None]],
     ):
         self._config = config
         self._db = db
         self._instance_url = instance_url
+        self._blacklist_user = blacklist_user
         self._response_limits: TTLCache[str, _ResponseLimitState] = TTLCache(
             maxsize=RESPONSE_LIMIT_CACHE_MAX,
             ttl=RESPONSE_LIMIT_CACHE_TTL,
@@ -128,26 +130,27 @@ class ResponseLimiter:
         if row:
             last_reply_ts, turns, blocked_until_ts = row
             if blocked_until_ts == -1:
-                blocked_until_ts = float("inf")
+                await self._blacklist_user(user_id)
+                turns = 0
+                blocked_until_ts = None
         state = _ResponseLimitState(
             last_reply_ts=last_reply_ts,
             turns=int(turns or 0),
             blocked_until_ts=blocked_until_ts,
         )
         self._response_limits[user_id] = state
+        if row and row[2] == -1:
+            await self._save_response_limit_state(user_id, state)
         return state
 
     async def _save_response_limit_state(
         self, user_id: str, state: _ResponseLimitState
     ) -> None:
-        blocked_until_ts = state.blocked_until_ts
-        if blocked_until_ts == float("inf"):
-            blocked_until_ts = -1
         await self._db.set_response_limit_state(
             user_id=user_id,
             last_reply_ts=state.last_reply_ts,
             turns=state.turns,
-            blocked_until_ts=blocked_until_ts,
+            blocked_until_ts=state.blocked_until_ts,
         )
 
     async def get_response_block_reply(
@@ -157,11 +160,7 @@ class ResponseLimiter:
             return None
         now = time.time()
         state = await self._get_response_limit_state(user_id)
-        if (
-            state.blocked_until_ts is not None
-            and state.blocked_until_ts != float("inf")
-            and now >= state.blocked_until_ts
-        ):
+        if state.blocked_until_ts is not None and now >= state.blocked_until_ts:
             state.turns = 0
             state.blocked_until_ts = None
             await self._save_response_limit_state(user_id, state)
@@ -180,7 +179,9 @@ class ResponseLimiter:
                 ConfigKeys.BOT_RESPONSE_MAX_TURNS_RELEASE
             )
             if release < 0:
-                state.blocked_until_ts = float("inf")
+                await self._blacklist_user(user_id)
+                state.turns = 0
+                state.blocked_until_ts = None
             else:
                 state.blocked_until_ts = now + release
             await self._save_response_limit_state(user_id, state)
@@ -192,12 +193,12 @@ class ResponseLimiter:
         *,
         user_id: str,
         handle: str | None,
-        send_reply: Callable[[str], Awaitable[None]],
+        send_reply: Callable[[str, str | None], Awaitable[None]],
     ) -> bool:
         blocked = await self.get_response_block_reply(user_id=user_id, handle=handle)
         if not blocked:
             return False
-        await send_reply(blocked)
+        await send_reply(blocked, None)
         await self.record_response(user_id, count_turn=False)
         return True
 

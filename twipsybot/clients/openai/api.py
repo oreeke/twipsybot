@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from typing import Any
 
 import openai
@@ -46,11 +47,17 @@ class OpenAIAPI:
         model: str | None = None,
         api_base: str | None = None,
         api_mode: str | None = None,
+        image_model: str | None = None,
+        image_size: str | None = None,
+        image_quality: str | None = None,
     ):
         self.api_key = api_key
         self.model = model or "gpt-5-mini"
         self.api_base = (api_base or "https://api.openai.com/v1").strip().strip("`")
         self.api_mode = (api_mode or "auto").strip().lower()
+        self.image_model = image_model.strip() if image_model else None
+        self.image_size = image_size
+        self.image_quality = image_quality
         self._responses_disabled = False
         self._semaphore = asyncio.Semaphore(OPENAI_MAX_CONCURRENCY)
         try:
@@ -228,3 +235,28 @@ class OpenAIAPI:
         return await self._call_api(
             messages, max_tokens, temperature, "multi-turn chat"
         )
+
+    async def generate_image(self, prompt: str) -> bytes | str:
+        if not self.image_model:
+            raise ValueError("image generation is not configured")
+        options: dict[str, Any] = {
+            "model": self.image_model,
+            "prompt": prompt.strip(),
+        }
+        if self.image_size:
+            options["size"] = self.image_size
+        if self.image_quality:
+            options["quality"] = self.image_quality
+        async with self._semaphore:
+            response = await self.client.images.generate(**options)
+        image = response.data[0] if response.data else None
+        if image is None:
+            raise ValueError("image API returned no image data")
+        if image.b64_json:
+            try:
+                return base64.b64decode(image.b64_json, validate=True)
+            except ValueError as e:
+                raise ValueError("image API returned invalid image data") from e
+        if image.url:
+            return image.url
+        raise ValueError("image API returned no image data")

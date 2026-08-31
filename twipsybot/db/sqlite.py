@@ -89,6 +89,13 @@ class DBManager:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS auto_post_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                post_date TEXT NOT NULL,
+                posts INTEGER NOT NULL DEFAULT 0
+            )
+            """,
         ]
         index_statements = [
             "CREATE INDEX IF NOT EXISTS idx_response_limit_state_updated ON response_limit_state(updated_at)",
@@ -180,6 +187,24 @@ class DBManager:
                 int(turns),
                 blocked_until_ts,
             ),
+        )
+
+    async def get_auto_post_state(self) -> tuple[str, int] | None:
+        result = await self._fetch_one(
+            "SELECT post_date, posts FROM auto_post_state WHERE id = 1"
+        )
+        return (str(result[0]), int(result[1])) if result else None
+
+    async def set_auto_post_state(self, post_date: str, posts: int) -> None:
+        await self._execute_write(
+            """
+            INSERT INTO auto_post_state (id, post_date, posts)
+            VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                post_date = excluded.post_date,
+                posts = excluded.posts
+            """,
+            (post_date, posts),
         )
 
     async def cleanup_response_limit_state(

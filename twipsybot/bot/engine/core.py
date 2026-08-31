@@ -21,6 +21,7 @@ from ...shared.config_keys import ConfigKeys
 from ...shared.constants import CHAT_CACHE_MAX_USERS, CHAT_CACHE_TTL
 from ...shared.exceptions import ConfigurationError
 from ..flows.chat import ChatHandler, _resolve_history_limit
+from ..flows.image import ImageGenerationService
 from ..flows.mention import MentionHandler
 from ..flows.notification import NotificationHandler
 from ..flows.post import AutoPostService
@@ -53,6 +54,9 @@ class MisskeyBot:
                 config.get(ConfigKeys.OPENAI_MODEL),
                 config.get(ConfigKeys.OPENAI_API_BASE),
                 config.get(ConfigKeys.OPENAI_API_MODE),
+                config.get(ConfigKeys.OPENAI_IMAGE_MODEL),
+                config.get(ConfigKeys.OPENAI_IMAGE_SIZE),
+                config.get(ConfigKeys.OPENAI_IMAGE_QUALITY),
             )
             self.scheduler = AsyncIOScheduler()
         except (ValueError, TypeError, KeyError) as e:
@@ -64,6 +68,7 @@ class MisskeyBot:
             config=config,
             db=self.db,
             instance_url=getattr(self.misskey, "instance_url", None),
+            blacklist_user=lambda user_id: self.admin.blacklist_response_user(user_id),
         )
         self.plugin_manager = PluginManager(
             config,
@@ -83,6 +88,7 @@ class MisskeyBot:
         )
         self.chat = ChatHandler(self)
         self.mention = MentionHandler(self)
+        self.image = ImageGenerationService(self)
         self.notification = NotificationHandler(self)
         self.auto_post = AutoPostService(self)
         self.connect = StreamingConnector(
@@ -176,6 +182,7 @@ class MisskeyBot:
 
     async def _initialize_services(self) -> None:
         await self.db.initialize()
+        await self.auto_post.start()
         current_user = await self.misskey.get_current_user()
         self.bot_user_id = current_user.get("id")
         self.bot_username = current_user.get("username")
@@ -183,8 +190,7 @@ class MisskeyBot:
             f"Connected to Misskey instance: bot_id={self.bot_user_id}, @{self.bot_username}"
         )
         await self.plugin_manager.load_plugins()
-        if self.config.get(ConfigKeys.BOT_ADMIN_ENABLED):
-            await self.admin.start()
+        await self.admin.start()
         await self.plugin_manager.startup_plugins()
 
     def _setup_scheduler(self) -> None:

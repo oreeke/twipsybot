@@ -15,7 +15,7 @@
 <br>它有时是抽象气氛组，有时是靠谱小帮手。它把所看所想寄向联邦宇宙，也把星尘里的帖子带回家。
 <br><br>❤️
 
-_v0.3.0 重要变更（减肥）：[CHANGELOG](./CHANGELOG.md#030---2026-08-30)_<br><br>
+_v0.3.0 重要变更（减肥）：[Changelog](./CHANGELOG.md#030---2026-08-30)_<br><br>
 
 </div>
 
@@ -23,18 +23,27 @@ _v0.3.0 重要变更（减肥）：[CHANGELOG](./CHANGELOG.md#030---2026-08-30)_
 
 ### 部署方式
 
-#### `a` Docker Compose
+<br>
 
-- _仅需下载 `docker-compose.yaml.example` 和 `plugins/config.yaml.example` 两个文件_
+#### Docker Compose
 
-  ```bash
-  mkdir -p twipsybot/plugins && cd twipsybot
-  curl -fsSLO https://raw.githubusercontent.com/oreeke/twipsybot/main/docker-compose.yaml.example
-  curl -fsSL https://raw.githubusercontent.com/oreeke/twipsybot/main/plugins/config.yaml.example -o plugins/config.yaml.example
-  ```
+_仅需下载两个配置文件 `docker-compose.yaml.example` 和 `plugins/config.yaml.example`_
 
-- _复制 `docker-compose.yaml.example` 为 `docker-compose.yaml` 并修改配置_
-- _启用插件：复制 `plugins/config.yaml.example` 为 `plugins/config.yaml` 按插件名分节修改_
+```bash
+mkdir -p twipsybot/plugins && cd twipsybot &&
+base=https://raw.githubusercontent.com/oreeke/twipsybot/main &&
+curl -fsSLO "$base/docker-compose.yaml.example" &&
+curl -fsSL "$base/plugins/config.yaml.example" \
+  -o plugins/config.yaml.example
+```
+
+_重命名文件并修改配置_
+
+```bash
+cp docker-compose.yaml.example docker-compose.yaml
+cp plugins/config.yaml.example plugins/config.yaml
+```
+
 <details>
 <summary><kbd>📃 docker-compose.yaml</kbd></summary>
 
@@ -59,11 +68,13 @@ services:
       - OPENAI_MODEL=deepseek-chat                                 # 使用的模型名称
       - OPENAI_API_BASE=https://api.deepseek.com/v1                # OpenAI API 端点
       - OPENAI_API_MODE=auto                                       # auto/chat/responses
+      - OPENAI_IMAGE_MODEL=                                        # 图片生成模型；留空禁用，例如 grok-imagine-image-2.0，发送 /img <描述> 请求生成
+      - OPENAI_IMAGE_SIZE=                                         # 自定义当前模型 API 支持的参数；留空不发送
+      - OPENAI_IMAGE_QUALITY=                                      # 自定义当前模型 API 支持的参数；留空不发送
       - OPENAI_MAX_TOKENS=1000                                     # 最大生成 token 数
       - OPENAI_TEMPERATURE=0.8                                     # 温度参数
       - BOT_SYSTEM_PROMPT=你是一个可爱的AI助手...                    # 系统提示词（支持文件导入："prompts/*.txt"）
-      - BOT_ADMIN_ENABLED=false                                    # 是否启用聊天管理命令
-      - BOT_ADMIN_ALLOWED_USERS=admin@example.com                  # 管理员用户 ID 或 username@host
+      - BOT_ADMIN_ALLOWED_USERS=admin@example.com                  # 授权使用聊天命令
       - BOT_AUTO_POST_ENABLED=true                                 # 是否启用自动发帖
       - BOT_AUTO_POST_INTERVAL=3h                                  # 发帖间隔；30m/2h/1d
       - BOT_AUTO_POST_MAX_PER_DAY=8                                # 每日最大发帖数量（凌晨 0 点重置计数器）
@@ -77,7 +88,7 @@ services:
       - BOT_RESPONSE_RATE_LIMIT_REPLY=我需要休息一下...             # 速率限制回复文案
       - BOT_RESPONSE_MAX_TURNS=-1                                  # 回复次数限制：同一用户最多对话轮数（机器人回复次数）；-1 不限制
       - BOT_RESPONSE_MAX_TURNS_REPLY=我要回家了...                  # 次数限制回复文案
-      - BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h/1d
+      - BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：-1 加入黑名单；30s/5m/1h/1d
       - BOT_RESPONSE_WHITELIST=                                    # 白名单：username@host/userId，这些用户不受以上限制
       - BOT_RESPONSE_BLACKLIST=                                    # 黑名单：username@host/userId，这些用户禁止使用回复
       - BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）
@@ -157,22 +168,30 @@ vision:
 ```
 </details>
 
+_拉取镜像并启动容器_
+
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-#### `b` 手动安装
+<br>
 
-- _克隆仓库_
+#### 手动安装
+
+_克隆仓库_
 
 ```bash
-git clone https://github.com/oreeke/twipsybot.git
-cd twipsybot
+git clone https://github.com/oreeke/twipsybot.git && cd twipsybot
 ```
 
-- _复制 `config.yaml.example` 为 `config.yaml` 并修改配置_
-- _启用插件：参考 Docker Compose 部署方式，方法相同_
+_重命名文件并修改配置_
+
+```bash
+cp config.yaml.example config.yaml
+cp plugins/config.yaml.example plugins/config.yaml
+```
+
 <details>
 <summary><kbd>📃 config.yaml</kbd></summary>
 
@@ -186,6 +205,9 @@ openai:
   model: "deepseek-chat"                            # 使用的模型名称
   api_base: "https://api.deepseek.com/v1"           # OpenAI API 端点
   api_mode: "auto"                                  # auto/chat/responses
+  image_model: null                                  # 图片生成模型；null 禁用，例如 grok-imagine-image-2.0，发送 /img <描述> 请求生成
+  image_size: null                                  # 自定义当前模型 API 支持的参数；null 不发送
+  image_quality: null                               # 自定义当前模型 API 支持的参数；null 不发送
   max_tokens: 1000                                  # 最大生成 token 数
   temperature: 0.8                                  # 温度参数
 
@@ -195,8 +217,7 @@ bot:
     请用简短、友好的方式发帖和回答问题。
 
   admin:
-    enabled: false                                  # 是否启用聊天管理命令
-    allowed_users:
+    allowed_users:                                  # 授权使用聊天命令
       - "admin@example.com"                         # 用户 ID 或 username@host
 
   timeline:
@@ -223,7 +244,7 @@ bot:
     rate_limit_reply: "我需要休息一下..."            # 速率限制回复文案
     max_turns: -1                                   # 回复次数限制：同一用户最多对话轮数（机器人回复次数）；-1 不限制
     max_turns_reply: "我要回家了..."                 # 次数限制回复文案
-    max_turns_release: -1                           # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h/1d
+    max_turns_release: -1                           # 次数限制解除时间：-1 加入黑名单；30s/5m/1h/1d
     whitelist:                                      # 白名单：username@host/userId，这些用户不受以上限制
       - "admin@example.com"
       - "user-id-123"
@@ -241,6 +262,8 @@ log:
   dump_events: false                                # 是否输出事件原始数据（仅用于 DEBUG 数据分析）
 ```
 </details>
+
+_安装环境，使用内置 CLI 检查配置并启动_
 
 ```bash
 pip install -e .
@@ -280,10 +303,14 @@ WantedBy=multi-user.target
 ```
 </details>
 
+_重新加载 systemd 配置并启动服务_
+
 ```bash
 systemctl daemon-reload
 systemctl start twipsybot.service
 ```
+
+<br>
 
 > [!TIP]
 >
@@ -291,27 +318,29 @@ systemctl start twipsybot.service
 > - 切换模型仅需修改 `api_key` `model` `api_base`，相同 `api_base` 的模型可通过聊天管理命令实时切换
 > - 使用推理模型时，思维链消耗大，适当增加 `max_tokens` 可以避免 AI 回复中断
 > - 机器人使用 [Radar](./plugins/radar) + `antenna` 时间线接收帖子，非必要无需订阅其他时间线（日志噪音大）
-> - Docker 部署时，数据库、日志存放于 `twipsybot` 卷，查看可用 `docker compose logs -f twipsybot`
+> - Docker 部署时，数据库、日志存放 `twipsybot` 卷，查看 `docker compose logs -f twipsybot`
 
 > [!NOTE]
 >
 > - 请遵守联邦规则，启用机器人账号并在实例内部测试功能，避免设置不当影响其他实例
 > - Docker 配置或鉴权失败时容器会挂起；修正配置后重启容器即可
-> - `db.clear` 会重置对用户的回复限制，手动删除数据库文件会丢失聊天管理命令设置的黑白名单
+> - `db.clear` 会清理用户回复限制状态，手动删除数据库文件会丢失聊天管理命令设置的黑/白名单
+
+<br>
 
 ## 生态
 
 ### 模型兼容
 
-| 提供商 | 兼容性 | 多模态 |
-| :---: | :---: | --- |
-| [OpenAI](https://platform.openai.com/docs/quickstart) | ✅ | 📝 👁️ |
-| [DeepSeek](https://api-docs.deepseek.com/) | ✅ | 📝 👁️ |
-| [xAI](https://docs.x.ai/developers/api-reference) | ✅ | 📝 👁️ |
-| [Gemini](https://ai.google.dev/gemini-api/docs/openai) | ✅ | 📝 👁️ |
-| [Claude](https://platform.claude.com/docs/en/api/openai-sdk) | ✅ | 📝 👁️ |
-| [Ollama](https://ollama.com/blog/openai-compatibility) | ✅ | 📝 👁️ |
-| [Perplexity](https://docs.perplexity.ai/docs/agentic-research/openai-compatibility) | ✅ | 📝 👁️ |
+| 提供商 | API 兼容 | 文本生成 | 图片生成 | 图片理解 |
+| :---: | :---: | :---: | :---: | :---: |
+| [OpenAI](https://platform.openai.com/docs/quickstart) | ✅ | 📝 | 🖼️ | 👁️ |
+| [DeepSeek](https://api-docs.deepseek.com/) | ✅ | 📝 | - | 👁️ |
+| [xAI](https://docs.x.ai/developers/api-reference) | ✅ | 📝 | 🖼️ | 👁️ |
+| [Gemini](https://ai.google.dev/gemini-api/docs/openai) | ✅ | 📝 | 🖼️ | 👁️ |
+| [Claude](https://platform.claude.com/docs/en/api/openai-sdk) | ✅ | 📝 | - | 👁️ |
+| [Ollama](https://ollama.com/blog/openai-compatibility) | ✅ | 📝 | 🖼️ | 👁️ |
+| [Perplexity](https://docs.perplexity.ai/docs/agentic-research/openai-compatibility) | ✅ | 📝 | 🖼️ | 👁️ |
 
 ### 插件系统
 
@@ -319,7 +348,7 @@ systemctl start twipsybot.service
 
 | 插件 | 功能描述 |
 | :---: | --- |
-| [KeyAct](./plugins/keyact) | 匹配自定义关键词触发回复，绕过 AI |
+| [KeyAct](./plugins/keyact) | 匹配自定义关键词触发直接回复，绕过 AI |
 | [Radar](./plugins/radar) | 主动与天线发现的帖子互动（反应、回复、转发、引用） |
 | [Topics](./plugins/topics) | 为自动发帖提供内容源（文本主题 / RSS） |
-| [Vision](./plugins/vision) | 理解 @提及或聊天中的图像并生成回复 |
+| [Vision](./plugins/vision) | 理解 @提及或聊天中的图片并生成回复 |

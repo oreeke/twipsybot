@@ -10,6 +10,9 @@ openai:
   model: "deepseek-chat"                            # 使用的模型名称
   api_base: "https://api.deepseek.com/v1"           # OpenAI API 端点
   api_mode: "auto"                                  # auto/chat/responses
+  image_model: null                                 # 图片生成模型；null 禁用，例如 gpt-image-1，发送 /img <描述> 请求生成
+  image_size: null                                  # 自定义当前模型 API 支持的参数；null 不发送
+  image_quality: null                               # 自定义当前模型 API 支持的参数；null 不发送
   max_tokens: 1000                                  # 最大生成 token 数
   temperature: 0.8                                  # 温度参数
 
@@ -19,8 +22,7 @@ bot:
     请用简短、友好的方式发帖和回答问题。
 
   admin:
-    enabled: false                                  # 是否启用聊天管理命令
-    allowed_users:
+    allowed_users:                                  # 授权使用聊天命令
       - "admin@example.com"                         # 用户 ID 或 username@host
 
   timeline:
@@ -47,7 +49,7 @@ bot:
     rate_limit_reply: "我需要休息一下..."            # 速率限制回复文案
     max_turns: -1                                   # 回复次数限制：同一用户最多对话轮数（机器人回复次数）；-1 不限制
     max_turns_reply: "我要回家了..."                 # 次数限制回复文案
-    max_turns_release: -1                           # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h/1d
+    max_turns_release: -1                           # 次数限制解除时间：-1 加入黑名单；30s/5m/1h/1d
     whitelist:                                      # 白名单：username@host/userId，这些用户不受以上限制
       - "admin@example.com"
       - "user-id-123"

@@ -13,6 +13,7 @@ from ...clients.misskey.payloads import (
 )
 from ...shared.config_keys import ConfigKeys
 from ...shared.utils import maybe_log_event_dump
+from ..engine.pipeline import AIResponse
 
 if TYPE_CHECKING:
     from ..engine.core import MisskeyBot
@@ -42,10 +43,13 @@ class MentionHandler:
     def _format_mention_reply(mention: MentionContext, text: str) -> str:
         return f"@{mention.username}\n{text}" if mention.username else text
 
-    async def _send_mention_reply(self, mention: MentionContext, text: str) -> None:
+    async def _send_mention_reply(
+        self, mention: MentionContext, text: str, file_id: str | None = None
+    ) -> None:
         await self.bot.misskey.create_note(
             text=self._format_mention_reply(mention, text),
             reply_id=mention.reply_target_id,
+            file_ids=[file_id] if file_id else None,
         )
 
     def _should_handle_note(
@@ -114,8 +118,8 @@ class MentionHandler:
         try:
             display = mention.username or "unknown"
 
-            async def send_reply(text: str) -> None:
-                await self._send_mention_reply(mention, text)
+            async def send_reply(text: str, file_id: str | None) -> None:
+                await self._send_mention_reply(mention, text, file_id)
 
             def log_plugin_sent(text: str) -> None:
                 formatted = self._format_mention_reply(mention, text)
@@ -134,12 +138,31 @@ class MentionHandler:
                     f"Mention received from @{display}: {self.bot.format_log_text(mention.text)}"
                 )
 
+            log_incoming()
+            if await self.bot.pipeline.run_command(
+                actor_id=mention.user_id,
+                actor_name=mention.username,
+                user_id=mention.user_id,
+                handle=mention.username,
+                command_call=lambda: self.bot.admin.handle_slash_command(
+                    extract_note_text(
+                        normalize_payload(note, kind="mention"), include_cw=True
+                    )
+                    or mention.text,
+                    user_id=mention.user_id,
+                    username=mention.username or "unknown",
+                    handle=mention.username,
+                    private=False,
+                ),
+                send_reply=send_reply,
+                log_sent=log_ai_sent,
+            ):
+                return
             await self.bot.pipeline.run_response_pipeline(
                 actor_id=mention.user_id,
                 actor_name=mention.username,
                 user_id=mention.user_id,
                 handle=mention.username,
-                log_incoming=log_incoming,
                 send_reply=send_reply,
                 plugin_call=lambda: self.bot.plugin_manager.call_plugin_hook(
                     "on_mention", note
@@ -203,7 +226,7 @@ class MentionHandler:
 
     async def _generate_ai_reply(
         self, mention: MentionContext, note: dict[str, Any]
-    ) -> str:
+    ) -> str | AIResponse | None:
         prompt = await self._build_mention_prompt(mention, note)
         return await self.bot.openai.generate_text(
             prompt, self.bot.system_prompt, **self.bot.ai_config

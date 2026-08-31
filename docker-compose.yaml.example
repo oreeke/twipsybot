@@ -18,9 +18,13 @@ services:
       - OPENAI_MODEL=deepseek-chat                                 # 使用的模型名称
       - OPENAI_API_BASE=https://api.deepseek.com/v1                # OpenAI API 端点
       - OPENAI_API_MODE=auto                                       # auto/chat/responses
+      - OPENAI_IMAGE_MODEL=                                        # 图片生成模型；留空禁用，例如 grok-imagine-image-2.0，发送 /img <描述> 请求生成
+      - OPENAI_IMAGE_SIZE=                                         # 自定义当前模型 API 支持的参数；留空不发送
+      - OPENAI_IMAGE_QUALITY=                                      # 自定义当前模型 API 支持的参数；留空不发送
       - OPENAI_MAX_TOKENS=1000                                     # 最大生成 token 数
       - OPENAI_TEMPERATURE=0.8                                     # 温度参数
       - BOT_SYSTEM_PROMPT=你是一个可爱的AI助手...                    # 系统提示词（支持文件导入："prompts/*.txt"）
+      - BOT_ADMIN_ALLOWED_USERS=admin@example.com                  # 授权使用聊天命令
       - BOT_AUTO_POST_ENABLED=true                                 # 是否启用自动发帖
       - BOT_AUTO_POST_INTERVAL=3h                                  # 发帖间隔；30m/2h/1d
       - BOT_AUTO_POST_MAX_PER_DAY=8                                # 每日最大发帖数量（凌晨 0 点重置计数器）
@@ -34,7 +38,7 @@ services:
       - BOT_RESPONSE_RATE_LIMIT_REPLY=我需要休息一下...             # 速率限制回复文案
       - BOT_RESPONSE_MAX_TURNS=-1                                  # 回复次数限制：同一用户最多对话轮数（机器人回复次数）；-1 不限制
       - BOT_RESPONSE_MAX_TURNS_REPLY=我要回家了...                  # 次数限制回复文案
-      - BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：超限后多久解除；-1 不解除；30s/5m/1h/1d
+      - BOT_RESPONSE_MAX_TURNS_RELEASE=-1                          # 次数限制解除时间：-1 加入黑名单；30s/5m/1h/1d
       - BOT_RESPONSE_WHITELIST=                                    # 白名单：username@host/userId，这些用户不受以上限制
       - BOT_RESPONSE_BLACKLIST=                                    # 黑名单：username@host/userId，这些用户禁止使用回复
       - BOT_TIMELINE_ANTENNA_IDS=                                  # antenna ID 或名称（逗号/空格分隔）

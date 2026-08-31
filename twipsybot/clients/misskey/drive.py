@@ -18,6 +18,21 @@ class MisskeyDrive:
     async def show_file(self, file_id: str) -> dict[str, Any]:
         return await self._api.make_request("drive/files/show", {"fileId": file_id})
 
+    async def upload_bytes(
+        self, data: bytes, *, name: str, content_type: str = "image/png"
+    ) -> dict[str, Any]:
+        form = aiohttp.FormData()
+        form.add_field("i", self._api.access_token)
+        form.add_field("name", name)
+        form.add_field("file", data, filename=name, content_type=content_type)
+        try:
+            session: aiohttp.ClientSession = self._api.session
+            url = f"{self._api.instance_url}/api/drive/files/create"
+            async with self._api.semaphore, session.post(url, data=form) as response:
+                return await self._api._process_response(response, "drive/files/create")
+        except (aiohttp.ClientError, OSError) as e:
+            raise APIConnectionError() from e
+
     async def fetch_bytes(self, url: str, *, max_bytes: int | None = None) -> bytes:
         try:
             session: aiohttp.ClientSession = self._api.session

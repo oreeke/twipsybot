@@ -1,5 +1,6 @@
 import inspect
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
@@ -7,7 +8,19 @@ from loguru import logger
 from ...shared.locks import KeyedAsyncLock, actor_key
 from .limits import ResponseLimiter
 
-__all__ = ("ResponsePipeline",)
+__all__ = ("AIResponse", "CommandResult", "ResponsePipeline")
+
+
+@dataclass(frozen=True, slots=True)
+class AIResponse:
+    text: str
+    file_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CommandResult:
+    response: AIResponse | None = None
+    execute: Callable[[], Awaitable[AIResponse]] | None = None
 
 
 class ResponsePipeline:
@@ -15,13 +28,40 @@ class ResponsePipeline:
         self._limits = limits
         self._actor_locks = KeyedAsyncLock()
 
+    async def run_command(
+        self,
+        *,
+        actor_id: str | None,
+        actor_name: str | None,
+        user_id: str | None,
+        handle: str | None,
+        command_call: Callable[[], CommandResult | None],
+        send_reply: Callable[[str, str | None], Awaitable[None]],
+        log_sent: Callable[[str], None],
+    ) -> bool:
+        async with self._actor_locks.hold(actor_key(actor_id, actor_name)):
+            result = command_call()
+            if result is None:
+                return False
+            if user_id and await self._limits.maybe_send_blocked_reply(
+                user_id=user_id, handle=handle, send_reply=send_reply
+            ):
+                return True
+            response = await result.execute() if result.execute else result.response
+            if response is not None:
+                await send_reply(response.text, response.file_id)
+                log_sent(response.text)
+                if user_id:
+                    await self._limits.record_response(user_id, count_turn=True)
+            return True
+
     async def apply_handled_plugin_result(
         self,
         result: Any,
         *,
         kind: str,
         user_id: str | None,
-        send_reply: Callable[[str], Awaitable[None]],
+        send_reply: Callable[[str, str | None], Awaitable[None]],
         log_sent: Callable[[str], None],
         after_sent: Callable[[str], Any] | None = None,
     ) -> bool:
@@ -31,7 +71,7 @@ class ResponsePipeline:
         response = result.get("response")
         if not response:
             return True
-        await send_reply(response)
+        await send_reply(response, None)
         log_sent(response)
         if user_id:
             await self._limits.record_response(user_id, count_turn=True)
@@ -48,18 +88,16 @@ class ResponsePipeline:
         actor_name: str | None,
         user_id: str | None,
         handle: str | None,
-        log_incoming: Callable[[], None],
-        send_reply: Callable[[str], Awaitable[None]],
+        send_reply: Callable[[str, str | None], Awaitable[None]],
         plugin_call: Callable[[], Awaitable[list[Any]]],
         plugin_kind: str,
         plugin_log_sent: Callable[[str], None],
         plugin_after_sent: Callable[[str], Any] | None = None,
-        ai_generate: Callable[[], Awaitable[str | None]],
+        ai_generate: Callable[[], Awaitable[str | AIResponse | None]],
         ai_log_sent: Callable[[str], None],
         ai_after_sent: Callable[[str], Any] | None = None,
     ) -> None:
         async with self._actor_locks.hold(actor_key(actor_id, actor_name)):
-            log_incoming()
             if user_id and await self._limits.maybe_send_blocked_reply(
                 user_id=user_id, handle=handle, send_reply=send_reply
             ):
@@ -78,11 +116,12 @@ class ResponsePipeline:
             reply = await ai_generate()
             if not reply:
                 return
-            await send_reply(reply)
-            ai_log_sent(reply)
+            response = AIResponse(reply) if isinstance(reply, str) else reply
+            await send_reply(response.text, response.file_id)
+            ai_log_sent(response.text)
             if user_id:
                 await self._limits.record_response(user_id, count_turn=True)
             if ai_after_sent is not None:
-                maybe = ai_after_sent(reply)
+                maybe = ai_after_sent(response.text)
                 if inspect.isawaitable(maybe):
                     await maybe

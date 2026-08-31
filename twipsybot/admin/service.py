@@ -1,10 +1,12 @@
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
 from loguru import logger
 
+from ..bot.engine.pipeline import AIResponse, CommandResult
 from ..clients.misskey.payloads import (
     extract_first_text,
     extract_user_handle,
@@ -14,6 +16,15 @@ from ..clients.misskey.payloads import (
 from ..shared.config_keys import ConfigKeys
 from ..shared.utils import normalize_tokens
 from .handlers import CmdHandlersMixin
+
+
+@dataclass(frozen=True, slots=True)
+class _SlashCommand:
+    handler: Callable[[str], Awaitable[AIResponse]]
+    usage: str
+    description: str
+    requires_auth: bool = True
+    private_only: bool = False
 
 
 class AdminCommandService(CmdHandlersMixin):
@@ -38,6 +49,26 @@ class AdminCommandService(CmdHandlersMixin):
         self._init_baselines()
         self._command_alias_index = self._build_command_alias_index()
         self._command_handlers = self._build_command_handlers()
+        self._slash_commands = {
+            "img": _SlashCommand(
+                self.bot.image.generate_response,
+                "/img",
+                "生成图片 (用法: /img <一只小狗在月球上弹吉他>)",
+            ),
+            "post": _SlashCommand(
+                self.bot.auto_post.generate_response,
+                "/post",
+                "指示 AI 现在就发一篇帖子 (用法: /post <你更喜欢夏天还是冬天？200 字以内>)",
+                private_only=True,
+            ),
+        }
+
+    def _get_help_text(self) -> str:
+        slash_commands = [
+            f"{command.usage} - {command.description}"
+            for command in self._slash_commands.values()
+        ]
+        return "\n\n".join((super()._get_help_text(), "\n".join(slash_commands)))
 
     def _global_get(self, key: str, default: Any) -> Any:
         cfg = getattr(self, "global_config", None)
@@ -67,9 +98,7 @@ class AdminCommandService(CmdHandlersMixin):
             "help": lambda args: self._get_help_text(),
             "status": lambda args: self._get_status_text(),
             "model": self._handle_model,
-            "autopost": lambda args: self._handle_set_bool(
-                "autopost", ConfigKeys.BOT_AUTO_POST_ENABLED, args
-            ),
+            "autopost": self._handle_autopost,
             "mention": lambda args: self._handle_set_bool(
                 "mention", ConfigKeys.BOT_RESPONSE_MENTION, args
             ),
@@ -96,27 +125,27 @@ class AdminCommandService(CmdHandlersMixin):
                 "help": {"description": "可用命令", "aliases": []},
                 "status": {"description": "机器人状态", "aliases": []},
                 "model": {
-                    "description": "查看/切换模型 (用法: model [模型名]|reset)",
+                    "description": "查看/切换模型 (用法: ^model [模型名]|reset)",
                     "aliases": [],
                 },
                 "autopost": {
-                    "description": "自动发帖开关 (用法: autopost on|off)",
+                    "description": "自动发帖 (用法: ^autopost on|off|reset)",
                     "aliases": [],
                 },
                 "mention": {
-                    "description": "响应提及开关 (用法: mention on|off)",
+                    "description": "响应提及开关 (用法: ^mention on|off)",
                     "aliases": [],
                 },
                 "chat": {
-                    "description": "响应聊天开关 (用法: chat on|off)",
+                    "description": "响应聊天开关 (用法: ^chat on|off)",
                     "aliases": [],
                 },
                 "whitelist": {
-                    "description": "查看/修改白名单 (用法: whitelist [list|add|del|set|clear|reset])",
+                    "description": "查看/修改白名单 (用法: ^whitelist [list|add|del|set|clear|reset])",
                     "aliases": [],
                 },
                 "blacklist": {
-                    "description": "查看/修改黑名单 (用法: blacklist [list|add|del|set|clear|reset])",
+                    "description": "查看/修改黑名单 (用法: ^blacklist [list|add|del|set|clear|reset])",
                     "aliases": [],
                 },
             }
@@ -130,6 +159,22 @@ class AdminCommandService(CmdHandlersMixin):
             self._log_plugin_action("applied model override", model)
         await self._apply_saved_response_user_list(ConfigKeys.BOT_RESPONSE_WHITELIST)
         await self._apply_saved_response_user_list(ConfigKeys.BOT_RESPONSE_BLACKLIST)
+
+    async def _handle_autopost(self, args: str) -> str:
+        if args.strip().lower() == "reset":
+            await self.bot.auto_post.reset_daily_counters()
+            return "自动发帖计数器已重置"
+        return self._handle_set_bool("autopost", ConfigKeys.BOT_AUTO_POST_ENABLED, args)
+
+    async def blacklist_response_user(self, user_id: str) -> None:
+        blacklist = normalize_tokens(
+            self.global_config.get(ConfigKeys.BOT_RESPONSE_BLACKLIST), lower=True
+        )
+        normalized = user_id.strip().lower()
+        if normalized and normalized not in blacklist:
+            await self._save_response_user_list(
+                ConfigKeys.BOT_RESPONSE_BLACKLIST, [*blacklist, normalized]
+            )
 
     @staticmethod
     def handled(response: str) -> str:
@@ -151,6 +196,46 @@ class AdminCommandService(CmdHandlersMixin):
         return user_id in self.allowed_users or (
             handle is not None and handle.lower() in self._allowed_users_lower
         )
+
+    @staticmethod
+    def _extract_slash_command(text: str) -> tuple[str, str] | None:
+        value = text.strip()
+        while value.startswith("@"):
+            parts = value.split(maxsplit=1)
+            if len(parts) != 2:
+                return None
+            value = parts[1]
+        parts = value.split(maxsplit=1)
+        token = parts[0]
+        if not token.startswith("/") or len(token) == 1 or len(parts) != 2:
+            return None
+        argument = parts[1].strip()
+        return (token[1:].casefold(), argument) if argument else None
+
+    def handle_slash_command(
+        self,
+        text: str,
+        *,
+        user_id: str | None,
+        username: str,
+        handle: str | None,
+        private: bool,
+    ) -> CommandResult | None:
+        parsed = self._extract_slash_command(text)
+        if parsed is None:
+            return None
+        name, argument = parsed
+        command = self._slash_commands.get(name)
+        if command is None:
+            return None
+        if command.private_only and not private:
+            return CommandResult()
+        authorized_handle = self._canonical_handle(username, handle) or handle
+        if command.requires_auth and (
+            not user_id or not self._is_authorized(user_id, authorized_handle)
+        ):
+            return CommandResult(AIResponse("您没有权限使用命令。"))
+        return CommandResult(execute=lambda: command.handler(argument))
 
     def _canonical_handle(self, username: str, handle: str | None) -> str | None:
         if isinstance(handle, str) and (h := handle.strip()):

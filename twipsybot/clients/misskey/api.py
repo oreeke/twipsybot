@@ -171,6 +171,7 @@ class MisskeyAPI:
         reply_id: str | None = None,
         local_only: bool | None = None,
         validate_reply: bool = True,
+        file_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         resolved_reply_id = reply_id
         if resolved_reply_id:
@@ -180,6 +181,8 @@ class MisskeyAPI:
         if visibility is None:
             visibility = "public"
         data: dict[str, Any] = {"text": text, "visibility": visibility}
+        if file_ids:
+            data["fileIds"] = file_ids
         if resolved_reply_id:
             data["replyId"] = resolved_reply_id
         if local_only:
@@ -295,19 +298,25 @@ class MisskeyAPI:
             self._antennas_cache_expires_at = time.monotonic() + 30.0
             return list(antennas)
 
-    async def send_message(self, user_id: str, text: str) -> dict[str, Any]:
-        result = await self.make_request(
-            "chat/messages/create-to-user", {"toUserId": user_id, "text": text}
-        )
+    async def send_message(
+        self, user_id: str, text: str, file_id: str | None = None
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = {"toUserId": user_id, "text": text}
+        if file_id:
+            data["fileId"] = file_id
+        result = await self.make_request("chat/messages/create-to-user", data)
         logger.debug(
             f"Misskey chat message sent: message_id={result.get('id', 'unknown')}"
         )
         return result
 
-    async def send_room_message(self, room_id: str, text: str) -> dict[str, Any]:
-        result = await self.make_request(
-            "chat/messages/create-to-room", {"toRoomId": room_id, "text": text}
-        )
+    async def send_room_message(
+        self, room_id: str, text: str, file_id: str | None = None
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = {"toRoomId": room_id, "text": text}
+        if file_id:
+            data["fileId"] = file_id
+        result = await self.make_request("chat/messages/create-to-room", data)
         logger.debug(
             f"Misskey room message sent: message_id={result.get('id', 'unknown')}"
         )

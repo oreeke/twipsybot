@@ -241,12 +241,12 @@ async def make_bot(tmp_path: Path) -> AsyncIterator[MakeBot]:
         bot = MisskeyBot(config)
         bot.plugin_manager.plugins_dir = plugins_dir or (tmp_path / "no-plugins")
         await bot.db.initialize()
+        await bot.auto_post.start()
         current_user = await bot.misskey.get_current_user()
         bot.bot_user_id = current_user.get("id")
         bot.bot_username = current_user.get("username")
         await bot.plugin_manager.load_plugins()
-        if config.get("bot.admin.enabled"):
-            await bot.admin.start()
+        await bot.admin.start()
         await bot.plugin_manager.startup_plugins()
         created.append(bot)
         return bot

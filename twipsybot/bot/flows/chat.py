@@ -13,6 +13,7 @@ from ...clients.misskey.payloads import (
 )
 from ...shared.config_keys import ConfigKeys
 from ...shared.utils import maybe_log_event_dump
+from ..engine.pipeline import AIResponse
 
 if TYPE_CHECKING:
     from ..engine.core import MisskeyBot
@@ -44,22 +45,19 @@ class ChatHandler:
         self.bot = bot
 
     async def _call_extensions(self, message: dict[str, Any]) -> list[dict[str, Any]]:
-        if self.bot.config.get(ConfigKeys.BOT_ADMIN_ENABLED):
-            if response := await self.bot.admin.on_message(message):
-                return [
-                    {
-                        "handled": True,
-                        "plugin_name": "Admin",
-                        "response": response,
-                    }
-                ]
+        if response := await self.bot.admin.on_message(message):
+            return [
+                {
+                    "handled": True,
+                    "plugin_name": "Admin",
+                    "response": response,
+                }
+            ]
         return await self.bot.plugin_manager.call_plugin_hook("on_message", message)
 
     async def handle(self, message: dict[str, Any]) -> None:
         chat_enabled = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT)
-        admin_command = self.bot.config.get(
-            ConfigKeys.BOT_ADMIN_ENABLED
-        ) and extract_chat_text(message).startswith("^")
+        admin_command = extract_chat_text(message).startswith("^")
         if not chat_enabled and not admin_command:
             return
         if not message.get("id"):
@@ -109,13 +107,19 @@ class ChatHandler:
         if has_media:
             logger.info(f"Chat received from {prefix}@{username}: (no text; has media)")
 
+    def _should_ignore(self, ctx: _ChatContext) -> bool:
+        return bool(
+            (ctx.room_id and ctx.text.startswith("^"))
+            or self.bot.is_response_blacklisted_user(
+                user_id=ctx.user_id, handle=ctx.handle or ctx.mention_to
+            )
+        )
+
     async def _process(self, message: dict[str, Any]) -> None:
         ctx = self._parse_chat_context(message)
         if not ctx:
             return
-        if self.bot.is_response_blacklisted_user(
-            user_id=ctx.user_id, handle=ctx.handle or ctx.mention_to
-        ):
+        if self._should_ignore(ctx):
             return
         limit = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
         user_content_ai = f"{ctx.username}: {ctx.text}" if ctx.room_id else ctx.text
@@ -128,12 +132,13 @@ class ChatHandler:
                 room_label=ctx.room_label,
             )
 
-        async def send_reply(text: str) -> None:
+        async def send_reply(text: str, file_id: str | None) -> None:
             await self._send_chat_reply(
                 user_id=ctx.user_id,
                 room_id=ctx.room_id,
                 text=text,
                 mention_to=ctx.mention_to,
+                file_id=file_id,
             )
 
         def log_plugin_sent(text: str) -> None:
@@ -151,7 +156,7 @@ class ChatHandler:
             user_content = f"{ctx.username}: {user_text}" if ctx.room_id else user_text
             self.bot.append_chat_turn(ctx.conversation_id, user_content, text, limit)
 
-        async def ai_generate() -> str | None:
+        async def ai_generate() -> str | AIResponse | None:
             if not ctx.text:
                 return None
             return await self._generate_ai_reply(
@@ -173,12 +178,28 @@ class ChatHandler:
         def ai_after_sent(text: str) -> None:
             self.bot.append_chat_turn(ctx.conversation_id, user_content_ai, text, limit)
 
+        log_incoming()
+        if await self.bot.pipeline.run_command(
+            actor_id=ctx.actor_id,
+            actor_name=ctx.username,
+            user_id=ctx.user_id,
+            handle=ctx.handle or ctx.mention_to,
+            command_call=lambda: self.bot.admin.handle_slash_command(
+                ctx.text,
+                user_id=ctx.user_id,
+                username=ctx.username,
+                handle=ctx.handle or ctx.mention_to,
+                private=ctx.room_id is None,
+            ),
+            send_reply=send_reply,
+            log_sent=log_ai_sent,
+        ):
+            return
         await self.bot.pipeline.run_response_pipeline(
             actor_id=ctx.actor_id,
             actor_name=ctx.username,
             user_id=ctx.user_id,
             handle=ctx.handle or ctx.mention_to,
-            log_incoming=log_incoming,
             send_reply=send_reply,
             plugin_call=lambda: self._call_extensions(message),
             plugin_kind="Chat",
@@ -237,7 +258,13 @@ class ChatHandler:
         return text
 
     async def _send_chat_reply(
-        self, *, user_id: str, room_id: str | None, text: str, mention_to: str | None
+        self,
+        *,
+        user_id: str,
+        room_id: str | None,
+        text: str,
+        mention_to: str | None,
+        file_id: str | None = None,
     ) -> None:
         text = self._format_chat_reply_text(
             room_id=room_id,
@@ -245,9 +272,9 @@ class ChatHandler:
             text=text,
         )
         if room_id:
-            await self.bot.misskey.send_room_message(room_id, text)
+            await self.bot.misskey.send_room_message(room_id, text, file_id)
         else:
-            await self.bot.misskey.send_message(user_id, text)
+            await self.bot.misskey.send_message(user_id, text, file_id)
 
     async def _generate_ai_reply(
         self,
@@ -257,7 +284,7 @@ class ChatHandler:
         user_content: str,
         room_id: str | None,
         limit: int | None,
-    ) -> str:
+    ) -> str | AIResponse | None:
         history = await self.bot.get_or_load_chat_history(
             conversation_id, limit=limit, user_id=user_id, room_id=room_id
         )

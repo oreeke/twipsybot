@@ -33,10 +33,12 @@ _ENV_TO_KEY = {
     "OPENAI_MODEL": ConfigKeys.OPENAI_MODEL,
     "OPENAI_API_BASE": ConfigKeys.OPENAI_API_BASE,
     "OPENAI_API_MODE": ConfigKeys.OPENAI_API_MODE,
+    "OPENAI_IMAGE_MODEL": ConfigKeys.OPENAI_IMAGE_MODEL,
+    "OPENAI_IMAGE_SIZE": ConfigKeys.OPENAI_IMAGE_SIZE,
+    "OPENAI_IMAGE_QUALITY": ConfigKeys.OPENAI_IMAGE_QUALITY,
     "OPENAI_MAX_TOKENS": ConfigKeys.OPENAI_MAX_TOKENS,
     "OPENAI_TEMPERATURE": ConfigKeys.OPENAI_TEMPERATURE,
     "BOT_SYSTEM_PROMPT": ConfigKeys.BOT_SYSTEM_PROMPT,
-    "BOT_ADMIN_ENABLED": ConfigKeys.BOT_ADMIN_ENABLED,
     "BOT_ADMIN_ALLOWED_USERS": ConfigKeys.BOT_ADMIN_ALLOWED_USERS,
     "BOT_AUTO_POST_ENABLED": ConfigKeys.BOT_AUTO_POST_ENABLED,
     "BOT_AUTO_POST_INTERVAL": ConfigKeys.BOT_AUTO_POST_INTERVAL,
@@ -125,6 +127,9 @@ class OpenAIConfig(_ConfigModel):
     model: str = "deepseek-chat"
     api_base: str = "https://api.deepseek.com/v1"
     api_mode: str = "auto"
+    image_model: str | None = None
+    image_size: str | None = None
+    image_quality: str | None = None
     max_tokens: int = 1000
     temperature: float = 0.8
 
@@ -135,6 +140,14 @@ class OpenAIConfig(_ConfigModel):
         if s not in {"auto", "chat", "responses"}:
             raise ValueError("OpenAI API mode must be auto/chat/responses")
         return s
+
+    @field_validator("image_model", "image_size", "image_quality", mode="before")
+    @classmethod
+    def _normalize_optional_string(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        value = str(v).strip()
+        return value or None
 
     @field_validator("max_tokens")
     @classmethod
@@ -263,7 +276,6 @@ class ResponseConfig(_ConfigModel):
 
 
 class AdminConfig(_ConfigModel):
-    enabled: bool = False
     allowed_users: list[str] | str = []
     commands: dict[str, Any] = Field(default_factory=dict)
 

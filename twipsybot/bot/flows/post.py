@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from ...shared.config_keys import ConfigKeys
+from ..engine.pipeline import AIResponse
 
 if TYPE_CHECKING:
     from ..engine.core import MisskeyBot
@@ -15,27 +16,76 @@ class AutoPostService:
 
     def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
+        self._counter_lock = asyncio.Lock()
+        self._post_date = self._today()
         self.posts_today = 0
 
-    def post_count(self) -> None:
-        self.posts_today += 1
+    @staticmethod
+    def _today() -> str:
+        return datetime.now().astimezone().date().isoformat()
 
-    def check_post_counter(self, max_posts: int) -> bool:
-        if self.posts_today >= max_posts:
-            logger.debug(f"Daily post limit reached ({max_posts}); skipping auto-post")
-            return False
-        return True
-
-    def reset_daily_counters(self) -> None:
+    async def start(self) -> None:
+        today = self._today()
+        state = await self.bot.db.get_auto_post_state()
+        self._post_date = today
+        if state and state[0] == today:
+            self.posts_today = state[1]
+            return
+        await self.bot.db.set_auto_post_state(today, 0)
         self.posts_today = 0
+
+    async def _ensure_current_day(self) -> None:
+        today = self._today()
+        if self._post_date == today:
+            return
+        await self.bot.db.set_auto_post_state(today, 0)
+        self._post_date = today
+        self.posts_today = 0
+
+    async def post_count(self) -> None:
+        async with self._counter_lock:
+            today = self._today()
+            if self._post_date != today:
+                self._post_date = today
+                self.posts_today = 0
+            self.posts_today += 1
+            await self.bot.db.set_auto_post_state(self._post_date, self.posts_today)
+
+    async def check_post_counter(self, max_posts: int) -> bool:
+        async with self._counter_lock:
+            await self._ensure_current_day()
+            if self.posts_today >= max_posts:
+                logger.debug(
+                    f"Daily post limit reached ({max_posts}); skipping auto-post"
+                )
+                return False
+            return True
+
+    async def reset_daily_counters(self) -> None:
+        async with self._counter_lock:
+            today = self._today()
+            await self.bot.db.set_auto_post_state(today, 0)
+            self._post_date = today
+            self.posts_today = 0
         logger.debug("Post counter reset")
+
+    async def generate_response(self, prompt: str) -> AIResponse:
+        try:
+            content = await self._create_ai_post(prompt)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Manual post failed")
+            return AIResponse("发帖失败，请稍后再试。")
+        logger.info(f"Manual post succeeded: {self.bot.format_log_text(content)}")
+        return AIResponse("发帖完成")
 
     async def run(self) -> None:
         if not self.bot.config.get(ConfigKeys.BOT_AUTO_POST_ENABLED):
             return
         max_posts = self.bot.config.get(ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY)
         local_only = self.bot.config.get(ConfigKeys.BOT_AUTO_POST_LOCAL_ONLY)
-        if not self.bot.runtime.running or not self.check_post_counter(max_posts):
+        if not self.bot.runtime.running or not await self.check_post_counter(max_posts):
             return
         try:
             plugin_results = await self.bot.plugin_manager.call_plugin_hook(
@@ -43,7 +93,7 @@ class AutoPostService:
             )
             if await self._try_plugin_post(plugin_results, max_posts, local_only):
                 return
-            await self._generate_ai_post(plugin_results, max_posts, local_only)
+            await self._generate_ai_post(plugin_results, max_posts)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -95,13 +145,15 @@ class AutoPostService:
     ) -> bool:
         posted_any = False
         for i, content in enumerate(contents):
-            if not self.bot.runtime.running or not self.check_post_counter(max_posts):
+            if not self.bot.runtime.running or not await self.check_post_counter(
+                max_posts
+            ):
                 return posted_any
             await self.bot.misskey.create_note(
                 content, visibility=visibility, local_only=local_only
             )
             await self.bot.plugin_manager.confirm_auto_post_published(result, content)
-            self.post_count()
+            await self.post_count()
             posted_any = True
             logger.info(f"Auto-post succeeded: {self.bot.format_log_text(content)}")
             logger.info(f"Daily post count: {self.posts_today}/{max_posts}")
@@ -110,7 +162,7 @@ class AutoPostService:
         return posted_any
 
     async def _generate_ai_post(
-        self, plugin_results: list[Any], max_posts: int, local_only: bool | None
+        self, plugin_results: list[Any], max_posts: int
     ) -> None:
         result = next((item for item in plugin_results if "prompt" in item), None)
         plugin_prompt = result["prompt"] if result else ""
@@ -119,21 +171,37 @@ class AutoPostService:
             logger.info(
                 f"Plugin {result.get('plugin_name')} requested prompt modification: {plugin_prompt}"
             )
-        post_prompt = self.bot.config.get(ConfigKeys.BOT_AUTO_POST_PROMPT, "")
         try:
-            content = await self._generate_post(
-                self.bot.system_prompt, post_prompt, plugin_prompt, timestamp_override
+            content = await self._create_ai_post(
+                self.bot.config.get(ConfigKeys.BOT_AUTO_POST_PROMPT, ""),
+                plugin_prompt,
+                timestamp_override,
             )
         except ValueError as e:
             logger.warning(f"Auto-post failed; skipping this run: {e}")
             return
-        visibility = self.bot.config.get(ConfigKeys.BOT_AUTO_POST_VISIBILITY)
-        await self.bot.misskey.create_note(
-            content, visibility=visibility, local_only=local_only
-        )
-        self.post_count()
+        await self.post_count()
         logger.info(f"Auto-post succeeded: {self.bot.format_log_text(content)}")
         logger.info(f"Daily post count: {self.posts_today}/{max_posts}")
+
+    async def _create_ai_post(
+        self,
+        prompt: str,
+        plugin_prompt: str = "",
+        timestamp_override: int | None = None,
+    ) -> str:
+        content = await self._generate_post(
+            self.bot.system_prompt,
+            prompt,
+            plugin_prompt,
+            timestamp_override,
+        )
+        await self.bot.misskey.create_note(
+            content,
+            visibility=self.bot.config.get(ConfigKeys.BOT_AUTO_POST_VISIBILITY),
+            local_only=self.bot.config.get(ConfigKeys.BOT_AUTO_POST_LOCAL_ONLY),
+        )
+        return content
 
     async def _generate_post(
         self,

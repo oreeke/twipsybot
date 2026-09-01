@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -44,16 +45,27 @@ class ChatHandler:
     def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
 
-    async def _call_extensions(self, message: dict[str, Any]) -> list[dict[str, Any]]:
-        if response := await self.bot.admin.on_message(message):
-            return [
-                {
-                    "handled": True,
-                    "plugin_name": "Admin",
-                    "response": response,
-                }
-            ]
-        return await self.bot.plugin_manager.call_plugin_hook("on_message", message)
+    async def _handle_admin_message(
+        self,
+        message: dict[str, Any],
+        ctx: _ChatContext,
+        send_reply: Callable[[str, str | None], Awaitable[None]],
+        log_sent: Callable[[str], None],
+    ) -> bool:
+        if not ctx.text.startswith("^"):
+            return False
+        if ctx.room_id:
+            return True
+        handled = await self.bot.pipeline.run_admin_message(
+            actor_id=ctx.actor_id,
+            actor_name=ctx.username,
+            message_call=lambda: self.bot.admin.on_message(message),
+            send_reply=send_reply,
+            log_sent=log_sent,
+        )
+        if handled:
+            logger.debug("Chat handled by Admin")
+        return handled
 
     async def handle(self, message: dict[str, Any]) -> None:
         chat_enabled = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT)
@@ -107,19 +119,9 @@ class ChatHandler:
         if has_media:
             logger.info(f"Chat received from {prefix}@{username}: (no text; has media)")
 
-    def _should_ignore(self, ctx: _ChatContext) -> bool:
-        return bool(
-            (ctx.room_id and ctx.text.startswith("^"))
-            or self.bot.is_response_blacklisted_user(
-                user_id=ctx.user_id, handle=ctx.handle or ctx.mention_to
-            )
-        )
-
     async def _process(self, message: dict[str, Any]) -> None:
         ctx = self._parse_chat_context(message)
         if not ctx:
-            return
-        if self._should_ignore(ctx):
             return
         limit = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
         user_content_ai = f"{ctx.username}: {ctx.text}" if ctx.room_id else ctx.text
@@ -147,6 +149,14 @@ class ChatHandler:
             )
             logger.info(
                 f"Plugin replied to @{ctx.username}: {self.bot.format_log_text(formatted)}"
+            )
+
+        def log_admin_sent(text: str) -> None:
+            formatted = self._format_chat_reply_text(
+                room_id=ctx.room_id, mention_to=ctx.mention_to, text=text
+            )
+            logger.info(
+                f"Admin replied to @{ctx.username}: {self.bot.format_log_text(formatted)}"
             )
 
         def plugin_after_sent(text: str) -> None:
@@ -179,11 +189,11 @@ class ChatHandler:
             self.bot.append_chat_turn(ctx.conversation_id, user_content_ai, text, limit)
 
         log_incoming()
-        if await self.bot.pipeline.run_command(
+        if await self._handle_admin_message(message, ctx, send_reply, log_admin_sent):
+            return
+        if await self.bot.pipeline.run_admin_command(
             actor_id=ctx.actor_id,
             actor_name=ctx.username,
-            user_id=ctx.user_id,
-            handle=ctx.handle or ctx.mention_to,
             command_call=lambda: self.bot.admin.handle_slash_command(
                 ctx.text,
                 user_id=ctx.user_id,
@@ -195,13 +205,19 @@ class ChatHandler:
             log_sent=log_ai_sent,
         ):
             return
+        if self.bot.is_response_blacklisted_user(
+            user_id=ctx.user_id, handle=ctx.handle or ctx.mention_to
+        ):
+            return
         await self.bot.pipeline.run_response_pipeline(
             actor_id=ctx.actor_id,
             actor_name=ctx.username,
             user_id=ctx.user_id,
             handle=ctx.handle or ctx.mention_to,
             send_reply=send_reply,
-            plugin_call=lambda: self._call_extensions(message),
+            plugin_call=lambda: self.bot.plugin_manager.call_plugin_hook(
+                "on_message", message
+            ),
             plugin_kind="Chat",
             plugin_log_sent=log_plugin_sent,
             plugin_after_sent=plugin_after_sent,

@@ -459,7 +459,7 @@ async def test_slash_command_authentication_precedes_plugins(
     assert openai_server.calls == []
 
 
-async def test_admin_and_slash_commands_share_response_limits(
+async def test_admin_and_slash_commands_bypass_response_limits(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
@@ -470,21 +470,23 @@ async def test_admin_and_slash_commands_share_response_limits(
             bot={
                 "admin": {"allowed_users": ["user-2"]},
                 "response": {
+                    "blacklist": ["user-2"],
                     "rate_limit": "1h",
                     "rate_limit_reply": "请求太频繁",
                 },
             },
         )
     )
-    bot.openai.generate_image = AsyncMock()
+    bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
+    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": "file-2"})
     await bot.limits.record_response("user-2", count_turn=False)
 
     await bot.chat.handle({**_CHAT_MESSAGE, "text": "^help"})
     await bot.chat.handle({**_CHAT_MESSAGE, "id": "msg-2", "text": "/img 一只猫"})
 
-    bot.openai.generate_image.assert_not_awaited()
+    bot.openai.generate_image.assert_awaited_once_with("一只猫")
     replies = misskey_server.calls["chat/messages/create-to-user"]
-    assert [reply["text"] for reply in replies] == ["请求太频繁", "请求太频繁"]
+    assert all(reply["text"] != "请求太频繁" for reply in replies)
 
 
 async def test_disabled_image_generation_replies_with_failure(

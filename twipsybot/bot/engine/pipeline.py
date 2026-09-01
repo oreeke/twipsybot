@@ -28,13 +28,28 @@ class ResponsePipeline:
         self._limits = limits
         self._actor_locks = KeyedAsyncLock()
 
-    async def run_command(
+    async def run_admin_message(
         self,
         *,
         actor_id: str | None,
         actor_name: str | None,
-        user_id: str | None,
-        handle: str | None,
+        message_call: Callable[[], Awaitable[str | None]],
+        send_reply: Callable[[str, str | None], Awaitable[None]],
+        log_sent: Callable[[str], None],
+    ) -> bool:
+        async with self._actor_locks.hold(actor_key(actor_id, actor_name)):
+            response = await message_call()
+            if not response:
+                return False
+            await send_reply(response, None)
+            log_sent(response)
+            return True
+
+    async def run_admin_command(
+        self,
+        *,
+        actor_id: str | None,
+        actor_name: str | None,
         command_call: Callable[[], CommandResult | None],
         send_reply: Callable[[str, str | None], Awaitable[None]],
         log_sent: Callable[[str], None],
@@ -43,16 +58,10 @@ class ResponsePipeline:
             result = command_call()
             if result is None:
                 return False
-            if user_id and await self._limits.maybe_send_blocked_reply(
-                user_id=user_id, handle=handle, send_reply=send_reply
-            ):
-                return True
             response = await result.execute() if result.execute else result.response
             if response is not None:
                 await send_reply(response.text, response.file_id)
                 log_sent(response.text)
-                if user_id:
-                    await self._limits.record_response(user_id, count_turn=True)
             return True
 
     async def apply_handled_plugin_result(

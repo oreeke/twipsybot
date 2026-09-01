@@ -139,11 +139,9 @@ class MentionHandler:
                 )
 
             log_incoming()
-            if await self.bot.pipeline.run_command(
+            if await self.bot.pipeline.run_admin_command(
                 actor_id=mention.user_id,
                 actor_name=mention.username,
-                user_id=mention.user_id,
-                handle=mention.username,
                 command_call=lambda: self.bot.admin.handle_slash_command(
                     extract_note_text(
                         normalize_payload(note, kind="mention"), include_cw=True

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import yaml
@@ -549,9 +549,24 @@ async def test_admin_string_allowlist_uses_exact_match(
 
 
 async def test_admin_can_reenable_chat(
-    make_bot: MakeBot, write_config: WriteConfig
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    debug_log = Mock()
+    info_log = Mock()
+    monkeypatch.setattr("twipsybot.bot.engine.pipeline.logger.debug", debug_log)
+    monkeypatch.setattr("twipsybot.bot.flows.chat.logger.info", info_log)
+    bot = await make_bot(
+        write_config(
+            bot={
+                "admin": {"allowed_users": ["user-2"]},
+                "response": {"blacklist": ["user-2"], "rate_limit": "1h"},
+            }
+        )
+    )
+    plugin_hook = AsyncMock(wraps=bot.plugin_manager.call_plugin_hook)
+    monkeypatch.setattr(bot.plugin_manager, "call_plugin_hook", plugin_hook)
     message = {
         "id": "message-1",
         "text": "^chat off",
@@ -563,6 +578,20 @@ async def test_admin_can_reenable_chat(
     await bot.chat.handle({**message, "id": "message-2", "text": "^chat on"})
 
     assert bot.config.get("bot.response.chat") is True
+    assert any(
+        call.args == ("Chat handled by Admin",) for call in debug_log.call_args_list
+    )
+    assert not any(
+        call.args == ("Chat handled by plugin: Admin",)
+        for call in debug_log.call_args_list
+    )
+    assert any(
+        call.args and call.args[0].startswith("Admin replied to @bob:")
+        for call in info_log.call_args_list
+    )
+    plugin_hook.assert_not_awaited()
+    assert await bot.db.get_response_limit_state("user-2") is None
+    assert "user-2" not in bot._chat_histories
 
 
 async def test_stop_continues_after_cleanup_failure() -> None:

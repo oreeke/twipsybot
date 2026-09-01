@@ -21,6 +21,7 @@ from twipsybot.plugin import (
 
 _RSS_TIMEOUT = aiohttp.ClientTimeout(total=60)
 _RSS_HEADERS = {"User-Agent": "Twipsy-RSS"}
+_RSS_RECENT_KEYS_LIMIT = 2000
 
 
 class TopicsPlugin(PluginBase):
@@ -263,7 +264,9 @@ class TopicsPlugin(PluginBase):
         if not pending:
             self._pending_rss.pop(content, None)
         recent_keys = await self._get_recent_rss_keys()
-        updated = self._append_recent_key(recent_keys, key, limit=200)
+        updated = self._append_recent_key(
+            recent_keys, key, limit=_RSS_RECENT_KEYS_LIMIT
+        )
         if not await self._set_recent_rss_keys(updated):
             raise RuntimeError("failed to persist published RSS entry")
         if next_feed_idx is not None and not await self._set_storage_value(

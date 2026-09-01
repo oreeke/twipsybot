@@ -13,9 +13,9 @@
     <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-603669.svg?style=for-the-badge&labelColor=303030&logo=gnu&logoColor=ffffff"></a>
 
 <br>它有时是抽象气氛组，有时是靠谱小帮手。它把所看所想寄向联邦宇宙，也把星尘里的帖子带回家。
-<br><br>❤️
 
-_v0.3.0 重要变更（减肥）：[Changelog](./CHANGELOG.md#030---2026-08-30)_<br><br>
+··· [v0.3.0 重要变更](./CHANGELOG.md#030---2026-08-30) ··· [聊天管理命令](./twipsybot/admin/README.md) ···
+<br><br>❤️<br><br>
 
 </div>
 

@@ -808,6 +808,22 @@ async def test_topics_rss_is_recorded_only_after_publish() -> None:
         await plugin._on_auto_post_published("failed")
 
 
+async def test_topics_rss_retains_2000_published_keys() -> None:
+    plugin = TopicsPlugin(_context({"enabled": True, "source": "rss"}))
+    plugin._pending_rss["content"] = [("new-key", None)]
+    plugin._get_recent_rss_keys = AsyncMock(
+        return_value=[f"key-{index}" for index in range(2000)]
+    )
+    plugin._set_recent_rss_keys = AsyncMock(return_value=True)
+
+    await plugin._on_auto_post_published("content")
+
+    saved_keys = plugin._set_recent_rss_keys.await_args_list[0].args[0]
+    assert len(saved_keys) == 2000
+    assert saved_keys[0] == "key-1"
+    assert saved_keys[-1] == "new-key"
+
+
 async def test_topics_rotate_advances_only_after_publish() -> None:
     stored = {"rss_recent_keys": "[]", "rss_last_feed_idx": "0"}
     storage = SimpleNamespace(

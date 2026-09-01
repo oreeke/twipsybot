@@ -21,6 +21,7 @@ from twipsybot.plugin import (
     TimelineNoteEvent,
     UserRef,
 )
+from twipsybot.plugin.services import DriveServiceAdapter
 
 
 def _context(config: dict[str, Any], **services: Any) -> Any:
@@ -34,6 +35,20 @@ def _context(config: dict[str, Any], **services: Any) -> Any:
     }
     defaults.update(services)
     return SimpleNamespace(**defaults)
+
+
+async def test_drive_service_adapter_uploads_bytes() -> None:
+    upload = AsyncMock(return_value={"id": "file-1"})
+    drive = DriveServiceAdapter(SimpleNamespace(upload_bytes=upload))
+
+    result = await drive.upload_bytes(
+        b"image", name="image.webp", content_type="image/webp"
+    )
+
+    assert result == {"id": "file-1"}
+    upload.assert_awaited_once_with(
+        b"image", name="image.webp", content_type="image/webp"
+    )
 
 
 @pytest.mark.parametrize(

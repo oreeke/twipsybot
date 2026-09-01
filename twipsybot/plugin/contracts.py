@@ -16,6 +16,10 @@ class DriveService(Protocol):
 
     async def show_file(self, file_id: str) -> dict[str, Any]: ...
 
+    async def upload_bytes(
+        self, data: bytes, *, name: str, content_type: str = "image/png"
+    ) -> dict[str, Any]: ...
+
     async def download_bytes(
         self,
         file_id: str,

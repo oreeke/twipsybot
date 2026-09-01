@@ -16,6 +16,13 @@ class DriveServiceAdapter:
     async def show_file(self, file_id: str) -> dict[str, Any]:
         return await self._drive.show_file(file_id)
 
+    async def upload_bytes(
+        self, data: bytes, *, name: str, content_type: str = "image/png"
+    ) -> dict[str, Any]:
+        return await self._drive.upload_bytes(
+            data, name=name, content_type=content_type
+        )
+
     async def download_bytes(
         self,
         file_id: str,

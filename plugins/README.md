@@ -43,6 +43,46 @@ priority: 100
 
 只承诺这些 Protocol 中声明的成员稳定。
 
+#### Storage
+
+```python
+value = await self.context.storage.get("key")
+await self.context.storage.set("key", "value")
+await self.context.storage.delete("key")  # key=None 时清空本插件数据
+```
+
+存储按插件名隔离，键和值均为字符串；`delete` 返回删除数量。
+
+#### Misskey 与 Drive
+
+| 接口 | 用途 |
+| --- | --- |
+| `misskey.create_note(text, visibility, reply_id, local_only, validate_reply)` | 发帖或回复 |
+| `misskey.create_renote(note_id, visibility, text, local_only)` | 转帖或引用 |
+| `misskey.create_reaction(note_id, reaction)` | 添加反应 |
+| `misskey.list_antennas()` | 获取天线 |
+| `misskey.instance_url` | 实例地址 |
+| `misskey.drive.show_file(file_id)` | 获取文件信息 |
+| `misskey.drive.fetch_bytes(url, max_bytes=...)` | 从 URL 下载 |
+| `misskey.drive.download_bytes(file_id, thumbnail=..., max_bytes=...)` | 下载 Drive 文件 |
+| `misskey.drive.upload_bytes(data, name=..., content_type=...)` | 上传文件 |
+
+`visibility` 可为 `public`、`home` 或 `followers`。上传结果中的 `id` 是文件 ID。
+当前 `create_note` 和 handled 回复尚不支持附带文件 ID。
+
+#### OpenAI 与 Bot
+
+| 接口 | 用途 |
+| --- | --- |
+| `openai.generate_text(prompt, system_prompt, max_tokens, temperature)` | 单轮生成 |
+| `openai.generate_chat(messages, max_tokens, temperature)` | 多轮或多模态生成 |
+| `openai.system_prompt / max_tokens / temperature` | 读取全局生成参数 |
+| `openai.uses_responses_api` | 判断当前消息格式 |
+| `bot.user_id / username` | 机器人身份 |
+| `bot.actor_lock(user_id, username)` | 串行处理同一用户 |
+| `bot.load_antenna_selectors()` | 读取天线选择器 |
+| `bot.resolve_antenna_ids(selectors)` | 将选择器解析为天线 ID |
+
 事件字段：
 
 | 类型 | 字段 |
@@ -55,6 +95,11 @@ priority: 100
 | `UserRef` | `id username host handle` |
 | `FileRef` | `id mime_type url thumbnail_url raw` |
 
+`id`、`cw`、`host`、文件 URL 等字段可能为空。`UserRef.handle` 会自动组合为
+`username@host`；本地用户仅为 `username`。时间线 `channel` 通常为
+`homeTimeline`、`localTimeline`、`hybridTimeline`、`globalTimeline` 或 `antenna`。
+`files` 可配合 Drive 接口读取；`raw` 仅用于缺失的原始字段。
+
 ### Hook
 
 | 方法 | 输入 | 返回 |
@@ -65,7 +110,9 @@ priority: 100
 | `on_timeline_note` | `TimelineNoteEvent` | `None` |
 | `on_auto_post` | `AutoPostEvent` | `AutoPostResult | PromptModificationResult | None` |
 
-按 `priority` 降序调用；message/mention 返回 handled 后短路。事件字段只读；`raw` 是隔离副本且不保证兼容。
+按 `priority` 降序调用。message/mention 返回 handled 后，后续插件和默认 AI
+均不再执行；返回 `None` 则继续。notification/timeline_note 仅用于观察，所有插件
+都会收到。事件字段只读；`raw` 是隔离副本且不保证兼容。
 
 ```python
 return self.handled("已处理")
@@ -75,19 +122,27 @@ return {"prompt": "以天气为主题，"}
 
 `contents`、其中的帖子文本和 `prompt` 必须非空。
 
+- `contents`：直接发帖，不调用 AI。
+- `prompt`：追加自动发帖提示，由 AI 生成内容。
+- `timestamp`：可选的分钟级时间戳，用于稳定生成输入。
+
+返回字典必须严格符合对应 Result 类型，不能添加其他字段。自动发帖仍受全局每日限额限制。
+
 ### 生命周期
 
 ```text
 __init__ -> initialize -> on_startup -> hooks -> on_shutdown -> cleanup
 ```
 
-方法均可缺省，但必须 `async def`；生命周期方法不得要求额外参数，Hook 必须能接收事件参数。生命周期超时 30 秒，Hook 超时 60 秒。
+方法均可缺省，但必须 `async def`；生命周期方法不得要求额外参数，Hook 必须能接收事件参数。`initialize` 只有返回 `True` 才算成功。生命周期超时 30 秒，Hook 超时 60 秒。
 
 - 初始化或启动失败：cleanup 并禁用。
 - Bot 停止：on_shutdown 后 cleanup。
 - Hook 异常或超时只隔离本次调用。
 
-插件配置在进程启动时读取，修改配置后需重启 Bot。关闭时会等待正在执行的 Hook 完成。
+`context.config` 只读。配置优先读取 `plugins/config.yaml` 中的插件条目，否则读取
+插件目录内的 `config.yaml`，两者不合并。修改配置后需重启 Bot。关闭时会等待正在
+执行的 Hook 完成。插件类可设置 `description` 供插件信息展示。
 
 ### 边界
 

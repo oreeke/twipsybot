@@ -1,11 +1,9 @@
-import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-import durationpy
 from cachetools import TTLCache
 
 from ...db.sqlite import DBManager
@@ -13,8 +11,6 @@ from ...shared.config import Config
 from ...shared.config_keys import ConfigKeys
 from ...shared.constants import RESPONSE_LIMIT_CACHE_MAX, RESPONSE_LIMIT_CACHE_TTL
 from ...shared.utils import normalize_tokens
-
-_DURATION_PATTERN = re.compile(r"[+-]?(?:[\d.]+[smhd]\s*)+")
 
 
 @dataclass(slots=True)
@@ -90,35 +86,9 @@ class ResponseLimiter:
             for c in self._user_candidates(user_id=user_id, handle=handle)
         )
 
-    @staticmethod
-    def _parse_duration_seconds(value: Any) -> int | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            return int(value)
-        if not isinstance(value, str):
-            return None
-        s = value.strip().lower()
-        if not s:
-            return None
-        if s in {"-1", "unlimited", "none", "off"}:
-            return -1
-        if s.isdigit():
-            return int(s)
-        if _DURATION_PATTERN.fullmatch(s) is None:
-            return None
-        try:
-            return int(durationpy.from_str(s).total_seconds())
-        except Exception:
-            return None
-
     def _duration_config_seconds(self, key: str) -> int:
-        seconds = self._parse_duration_seconds(self._config.get(key))
-        if seconds is None:
-            return -1
-        return seconds
+        value = self._config.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else -1
 
     async def _get_response_limit_state(self, user_id: str) -> _ResponseLimitState:
         if user_id in self._response_limits:

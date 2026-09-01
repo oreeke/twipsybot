@@ -13,13 +13,11 @@ import yaml
 from conftest import MakeBot, WriteConfig
 from httpx2 import Request, Response
 from openai import APIStatusError
-from tenacity import wait_none
 
 from twipsybot import Config, MisskeyBot
 from twipsybot.admin.service import AdminCommandService
 from twipsybot.app import cli as app_cli
 from twipsybot.app import main as app_main
-from twipsybot.bot.engine.limits import ResponseLimiter
 from twipsybot.bot.engine.pipeline import AIResponse
 from twipsybot.bot.flows.image import ImageGenerationService
 from twipsybot.bot.flows.post import AutoPostService
@@ -27,6 +25,7 @@ from twipsybot.clients.misskey.api import MisskeyAPI
 from twipsybot.clients.misskey.socket import _redact_access_token
 from twipsybot.clients.openai.api import OpenAIAPI
 from twipsybot.shared.config_keys import ConfigKeys
+from twipsybot.shared.constants import API_MAX_RETRIES
 from twipsybot.shared.exceptions import APIConnectionError, ConfigurationError
 
 
@@ -57,12 +56,41 @@ async def test_misskey_api_retries_connection_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = AsyncMock(side_effect=[APIConnectionError(), {"ok": True}])
+    sleep = AsyncMock()
     api = object.__new__(MisskeyAPI)
     api._make_request_once = request
-    monkeypatch.setattr(MisskeyAPI.make_request.retry, "wait", wait_none())
+    monkeypatch.setattr("twipsybot.clients.misskey.api.asyncio.sleep", sleep)
 
-    assert await api.make_request("test") == {"ok": True}
+    assert await api.make_read_request("notes/show") == {"ok": True}
     assert request.await_count == 2
+    sleep.assert_awaited_once()
+
+
+async def test_misskey_api_stops_after_max_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = AsyncMock(side_effect=APIConnectionError())
+    sleep = AsyncMock()
+    api = object.__new__(MisskeyAPI)
+    api._make_request_once = request
+    monkeypatch.setattr("twipsybot.clients.misskey.api.asyncio.sleep", sleep)
+
+    with pytest.raises(APIConnectionError):
+        await api.make_read_request("notes/show")
+
+    assert request.await_count == API_MAX_RETRIES + 1
+    assert sleep.await_count == API_MAX_RETRIES
+
+
+async def test_misskey_api_does_not_retry_writes() -> None:
+    request = AsyncMock(side_effect=APIConnectionError())
+    api = object.__new__(MisskeyAPI)
+    api._make_request_once = request
+
+    with pytest.raises(APIConnectionError):
+        await api.make_request("notes/create")
+
+    request.assert_awaited_once_with("notes/create", None)
 
 
 @pytest.mark.parametrize(
@@ -310,16 +338,10 @@ def test_environment_overrides_yaml_config(
     )
 
     assert config.get(ConfigKeys.OPENAI_MODEL) == "model-from-env"
-    assert config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT) == "3"
+    assert config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT) == 3
     assert config.get(ConfigKeys.BOT_TIMELINE_GLOBAL) is True
     assert config.data["bot"]["timeline"]["global"] is True
     assert "global_" not in config.data["bot"]["timeline"]
-    assert (
-        ResponseLimiter._parse_duration_seconds(
-            config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT)
-        )
-        == 3
-    )
     assert config.get(ConfigKeys.DB_CLEAR) == 30
 
 
@@ -375,19 +397,38 @@ def test_auto_post_interval_accepts_minutes_and_units(
         ("1d", 86400),
         ("1h30m", 5400),
         ("1h 30m", 5400),
-        ("1w", None),
-        ("1mm", None),
-        ("1y", None),
-        ("500ms", None),
-        ("1us", None),
-        ("1ns", None),
-        ("1hXXX30m", None),
-        ("invalid", None),
-        (True, None),
     ],
 )
-def test_response_limit_duration_parsing(value: Any, expected: int | None) -> None:
-    assert ResponseLimiter._parse_duration_seconds(value) == expected
+def test_response_limit_duration_normalization(
+    write_config: WriteConfig, value: Any, expected: int
+) -> None:
+    config = write_config(bot={"response": {"rate_limit": value}})
+
+    assert config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "1w",
+        "1mm",
+        "1y",
+        "500ms",
+        "1us",
+        "1ns",
+        "0.5s",
+        "1.5m",
+        "1h0.5m",
+        "1hXXX30m",
+        "invalid",
+        True,
+    ),
+)
+def test_response_limit_rejects_invalid_duration(
+    write_config: WriteConfig, value: Any
+) -> None:
+    with pytest.raises(ConfigurationError, match="limits must use"):
+        write_config(bot={"response": {"rate_limit": value}})
 
 
 async def test_database_persists_updates_and_cleans_expired_state(

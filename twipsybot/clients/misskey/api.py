@@ -1,16 +1,11 @@
 import asyncio
 import json
+import random
 import time
 from typing import Any
 
 import aiohttp
 from loguru import logger
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_random_exponential,
-)
 
 from ...shared.constants import (
     API_MAX_RETRIES,
@@ -113,16 +108,21 @@ class MisskeyAPI:
         logger.error(f"API request failed: {status} - {endpoint} - {error_text}")
         raise APIConnectionError(error_text)
 
-    @retry(
-        stop=stop_after_attempt(API_MAX_RETRIES),
-        wait=wait_random_exponential(multiplier=1, max=30),
-        retry=retry_if_exception_type((APIConnectionError, APIRateLimitError)),
-        before_sleep=lambda state: logger.info(
-            f"Retry attempt #{state.attempt_number}..."
-        ),
-    )
-    async def make_request(
+    async def make_read_request(
         self, endpoint: str, data: dict[str, Any] | None = None
+    ) -> Any:
+        for attempt in range(1, API_MAX_RETRIES + 1):
+            try:
+                return await self._make_request_once(endpoint, data)
+            except (APIConnectionError, APIRateLimitError):
+                logger.info(f"Retry attempt #{attempt}...")
+                await asyncio.sleep(random.uniform(0, min(2 ** (attempt - 1), 30)))
+        return await self._make_request_once(endpoint, data)
+
+    async def make_request(
+        self,
+        endpoint: str,
+        data: dict[str, Any] | None = None,
     ) -> Any:
         return await self._make_request_once(endpoint, data)
 
@@ -279,10 +279,10 @@ class MisskeyAPI:
         return reply_id, visibility
 
     async def get_note(self, note_id: str) -> dict[str, Any]:
-        return await self.make_request("notes/show", {"noteId": note_id})
+        return await self.make_read_request("notes/show", {"noteId": note_id})
 
     async def get_current_user(self) -> dict[str, Any]:
-        return await self.make_request("i", {})
+        return await self.make_read_request("i", {})
 
     async def list_antennas(self) -> list[dict[str, Any]]:
         now = time.monotonic()
@@ -292,7 +292,7 @@ class MisskeyAPI:
             now = time.monotonic()
             if now < self._antennas_cache_expires_at and self._antennas_cache:
                 return list(self._antennas_cache)
-            result = await self.make_request("antennas/list", {})
+            result = await self.make_read_request("antennas/list", {})
             antennas = result if isinstance(result, list) else []
             self._antennas_cache = antennas
             self._antennas_cache_expires_at = time.monotonic() + 30.0
@@ -359,7 +359,7 @@ class MisskeyAPI:
         data = {"userId": user_id, "limit": limit}
         if since_id:
             data["sinceId"] = since_id
-        return await self.make_request("chat/messages/user-timeline", data)
+        return await self.make_read_request("chat/messages/user-timeline", data)
 
     async def get_room_messages(
         self, room_id: str, limit: int = 10, since_id: str | None = None
@@ -368,7 +368,7 @@ class MisskeyAPI:
         if since_id:
             data["sinceId"] = since_id
         try:
-            return await self.make_request("chat/messages/room-timeline", data)
+            return await self.make_read_request("chat/messages/room-timeline", data)
         except APIBadRequestError as e:
             m = str(e)
             if m and "roomId" not in m and "toRoomId" not in m:
@@ -376,4 +376,4 @@ class MisskeyAPI:
             data = {"toRoomId": room_id, "limit": limit}
             if since_id:
                 data["sinceId"] = since_id
-            return await self.make_request("chat/messages/room-timeline", data)
+            return await self.make_read_request("chat/messages/room-timeline", data)

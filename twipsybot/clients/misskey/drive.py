@@ -16,7 +16,9 @@ class MisskeyDrive:
         self._api = api
 
     async def show_file(self, file_id: str) -> dict[str, Any]:
-        return await self._api.make_request("drive/files/show", {"fileId": file_id})
+        return await self._api.make_read_request(
+            "drive/files/show", {"fileId": file_id}
+        )
 
     async def upload_bytes(
         self, data: bytes, *, name: str, content_type: str = "image/png"

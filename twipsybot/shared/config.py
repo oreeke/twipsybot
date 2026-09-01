@@ -23,8 +23,8 @@ _MISSING = object()
 _AUTO_POST_INTERVAL_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?[mhd]\s*)+")
 _MINUTES_PATTERN = re.compile(r"\d+(?:\.\d+)?")
 _AUTO_POST_INTERVAL_ERROR = "auto-post interval must use minutes, hours, or days"
-_RESPONSE_DURATION_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?[smhd]\s*)+")
-_RESPONSE_DURATION_ERROR = "limits must use seconds, minutes, hours, or days"
+_RESPONSE_DURATION_PATTERN = re.compile(r"(?:\d+[smhd]\s*)+")
+_RESPONSE_DURATION_ERROR = "limits must use whole seconds, minutes, hours, or days"
 
 _ENV_TO_KEY = {
     "MISSKEY_INSTANCE_URL": ConfigKeys.MISSKEY_INSTANCE_URL,
@@ -228,17 +228,17 @@ class ResponseConfig(_ConfigModel):
     mention: bool = True
     chat: bool = True
     chat_memory: int = 10
-    rate_limit: int | str = -1
+    rate_limit: int = -1
     rate_limit_reply: str = "我需要休息一下..."
     max_turns: int = -1
     max_turns_reply: str = "我要回家了..."
-    max_turns_release: int | str = -1
+    max_turns_release: int = -1
     whitelist: list[str] | str = []
     blacklist: list[str] | str = []
 
     @field_validator("rate_limit", "max_turns_release", mode="before")
     @classmethod
-    def _validate_duration(cls, value: Any) -> Any:
+    def _validate_duration(cls, value: Any) -> int:
         if isinstance(value, bool):
             raise ValueError(_RESPONSE_DURATION_ERROR)
         if isinstance(value, int):
@@ -249,13 +249,12 @@ class ResponseConfig(_ConfigModel):
             raise ValueError(_RESPONSE_DURATION_ERROR)
         normalized = value.strip().lower()
         if normalized in {"-1", "off", "none", "unlimited"}:
-            return value
+            return -1
         if normalized.isdigit():
-            return value
+            return int(normalized)
         if _RESPONSE_DURATION_PATTERN.fullmatch(normalized):
             try:
-                if durationpy.from_str(normalized) >= timedelta(0):
-                    return value
+                return int(durationpy.from_str(normalized).total_seconds())
             except Exception:
                 pass
         raise ValueError(_RESPONSE_DURATION_ERROR)

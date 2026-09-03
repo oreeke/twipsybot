@@ -28,6 +28,29 @@ priority: 100
 
 目录名、文件名和类名应对应。`api_version` 不兼容时拒绝加载。
 
+### 类型化配置
+
+有自定义配置时，继承 `PluginConfig` 声明默认值和约束，再通过
+`config_class` 挂载。`enabled`、`priority` 等框架字段会自动忽略，配置对象只读。
+
+```python
+from pydantic import Field
+
+from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase, PluginConfig
+
+
+class EchoConfig(PluginConfig):
+    prefix: str = "echo"
+    max_length: int = Field(200, ge=1, le=3000)
+
+
+class EchoPlugin(PluginBase):
+    api_version = PLUGIN_API_VERSION
+    config_class = EchoConfig
+```
+
+简单插件无需定义配置类；复杂格式可使用 Pydantic 的字段或模型验证器集中处理。
+
 ### Context
 
 通过 `self.context` 使用：
@@ -60,6 +83,7 @@ await self.context.storage.delete("key")  # key=None 时清空本插件数据
 | `misskey.create_note(text, visibility, reply_id, local_only, validate_reply)` | 发帖或回复 |
 | `misskey.create_renote(note_id, visibility, text, local_only)` | 转帖或引用 |
 | `misskey.create_reaction(note_id, reaction)` | 添加反应 |
+| `misskey.send_message(user_id, text)` | 向用户发送私信 |
 | `misskey.list_antennas()` | 获取天线 |
 | `misskey.instance_url` | 实例地址 |
 | `misskey.drive.show_file(file_id)` | 获取文件信息 |
@@ -74,14 +98,18 @@ await self.context.storage.delete("key")  # key=None 时清空本插件数据
 
 | 接口 | 用途 |
 | --- | --- |
-| `openai.generate_text(prompt, system_prompt, max_tokens, temperature)` | 单轮生成 |
+| `openai.generate_text(prompt, system_prompt, max_tokens, temperature, json_output)` | 单轮生成，可选 JSON Object 输出 |
 | `openai.generate_chat(messages, max_tokens, temperature)` | 多轮或多模态生成 |
+| `openai.moderate_texts(texts)` | 批量审核文本，按输入顺序返回命中的类别集合 |
 | `openai.system_prompt / max_tokens / temperature` | 读取全局生成参数 |
 | `openai.uses_responses_api` | 判断当前消息格式 |
 | `bot.user_id / username` | 机器人身份 |
 | `bot.actor_lock(user_id, username)` | 串行处理同一用户 |
 | `bot.load_antenna_selectors()` | 读取天线选择器 |
 | `bot.resolve_antenna_ids(selectors)` | 将选择器解析为天线 ID |
+
+`moderate_texts` 使用 `omni-moderation-latest`；自定义 OpenAI 兼容端点需要支持
+`/moderations`。
 
 事件字段：
 

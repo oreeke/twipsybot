@@ -3,60 +3,69 @@ import calendar
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import aiohttp
 import feedparser
 from bs4 import BeautifulSoup
 from loguru import logger
+from pydantic import Field, field_validator
 
 from twipsybot.plugin import (
     PLUGIN_API_VERSION,
     AutoPostEvent,
     AutoPostResult,
     PluginBase,
+    PluginConfig,
     PromptModificationResult,
 )
 
 _RSS_TIMEOUT = aiohttp.ClientTimeout(total=60)
 _RSS_HEADERS = {"User-Agent": "Twipsy-RSS"}
 _RSS_RECENT_KEYS_LIMIT = 2000
+_DEFAULT_RSS_AI_PREFIX = (
+    "发表一段感想和相关知识（不超过150字），"
+    "不加链接，不加引号：\n\n{summary}\n\n{title}\n{link}"
+)
+
+
+class _Config(PluginConfig):
+    source: Literal["txt", "rss"] = "txt"
+    txt_ai_prefix: str = ""
+    txt_start_line: int = Field(1, ge=1)
+    rss_list: tuple[str, ...] = ()
+    rss_ai: bool = False
+    rss_post_mode: Literal["batch", "rotate"] = "batch"
+    rss_ai_prefix: str = _DEFAULT_RSS_AI_PREFIX
+
+    @field_validator("rss_ai_prefix", mode="before")
+    @classmethod
+    def _normalize_rss_ai_prefix(cls, value: Any) -> str:
+        return str(value or _DEFAULT_RSS_AI_PREFIX)
 
 
 class TopicsPlugin(PluginBase):
     api_version = PLUGIN_API_VERSION
-    description = "主题插件，为自动发帖提供内容源"
+    config_class = _Config
+    settings: _Config
+    description = "为自动发帖提供内容源（文本主题 / RSS）"
 
     def __init__(self, context):
         super().__init__(context)
-        config = self.context.config
-        self.source = str(config.get("source") or "txt").strip().lower()
-        self.txt_ai_prefix = config.get("txt_ai_prefix") or ""
-        self.txt_start_line = config.get("txt_start_line", 1)
-        self.rss_list = config.get("rss_list") or []
-        self.rss_ai = self._parse_bool(config.get("rss_ai"), False)
-        self.rss_post_mode = str(config.get("rss_post_mode") or "batch").strip().lower()
-        if self.rss_post_mode not in {"batch", "rotate"}:
-            self.rss_post_mode = "batch"
-        self.rss_ai_prefix = (
-            config.get("rss_ai_prefix")
-            or "发表一段感想和相关知识（不超过150字），"
-            "不加链接，不加引号：\n\n{summary}\n\n{title}\n{link}"
-        )
         self.topics = []
         self._pending_rss: dict[str, list[tuple[str, int | None]]] = {}
 
     async def initialize(self) -> bool:
         try:
-            if self.source == "rss":
+            if self.settings.source == "rss":
                 await self._initialize_storage(
                     {"rss_recent_keys": "[]", "rss_last_feed_idx": "0"}
                 )
                 details = f"RSS feeds: {len(self._get_rss_urls())}"
             else:
                 await self._load_topics()
-                initial_index = max(0, self.txt_start_line - 1)
+                initial_index = max(0, self.settings.txt_start_line - 1)
                 if self.topics:
                     initial_index %= len(self.topics)
                 await self._initialize_storage({"last_used_line": str(initial_index)})
@@ -73,7 +82,7 @@ class TopicsPlugin(PluginBase):
         self, event: AutoPostEvent
     ) -> AutoPostResult | PromptModificationResult | None:
         try:
-            if self.source == "rss":
+            if self.settings.source == "rss":
                 if contents := await self._get_next_rss_posts():
                     self._log_plugin_action("direct post", f"count={len(contents)}")
                     return {"contents": contents}
@@ -83,7 +92,7 @@ class TopicsPlugin(PluginBase):
                 self._log_plugin_action("direct post", topic)
                 return {"contents": [topic]}
             return {
-                "prompt": self.txt_ai_prefix.format(topic=topic),
+                "prompt": self.settings.txt_ai_prefix.format(topic=topic),
             }
         except asyncio.CancelledError:
             raise
@@ -142,7 +151,7 @@ class TopicsPlugin(PluginBase):
             logger.warning("RSS source enabled but rss_list is empty")
             return []
 
-        if self.rss_post_mode == "rotate":
+        if self.settings.rss_post_mode == "rotate":
             return await self._get_next_rss_posts_rotate(urls)
 
         recent_keys = await self._get_recent_rss_keys()
@@ -194,9 +203,7 @@ class TopicsPlugin(PluginBase):
         return []
 
     def _get_rss_urls(self) -> list[str]:
-        return [
-            u.strip() for u in (self.rss_list or []) if isinstance(u, str) and u.strip()
-        ]
+        return list(self.settings.rss_list)
 
     @staticmethod
     def _rss_session() -> aiohttp.ClientSession:
@@ -279,7 +286,7 @@ class TopicsPlugin(PluginBase):
         link = entry["link"]
         summary = entry.get("summary") or ""
         primary = (summary or title).strip()
-        if not self.rss_ai:
+        if not self.settings.rss_ai:
             return primary or title
         rewritten = await self._rewrite_rss_title_with_ai(title, link, summary=summary)
         return rewritten or title
@@ -370,7 +377,7 @@ class TopicsPlugin(PluginBase):
         self, title: str, link: str, *, summary: str
     ) -> str:
         try:
-            prompt = str(self.rss_ai_prefix).format(
+            prompt = self.settings.rss_ai_prefix.format(
                 title=title, link=link, summary=summary
             )
         except Exception as e:

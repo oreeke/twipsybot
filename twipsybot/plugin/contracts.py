@@ -57,6 +57,8 @@ class MisskeyService(Protocol):
         local_only: bool | None = None,
     ) -> dict[str, Any]: ...
 
+    async def send_message(self, user_id: str, text: str) -> dict[str, Any]: ...
+
 
 class OpenAIService(Protocol):
     @property
@@ -77,7 +79,10 @@ class OpenAIService(Protocol):
         system_prompt: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        json_output: bool = False,
     ) -> str: ...
+
+    async def moderate_texts(self, texts: list[str]) -> list[frozenset[str]]: ...
 
     async def generate_chat(
         self,

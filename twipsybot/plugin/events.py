@@ -154,7 +154,7 @@ def _mention_event(raw: dict[str, Any]) -> MentionEvent:
         raise ValueError("mention event requires id")
     return MentionEvent(
         id=event_id,
-        text=extract_note_text(note, include_cw=False, allow_body_fallback=True),
+        text=extract_note_text(note, include_cw=False),
         cw=_string(note.get("cw")),
         user=_user(note),
         files=_files(note),

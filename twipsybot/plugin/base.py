@@ -3,18 +3,26 @@ import inspect
 from typing import Any, ClassVar
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict
 
 from .context import PluginContext
 from .results import HandledResult
 
-__all__ = ("PluginBase",)
+__all__ = ("PluginBase", "PluginConfig")
+
+
+class PluginConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True, validate_default=True)
 
 
 class PluginBase:
     api_version: ClassVar[int]
+    config_class: ClassVar[type[PluginConfig]] = PluginConfig
+    settings: PluginConfig
 
     def __init__(self, context: PluginContext):
         self.context = context
+        self.settings = self.config_class.model_validate(context.config)
         self._enabled = self._parse_bool(context.config.get("enabled"), False)
         self._priority = int(context.config.get("priority", 0))
         self._initialized = False

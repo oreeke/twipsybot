@@ -1,17 +1,39 @@
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
+from pydantic import Field
 
 from twipsybot.plugin import (
     PLUGIN_API_VERSION,
     PluginBase,
+    PluginConfig,
     TimelineNoteEvent,
 )
 
 
+class _Config(PluginConfig):
+    reaction: str | None = None
+    reply_enabled: bool = Field(False, validation_alias="reply")
+    reply_text: str | None = None
+    reply_ai: bool = False
+    reply_ai_prompt: str | None = None
+    reply_local_only: bool = False
+    quote_enabled: bool = Field(False, validation_alias="quote")
+    quote_text: str | None = None
+    quote_ai: bool = False
+    quote_ai_prompt: str | None = None
+    quote_visibility: Literal["public", "home", "followers"] | None = None
+    quote_local_only: bool = False
+    renote_enabled: bool = Field(False, validation_alias="renote")
+    renote_visibility: Literal["public", "home", "followers"] | None = None
+    renote_local_only: bool = False
+
+
 class RadarPlugin(PluginBase):
     api_version = PLUGIN_API_VERSION
-    description = "雷达插件：主动与天线发现的帖子互动（反应、回复、转发、引用）"
+    config_class = _Config
+    settings: _Config
+    description = "主动与天线发现的帖子互动（反应、回复、转发、引用）"
 
     DEFAULT_REPLY_AI_PROMPT = (
         "根据帖子内容写一句自然回复，不要复述原文，不要加引号，不超过30字：\n{content}"
@@ -20,55 +42,12 @@ class RadarPlugin(PluginBase):
         "根据帖子内容写一句简短感想，不要复述原文，不要加引号，不超过30字：\n{content}"
     )
 
-    def __init__(self, context):
-        super().__init__(context)
-        config = self.context.config
-        self.reaction = self._normalize_str(config.get("reaction"))
-        self.reply_enabled = self._parse_bool(config.get("reply"), False)
-        self.reply_text = self._normalize_str(config.get("reply_text"))
-        self.reply_ai = self._parse_bool(config.get("reply_ai"), False)
-        self.reply_ai_prompt = self._normalize_str(config.get("reply_ai_prompt"))
-        self.reply_local_only = self._parse_bool(config.get("reply_local_only"), False)
-        self.quote_enabled = self._parse_bool(config.get("quote"), False)
-        self.quote_text = self._normalize_str(config.get("quote_text"))
-        self.quote_ai = self._parse_bool(config.get("quote_ai"), False)
-        self.quote_ai_prompt = self._normalize_str(config.get("quote_ai_prompt"))
-        self.quote_visibility = self._normalize_visibility(
-            config.get("quote_visibility")
-        )
-        self.quote_local_only = self._parse_bool(config.get("quote_local_only"), False)
-        self.renote_enabled = self._parse_bool(config.get("renote"), False)
-        self.renote_visibility = self._normalize_visibility(
-            config.get("renote_visibility")
-        )
-        self.renote_local_only = self._parse_bool(
-            config.get("renote_local_only"), False
-        )
-
     async def initialize(self) -> bool:
         selectors = self.context.bot.load_antenna_selectors()
         self._log_plugin_action(
             "initialized", f"Antenna: {', '.join(selectors) or '(empty)'}"
         )
         return True
-
-    @staticmethod
-    def _normalize_str(value: Any) -> str | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if not isinstance(value, str):
-            value = str(value)
-        s = value.strip()
-        return s or None
-
-    def _normalize_visibility(self, value: Any) -> str | None:
-        s = self._normalize_str(value)
-        if not s:
-            return None
-        v = s.lower()
-        if v in {"public", "home", "followers"}:
-            return v
-        return None
 
     def _effective_text(self, note: dict[str, Any]) -> str:
         parts: list[str] = []
@@ -130,11 +109,13 @@ class RadarPlugin(PluginBase):
     async def _maybe_react(
         self, note_data: dict[str, Any], note_id: str, channel: str
     ) -> None:
-        if not self.reaction or note_data.get("myReaction"):
+        if not self.settings.reaction or note_data.get("myReaction"):
             return
         try:
-            await self.context.misskey.create_reaction(note_id, self.reaction)
-            self._log_plugin_action("reacted", f"{note_id} {self.reaction} [{channel}]")
+            await self.context.misskey.create_reaction(note_id, self.settings.reaction)
+            self._log_plugin_action(
+                "reacted", f"{note_id} {self.settings.reaction} [{channel}]"
+            )
         except Exception as e:
             logger.error(f"Radar reaction failed: {e!r}")
 
@@ -163,13 +144,13 @@ class RadarPlugin(PluginBase):
     async def _maybe_reply(
         self, note_data: dict[str, Any], note_id: str, channel: str
     ) -> None:
-        if not self.reply_enabled:
+        if not self.settings.reply_enabled:
             return
         text = await self._build_action_text(
             note_data,
-            text=self.reply_text,
-            ai_enabled=self.reply_ai,
-            ai_prompt=self.reply_ai_prompt,
+            text=self.settings.reply_text,
+            ai_enabled=self.settings.reply_ai,
+            ai_prompt=self.settings.reply_ai_prompt,
             default_prompt=self.DEFAULT_REPLY_AI_PROMPT,
             action="reply",
         )
@@ -177,7 +158,7 @@ class RadarPlugin(PluginBase):
             return
         try:
             await self.context.misskey.create_note(
-                text=text, reply_id=note_id, local_only=self.reply_local_only
+                text=text, reply_id=note_id, local_only=self.settings.reply_local_only
             )
             self._log_plugin_action("replied", f"{note_id} [{channel}]")
         except Exception as e:
@@ -186,13 +167,13 @@ class RadarPlugin(PluginBase):
     async def _maybe_quote(
         self, note_data: dict[str, Any], note_id: str, channel: str
     ) -> bool:
-        if not self.quote_enabled:
+        if not self.settings.quote_enabled:
             return False
         text = await self._build_action_text(
             note_data,
-            text=self.quote_text,
-            ai_enabled=self.quote_ai,
-            ai_prompt=self.quote_ai_prompt,
+            text=self.settings.quote_text,
+            ai_enabled=self.settings.quote_ai,
+            ai_prompt=self.settings.quote_ai_prompt,
             default_prompt=self.DEFAULT_QUOTE_AI_PROMPT,
             action="quote",
         )
@@ -201,12 +182,13 @@ class RadarPlugin(PluginBase):
         try:
             await self.context.misskey.create_renote(
                 note_id,
-                visibility=self.quote_visibility,
+                visibility=self.settings.quote_visibility,
                 text=text,
-                local_only=self.quote_local_only,
+                local_only=self.settings.quote_local_only,
             )
             self._log_plugin_action(
-                "quoted", f"{note_id} {self.quote_visibility or ''} [{channel}]"
+                "quoted",
+                f"{note_id} {self.settings.quote_visibility or ''} [{channel}]",
             )
             return True
         except Exception as e:
@@ -214,16 +196,17 @@ class RadarPlugin(PluginBase):
             return False
 
     async def _maybe_renote(self, note_id: str, channel: str) -> None:
-        if not self.renote_enabled:
+        if not self.settings.renote_enabled:
             return
         try:
             await self.context.misskey.create_renote(
                 note_id,
-                visibility=self.renote_visibility,
-                local_only=self.renote_local_only,
+                visibility=self.settings.renote_visibility,
+                local_only=self.settings.renote_local_only,
             )
             self._log_plugin_action(
-                "renoted", f"{note_id} {self.renote_visibility or ''} [{channel}]"
+                "renoted",
+                f"{note_id} {self.settings.renote_visibility or ''} [{channel}]",
             )
         except Exception as e:
             logger.error(f"Radar renote failed: {e!r}")

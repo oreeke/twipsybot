@@ -2,7 +2,7 @@ import base64
 from typing import Any
 
 from loguru import logger
-from pydantic import ByteSize, TypeAdapter
+from pydantic import ByteSize, Field, field_validator
 
 from twipsybot.plugin import (
     PLUGIN_API_VERSION,
@@ -11,22 +11,29 @@ from twipsybot.plugin import (
     MentionEvent,
     MessageEvent,
     PluginBase,
+    PluginConfig,
 )
 
-_BYTE_SIZE_ADAPTER = TypeAdapter(ByteSize)
+
+class _Config(PluginConfig):
+    max_images: int = Field(3, ge=1)
+    max_bytes: ByteSize = ByteSize(6 * 1024 * 1024)
+    use_thumbnail: bool = True
+    default_prompt: str = "请描述图片内容。"
+
+    @field_validator("max_bytes", mode="before")
+    @classmethod
+    def _reject_boolean_size(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("must be a byte size")
+        return value
 
 
 class VisionPlugin(PluginBase):
     api_version = PLUGIN_API_VERSION
-    description = "视觉插件，识别提及（@）或聊天中的图片并回复"
-
-    def __init__(self, context):
-        super().__init__(context)
-        config = self.context.config
-        self.max_images = int(config.get("max_images", 3))
-        self.max_bytes = self._parse_size(config.get("max_bytes"), 6 * 1024 * 1024)
-        self.use_thumbnail = self._parse_bool(config.get("use_thumbnail"), True)
-        self.default_prompt = str(config.get("default_prompt", "请描述图片内容。"))
+    config_class = _Config
+    settings: _Config
+    description = "理解 @提及或聊天中的图片并生成回复"
 
     @staticmethod
     def _make_text_part(text: str, *, use_responses: bool) -> dict[str, Any]:
@@ -41,7 +48,7 @@ class VisionPlugin(PluginBase):
     def _select_direct_url(self, file: FileRef) -> str | None:
         first, second = (
             (file.thumbnail_url, file.url)
-            if self.use_thumbnail
+            if self.settings.use_thumbnail
             else (file.url, file.thumbnail_url)
         )
         return self._normalize_url(first) or self._normalize_url(second)
@@ -51,7 +58,7 @@ class VisionPlugin(PluginBase):
             return None
         try:
             return await self.context.misskey.drive.fetch_bytes(
-                direct_url, max_bytes=self.max_bytes
+                direct_url, max_bytes=self.settings.max_bytes
             )
         except Exception as e:
             logger.error(f"Vision failed to download image: {e!r}")
@@ -70,7 +77,9 @@ class VisionPlugin(PluginBase):
     async def _try_download_bytes_by_id(self, fid: str) -> bytes | None:
         try:
             return await self.context.misskey.drive.download_bytes(
-                fid, thumbnail=self.use_thumbnail, max_bytes=self.max_bytes
+                fid,
+                thumbnail=self.settings.use_thumbnail,
+                max_bytes=self.settings.max_bytes,
             )
         except Exception as e:
             logger.error(f"Vision failed to download image: {e!r}")
@@ -92,19 +101,6 @@ class VisionPlugin(PluginBase):
             return None
         url = value.strip().replace("`", "").strip()
         return url or None
-
-    @staticmethod
-    def _parse_size(value: Any, default: int) -> int:
-        if value is None:
-            return default
-        if isinstance(value, bool):
-            return default
-        if isinstance(value, (int, float)):
-            return max(0, int(value))
-        try:
-            return int(_BYTE_SIZE_ADAPTER.validate_python(value))
-        except Exception:
-            return default
 
     async def initialize(self) -> bool:
         self._log_plugin_action("initialized")
@@ -128,7 +124,7 @@ class VisionPlugin(PluginBase):
     ) -> list[dict[str, Any]]:
         use_responses = self.context.openai.uses_responses_api
         images: list[dict[str, Any]] = []
-        for file in files[: self.max_images]:
+        for file in files[: self.settings.max_images]:
             if not (
                 item := await self._to_image_part(file, use_responses=use_responses)
             ):
@@ -136,7 +132,7 @@ class VisionPlugin(PluginBase):
             images.append(item)
         if not images:
             return []
-        prompt = text or self.default_prompt
+        prompt = text or self.settings.default_prompt
         return [self._make_text_part(prompt, use_responses=use_responses), *images]
 
     async def _to_image_part(

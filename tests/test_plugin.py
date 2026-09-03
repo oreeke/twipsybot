@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 from conftest import FakeMisskeyServer, MakeBot, MakePluginDir, WriteConfig
 
+from plugins.iincho.iincho import IinchoPlugin, _Sample
 from plugins.keyact.keyact import KeyActPlugin
 from plugins.radar.radar import RadarPlugin
 from plugins.topics.topics import TopicsPlugin
@@ -18,10 +20,12 @@ from twipsybot.plugin import (
     MentionEvent,
     MessageEvent,
     PluginBase,
+    PluginConfig,
     TimelineNoteEvent,
     UserRef,
 )
-from twipsybot.plugin.services import DriveServiceAdapter
+from twipsybot.plugin.events import build_hook_event
+from twipsybot.plugin.services import DriveServiceAdapter, MisskeyServiceAdapter
 
 
 def _context(config: dict[str, Any], **services: Any) -> Any:
@@ -51,6 +55,18 @@ async def test_drive_service_adapter_uploads_bytes() -> None:
     )
 
 
+async def test_misskey_service_adapter_sends_message() -> None:
+    send_message = AsyncMock(return_value={"id": "message-1"})
+    service = MisskeyServiceAdapter(
+        SimpleNamespace(drive=SimpleNamespace(), send_message=send_message)
+    )
+
+    result = await service.send_message("admin-id", "alert")
+
+    assert result == {"id": "message-1"}
+    send_message.assert_awaited_once_with("admin-id", "alert")
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -71,6 +87,22 @@ def test_parse_bool_rejects_invalid_values(value: Any) -> None:
         PluginBase._parse_bool(value, False)
 
 
+def test_plugin_config_is_typed_immutable_and_ignores_framework_fields() -> None:
+    class Config(PluginConfig):
+        limit: int = 10
+
+    class Plugin(PluginBase):
+        config_class = Config
+        settings: Config
+
+    config = Plugin(_context({"enabled": True, "limit": "20"})).settings
+
+    assert config.limit == 20
+    assert config.model_dump() == {"limit": 20}
+    with pytest.raises(ValueError):
+        config.limit = 30
+
+
 def test_keyact_parses_boolean_strings() -> None:
     plugin = KeyActPlugin(
         _context(
@@ -84,9 +116,9 @@ def test_keyact_parses_boolean_strings() -> None:
         )
     )
 
-    assert plugin.mention_enabled is False
-    assert plugin.chat_enabled is True
-    assert plugin.default_case_sensitive is False
+    assert plugin.settings.mention_enabled is False
+    assert plugin.settings.chat_enabled is True
+    assert plugin.settings.case_sensitive is False
 
 
 def test_builtin_plugins_parse_boolean_strings() -> None:
@@ -97,10 +129,10 @@ def test_builtin_plugins_parse_boolean_strings() -> None:
     vision = VisionPlugin(_context({"enabled": "true", "use_thumbnail": "false"}))
 
     assert radar._enabled is True
-    assert radar.reply_enabled is False
-    assert radar.quote_enabled is True
-    assert topics.rss_ai is False
-    assert vision.use_thumbnail is False
+    assert radar.settings.reply_enabled is False
+    assert radar.settings.quote_enabled is True
+    assert topics.settings.rss_ai is False
+    assert vision.settings.use_thumbnail is False
 
 
 async def test_all_hooks_receive_stable_events(
@@ -714,7 +746,7 @@ async def test_keyact_matches_body_when_mention_has_cw() -> None:
         _context(
             {
                 "enabled": True,
-                "rules": [{"keyword": "ping", "response": "pong"}],
+                "rules": [{"keywords": ["ping"], "response": "pong"}],
             }
         )
     )
@@ -736,7 +768,7 @@ async def test_keyact_normalizes_case_once_when_loading_rules() -> None:
         _context(
             {
                 "enabled": True,
-                "rules": [{"keyword": "PING", "response": "pong"}],
+                "rules": [{"keywords": ["PING"], "response": "pong"}],
             }
         )
     )
@@ -917,6 +949,57 @@ async def test_vision_handles_image_with_public_services() -> None:
     generate_chat.assert_awaited_once()
 
 
+def test_message_hook_event_preserves_chat_file() -> None:
+    raw = {
+        "id": "message-1",
+        "text": "describe",
+        "user": {"id": "user-1", "username": "alice"},
+        "fileId": "file-1",
+        "file": {
+            "id": "file-1",
+            "type": "image/png",
+            "url": "https://example.com/image.png",
+            "thumbnailUrl": "https://example.com/thumbnail.webp",
+        },
+    }
+
+    event = build_hook_event("on_message", raw)
+
+    assert isinstance(event, MessageEvent)
+    assert len(event.files) == 1
+    assert event.files[0].id == "file-1"
+    assert event.files[0].mime_type == "image/png"
+    assert event.files[0].url == "https://example.com/image.png"
+    assert event.files[0].thumbnail_url == "https://example.com/thumbnail.webp"
+
+
+def test_mention_hook_event_preserves_note_files() -> None:
+    raw = {
+        "type": "mention",
+        "note": {
+            "id": "note-1",
+            "text": "@testbot describe",
+            "user": {"id": "user-1", "username": "alice"},
+            "fileIds": ["file-1"],
+            "files": [
+                {
+                    "id": "file-1",
+                    "type": "image/jpeg",
+                    "url": "https://example.com/image.jpg",
+                }
+            ],
+        },
+    }
+
+    event = build_hook_event("on_mention", raw)
+
+    assert isinstance(event, MentionEvent)
+    assert len(event.files) == 1
+    assert event.files[0].id == "file-1"
+    assert event.files[0].mime_type == "image/jpeg"
+    assert event.files[0].url == "https://example.com/image.jpg"
+
+
 async def test_vision_resolves_missing_mime_once() -> None:
     drive = SimpleNamespace(
         fetch_bytes=AsyncMock(return_value=b"image"),
@@ -947,14 +1030,20 @@ async def test_vision_resolves_missing_mime_once() -> None:
     [
         ("6 MB", 6_000_000),
         ("6 MiB", 6 * 1024 * 1024),
-        (1024.9, 1024),
-        (-1, 0),
-        ("invalid", 42),
-        (True, 42),
     ],
 )
 def test_vision_size_parsing(value: Any, expected: int) -> None:
-    assert VisionPlugin._parse_size(value, 42) == expected
+    plugin = VisionPlugin(_context({"enabled": True, "max_bytes": value}))
+
+    assert plugin.settings.max_bytes == expected
+
+
+@pytest.mark.parametrize("value", (1024.9, -1, "invalid", True))
+def test_vision_rejects_invalid_size(value: Any) -> None:
+    context = _context({"enabled": True, "max_bytes": value})
+
+    with pytest.raises(ValueError, match="max_bytes"):
+        VisionPlugin(context)
 
 
 async def test_radar_reacts_through_public_misskey_service() -> None:
@@ -1033,3 +1122,302 @@ async def test_radar_preserves_reply_and_quote_precedence() -> None:
     misskey.create_renote.assert_awaited_once_with(
         "note-1", visibility=None, text="quote", local_only=False
     )
+
+
+def _iincho_context(config: dict[str, Any] | None = None) -> Any:
+    openai = SimpleNamespace(
+        generate_text=AsyncMock(),
+        moderate_texts=AsyncMock(
+            side_effect=lambda texts: [frozenset() for _ in texts]
+        ),
+    )
+    misskey = SimpleNamespace(
+        instance_url="https://misskey.example",
+        create_note=AsyncMock(return_value={}),
+        send_message=AsyncMock(return_value={}),
+    )
+    return SimpleNamespace(
+        name="iincho",
+        config={"enabled": True, "interval": "5m", **(config or {})},
+        storage=SimpleNamespace(),
+        openai=openai,
+        misskey=misskey,
+        bot=SimpleNamespace(user_id="bot-id", username="iincho"),
+    )
+
+
+def _iincho_event(
+    text: str = "本地帖子",
+    *,
+    event_id: str = "note-1",
+    channel: str = "localTimeline",
+    user_id: str = "user-1",
+    username: str = "user",
+    cw: str | None = None,
+) -> TimelineNoteEvent:
+    return TimelineNoteEvent(
+        id=event_id,
+        text=text,
+        cw=cw,
+        user=UserRef(id=user_id, username=username, host=None),
+        channel=channel,
+        files=(),
+        raw=MappingProxyType({}),
+    )
+
+
+def _iincho_result() -> str:
+    return json.dumps({"trends": ["新功能体验", "部署问题"]}, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("interval", ("4m", "nope", 0))
+def test_iincho_rejects_invalid_interval(interval: Any) -> None:
+    context = _iincho_context({"interval": interval})
+
+    with pytest.raises(ValueError, match="interval"):
+        IinchoPlugin(context)
+
+
+def test_iincho_uses_defaults_for_one_hundred_notes() -> None:
+    plugin = IinchoPlugin(_iincho_context())
+
+    assert plugin.settings.sample_size == 100
+    assert plugin.settings.max_input_chars == 24000
+    assert plugin.settings.max_tokens == 2000
+
+
+def test_iincho_rejects_fractional_integer_config() -> None:
+    context = _iincho_context({"sample_size": 10.5})
+
+    with pytest.raises(ValueError, match="sample_size"):
+        IinchoPlugin(context)
+
+
+@pytest.mark.parametrize("admin_ids", (None, "", ["", " "]))
+def test_iincho_accepts_empty_admin_ids(admin_ids: Any) -> None:
+    plugin = IinchoPlugin(_iincho_context({"admin_ids": admin_ids}))
+
+    assert plugin.settings.admin_ids == ()
+
+
+async def test_iincho_collects_only_eligible_local_notes() -> None:
+    plugin = IinchoPlugin(_iincho_context({"sample_size": 2, "min_notes": 1}))
+
+    await plugin.on_timeline_note(_iincho_event(channel="globalTimeline"))
+    await plugin.on_timeline_note(_iincho_event(user_id="bot-id"))
+    await plugin.on_timeline_note(_iincho_event(text=""))
+    await plugin.on_timeline_note(_iincho_event(text="正文", cw="预警"))
+
+    assert plugin._window.total == 3
+    assert plugin._window.eligible == 1
+    assert [sample.text for sample in plugin._window.samples] == ["预警\n正文"]
+
+
+async def test_iincho_reservoir_stays_bounded() -> None:
+    plugin = IinchoPlugin(_iincho_context({"sample_size": 2, "min_notes": 1}))
+    plugin._rng.seed(1)
+
+    for index in range(20):
+        await plugin.on_timeline_note(
+            _iincho_event(str(index), event_id=str(index), user_id=str(index))
+        )
+
+    assert plugin._window.eligible == 20
+    assert len(plugin._window.samples) == 2
+
+
+async def test_iincho_publishes_formatted_summary() -> None:
+    context = _iincho_context({"sample_size": 2, "min_notes": 2})
+    context.openai.generate_text.return_value = _iincho_result()
+    context.openai.moderate_texts.side_effect = None
+    context.openai.moderate_texts.return_value = [
+        frozenset({"harassment", "harassment/threatening"}),
+        frozenset({"illicit"}),
+    ]
+    plugin = IinchoPlugin(context)
+    await plugin.on_timeline_note(
+        _iincho_event("第一条 https://example.com @alice", event_id="1")
+    )
+    await plugin.on_timeline_note(_iincho_event("第二条", event_id="2"))
+
+    await plugin._process_window()
+
+    prompt = context.openai.generate_text.await_args.args[0]
+    assert "不可信帖子数组" in prompt
+    assert "第一条" in prompt
+    assert "example.com" not in prompt
+    assert "@alice" not in prompt
+    assert json.loads(prompt.partition("DATA=")[2]) == [
+        "第一条 [链接] [账号]",
+        "第二条",
+    ]
+    context.openai.moderate_texts.assert_awaited_once_with(
+        ["第一条 [链接] [账号]", "第二条"]
+    )
+    assert context.openai.generate_text.await_args.kwargs["json_output"] is True
+    created = context.misskey.create_note.await_args.kwargs
+    assert created["visibility"] == "public"
+    assert created["local_only"] is True
+    assert created["validate_reply"] is False
+    assert created["text"].startswith("📊 Iincho 时间线观察\n\n🕒")
+    assert "本地时间线观察" not in created["text"]
+    assert "概览" not in created["text"]
+    assert "热点" not in created["text"]
+    assert "氛围" not in created["text"]
+    assert "🚨 违规审查：" in created["text"]
+    assert "💢 骚扰攻击 1" in created["text"]
+    assert "⚖️ 违法活动 1" in created["text"]
+
+
+async def test_iincho_limits_serialized_input() -> None:
+    context = _iincho_context({"min_notes": 1, "max_input_chars": 1000})
+    context.openai.generate_text.return_value = _iincho_result()
+    plugin = IinchoPlugin(context)
+    await plugin.on_timeline_note(_iincho_event("\\" * 2000, event_id="1"))
+    await plugin.on_timeline_note(_iincho_event("第二条", event_id="2"))
+    await plugin.on_timeline_note(_iincho_event("第三条", event_id="3"))
+
+    await plugin._process_window()
+
+    prompt = context.openai.generate_text.await_args.args[0]
+    payload = prompt.partition("DATA=")[2]
+    assert len(payload) <= 1000
+    assert json.loads(payload)[0]
+    context.openai.moderate_texts.assert_awaited_once_with(json.loads(payload))
+    summary = context.misskey.create_note.await_args.kwargs["text"]
+    assert "覆盖 3 篇有效帖子，AI 均匀抽样 1 篇" in summary
+
+
+def test_iincho_serializes_special_characters_losslessly() -> None:
+    plugin = IinchoPlugin(_iincho_context({"min_notes": 1}))
+
+    payload, selected = plugin._serialize_samples(
+        [_Sample(note_id='id"\\', text='line 1\n"line 2"\\')]
+    )
+
+    assert [sample.note_id for sample in selected] == ['id"\\']
+    assert json.loads(payload) == ['line 1\n"line 2"\\']
+
+
+async def test_iincho_keeps_notes_arriving_during_generation() -> None:
+    context = _iincho_context({"sample_size": 2, "min_notes": 1})
+    plugin = IinchoPlugin(context)
+    await plugin.on_timeline_note(_iincho_event("旧窗口"))
+
+    async def generate(*args: Any, **kwargs: Any) -> str:
+        await plugin.on_timeline_note(_iincho_event("新窗口", event_id="new"))
+        return _iincho_result()
+
+    context.openai.generate_text.side_effect = generate
+    await plugin._process_window()
+
+    assert [sample.text for sample in plugin._window.samples] == ["新窗口"]
+    assert plugin._window.eligible == 1
+
+
+async def test_iincho_notifies_all_admins_with_verified_note_link() -> None:
+    context = _iincho_context(
+        {"min_notes": 1, "admin_ids": ["admin-1", "admin-2", "admin-1"]}
+    )
+    context.openai.generate_text.return_value = _iincho_result()
+    context.openai.moderate_texts.side_effect = None
+    context.openai.moderate_texts.return_value = [
+        frozenset({"harassment", "harassment/threatening", "illicit"})
+    ]
+    plugin = IinchoPlugin(context)
+    await plugin.on_timeline_note(_iincho_event())
+
+    await plugin._process_window()
+
+    assert context.misskey.send_message.await_count == 2
+    for call in context.misskey.send_message.await_args_list:
+        message = call.args[1]
+        assert message.startswith("🚨 Iincho 近期小报告\n\n🔥 热点")
+        assert "💢 骚扰攻击、⚖️ 违法活动: note-1" in message
+        assert "https://misskey.example" not in message
+        assert "• 新功能体验" in message
+    assert {call.args[0] for call in context.misskey.send_message.await_args_list} == {
+        "admin-1",
+        "admin-2",
+    }
+
+
+async def test_iincho_admin_failure_does_not_block_others_or_summary() -> None:
+    context = _iincho_context({"min_notes": 1, "admin_ids": "admin-1, admin-2"})
+    context.openai.generate_text.return_value = _iincho_result()
+    context.openai.moderate_texts.side_effect = None
+    context.openai.moderate_texts.return_value = [frozenset({"harassment"})]
+    context.misskey.send_message.side_effect = [RuntimeError("unavailable"), {}]
+    plugin = IinchoPlugin(context)
+    await plugin.on_timeline_note(_iincho_event())
+
+    await plugin._process_window()
+
+    assert [call.args[0] for call in context.misskey.send_message.await_args_list] == [
+        "admin-1",
+        "admin-2",
+    ]
+    context.misskey.create_note.assert_awaited_once()
+
+
+async def test_iincho_sends_trends_to_admin_without_violations() -> None:
+    context = _iincho_context({"min_notes": 1, "admin_ids": ["admin-1"]})
+    context.openai.generate_text.return_value = _iincho_result()
+    plugin = IinchoPlugin(context)
+    await plugin.on_timeline_note(_iincho_event())
+
+    await plugin._process_window()
+
+    message = context.misskey.send_message.await_args.args[1]
+    assert "🔥 热点\n• 新功能体验\n• 部署问题" in message
+    assert "🚨 违规审查：\n✅ 未发现明显违规" in message
+
+
+async def test_iincho_discards_invalid_ai_result_without_retry() -> None:
+    context = _iincho_context({"min_notes": 1})
+    context.openai.generate_text.return_value = "not json"
+    plugin = IinchoPlugin(context)
+    await plugin.on_timeline_note(_iincho_event())
+
+    with pytest.raises(ValueError):
+        await plugin._process_window()
+
+    context.openai.generate_text.assert_awaited_once()
+    context.misskey.create_note.assert_not_awaited()
+    assert plugin._window.eligible == 0
+
+
+async def test_iincho_rejects_mismatched_moderation_results() -> None:
+    context = _iincho_context({"min_notes": 1})
+    context.openai.generate_text.return_value = _iincho_result()
+    context.openai.moderate_texts.side_effect = None
+    context.openai.moderate_texts.return_value = []
+    plugin = IinchoPlugin(context)
+    await plugin.on_timeline_note(_iincho_event())
+
+    with pytest.raises(ValueError, match="count mismatch"):
+        await plugin._process_window()
+
+    context.misskey.create_note.assert_not_awaited()
+
+
+async def test_iincho_skips_small_window() -> None:
+    context = _iincho_context({"min_notes": 2})
+    plugin = IinchoPlugin(context)
+    await plugin.on_timeline_note(_iincho_event())
+
+    await plugin._process_window()
+
+    context.openai.generate_text.assert_not_awaited()
+    context.openai.moderate_texts.assert_not_awaited()
+    context.misskey.create_note.assert_not_awaited()
+
+
+async def test_iincho_stops_background_task() -> None:
+    plugin = IinchoPlugin(_iincho_context())
+
+    await plugin.on_startup()
+    assert plugin._task is not None
+    await plugin.on_shutdown()
+
+    assert plugin._task is None

@@ -34,6 +34,19 @@ radar:
   quote_visibility: "home"                       # 引用可见性：public/home/followers
   quote_local_only: false                        # 引用是否禁用联合（仅本地可见）
 
+iincho:
+  enabled: false                                 # 插件开关
+  priority: 40                                   # 插件优先级（数字越大越先执行）
+  interval: "1h"                                 # 汇总间隔，最低 5m
+  min_notes: 10                                  # 少于此有效帖子数则跳过
+  sample_size: 100                               # 每周期最多送入 AI 的均匀样本数
+  max_input_chars: 24000                         # AI 输入字符上限
+  max_tokens: 2000                               # AI 输出 token 上限
+  temperature: 0.2                               # AI 生成温度，范围 0-2
+  local_only: true                               # 是否禁止联合，仅在本实例显示
+  admin_ids:                                     # 收到小报告私信的 Misskey 用户 ID
+    - "9abcdef012345678"
+
 topics:
   enabled: false                                 # 插件开关
   priority: 100                                  # 插件优先级（数字越大越先执行）

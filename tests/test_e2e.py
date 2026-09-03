@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import pytest
 from conftest import (
     DEFAULT_AI_REPLY,
     FakeMisskeyServer,
@@ -11,6 +12,8 @@ from conftest import (
     MakePluginDir,
     WriteConfig,
 )
+
+from twipsybot.bot.flows.post import AutoPostService
 
 _MENTION_NOTE = {
     "id": "note-mention-1",
@@ -57,6 +60,24 @@ async def test_mention_triggers_ai_reply(
     assert len(notes) == 1
     assert notes[0]["text"] == f"@alice\n{DEFAULT_AI_REPLY}"
     assert notes[0]["replyId"] == "note-mention-1"
+
+
+async def test_remote_mention_uses_federated_handle(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    bot = await make_bot(write_config())
+    remote_user = {
+        "id": "remote-user-1",
+        "username": "alice",
+        "host": "remote.example",
+    }
+
+    await bot.mention.handle({**_MENTION_NOTE, "user": remote_user})
+
+    note = misskey_server.calls["notes/create"][0]
+    assert note["text"] == f"@alice@remote.example\n{DEFAULT_AI_REPLY}"
 
 
 async def test_mention_generates_and_attaches_image(
@@ -135,6 +156,44 @@ async def test_chat_message_plugin_takeover(
     assert replies[0]["text"] == "echo: plugin took over"
 
 
+async def test_image_only_chat_is_handled_by_vision_plugin(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    plugins_dir = make_plugin_dir(
+        "vision",
+        "from plugins.vision.vision import VisionPlugin as BaseVisionPlugin\n\n\n"
+        "class VisionPlugin(BaseVisionPlugin):\n"
+        "    pass\n",
+        config="enabled: true\nuse_thumbnail: false\n",
+    )
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    bot.misskey.drive.fetch_bytes = AsyncMock(return_value=b"image")
+    message = {
+        **_CHAT_MESSAGE,
+        "text": "",
+        "fileId": "file-1",
+        "file": {
+            "id": "file-1",
+            "type": "image/png",
+            "url": "https://example.com/image.png",
+        },
+    }
+
+    await bot.chat.handle(message)
+
+    bot.misskey.drive.fetch_bytes.assert_awaited_once()
+    user_content = openai_server.calls[0]["messages"][-1]["content"]
+    assert user_content[0] == {"type": "text", "text": "请描述图片内容。"}
+    assert user_content[1]["type"] == "image_url"
+    assert user_content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    reply = misskey_server.calls["chat/messages/create-to-user"][0]
+    assert reply["text"] == DEFAULT_AI_REPLY
+
+
 async def test_admin_command_takes_priority_over_plugins(
     make_bot: MakeBot,
     write_config: WriteConfig,
@@ -157,8 +216,8 @@ async def test_admin_command_takes_priority_over_plugins(
         "\n\n/img - 生成图片 (用法: /img <一只小狗在月球上弹吉他>)\n" in reply["text"]
     )
     assert (
-        "/post - 指示 AI 现在就发一篇帖子 "
-        "(用法: /post <你更喜欢夏天还是冬天？200 字以内>)" in reply["text"]
+        "/post - 手动发帖 "
+        "(用法: /post [-p|-h|-f] [-l] <发一篇关于夏天的帖子，150 字>)" in reply["text"]
     )
 
 
@@ -429,6 +488,57 @@ async def test_chat_can_publish_manual_post_without_counting(
     assert await bot.db.get_auto_post_state() == (bot.auto_post._today(), 0)
 
 
+@pytest.mark.parametrize(
+    ("command", "auto_post", "visibility", "local_only"),
+    [
+        ("/post -p -l 夏夜的风", {}, "public", True),
+        ("/post -h 夏夜的风", {"local_only": True}, "home", False),
+        ("/post -f 夏夜的风", {}, "followers", False),
+        ("/post -l 夏夜的风", {"visibility": "home"}, "home", True),
+        (
+            "/post 夏夜的风",
+            {"visibility": "followers", "local_only": True},
+            "followers",
+            True,
+        ),
+    ],
+)
+async def test_chat_manual_post_publish_options(
+    command: str,
+    auto_post: dict[str, object],
+    visibility: str,
+    local_only: bool,
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    bot = await make_bot(
+        write_config(
+            bot={
+                "admin": {"allowed_users": ["user-2"]},
+                "auto_post": auto_post,
+            }
+        )
+    )
+
+    await bot.chat.handle({**_CHAT_MESSAGE, "text": command})
+
+    note = misskey_server.calls["notes/create"][0]
+    assert note["visibility"] == visibility
+    assert note.get("localOnly", False) is local_only
+
+
+def test_manual_post_options_preserve_prompt_whitespace() -> None:
+    prompt = "第一段\n\n第二段  保留空格"
+
+    assert AutoPostService._parse_manual_options(prompt) == (prompt, None, None)
+    assert AutoPostService._parse_manual_options(f"-h -l {prompt}") == (
+        prompt,
+        "home",
+        True,
+    )
+
+
 async def test_chat_rejects_unauthorized_manual_post(
     make_bot: MakeBot,
     write_config: WriteConfig,
@@ -659,13 +769,55 @@ async def test_room_chat_does_not_match_longer_username(
     assert "chat/messages/create-to-room" not in misskey_server.calls
 
 
+@pytest.mark.parametrize("host", (None, "remote.example"))
 async def test_reply_to_bot_triggers_ai_reply(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
+    host: str | None,
 ) -> None:
     bot = await make_bot(write_config())
+    replying_user = {"id": "user-1", "username": "alice"}
+    if host:
+        replying_user["host"] = host
+    event = {
+        "type": "reply",
+        "note": {
+            "id": "reply-1",
+            "text": "继续说说",
+            "user": replying_user,
+            "reply": {
+                "text": "机器人原帖",
+                "user": {"id": "bot-id", "username": "testbot"},
+            },
+        },
+    }
+
+    await bot.mention.handle(event)
+
+    prompt = openai_server.calls[0]["messages"][-1]["content"]
+    assert prompt == "机器人原帖\n\n继续说说"
+    reply = misskey_server.calls["notes/create"][0]
+    assert reply["replyId"] == "reply-1"
+    assert reply["text"] == DEFAULT_AI_REPLY
+
+
+async def test_plugin_reply_to_bot_does_not_mention_sender(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    plugins_dir = make_plugin_dir(
+        "echo",
+        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n\n"
+        "class EchoPlugin(PluginBase):\n"
+        "    api_version = PLUGIN_API_VERSION\n\n"
+        "    async def on_mention(self, event):\n"
+        "        return self.handled('plugin reply')\n",
+    )
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     event = {
         "type": "reply",
         "note": {
@@ -681,9 +833,43 @@ async def test_reply_to_bot_triggers_ai_reply(
 
     await bot.mention.handle(event)
 
-    prompt = openai_server.calls[0]["messages"][-1]["content"]
-    assert prompt == "机器人原帖\n\n继续说说"
-    assert misskey_server.calls["notes/create"][0]["replyId"] == "reply-1"
+    reply = misskey_server.calls["notes/create"][0]
+    assert reply["replyId"] == "reply-1"
+    assert reply["text"] == "plugin reply"
+
+
+async def test_image_command_reply_to_bot_does_not_mention_sender(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    bot = await make_bot(
+        write_config(
+            openai={"image_model": "gpt-image-1"},
+            bot={"admin": {"allowed_users": ["user-1"]}},
+        )
+    )
+    bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
+    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": "file-1"})
+    event = {
+        "type": "reply",
+        "note": {
+            "id": "reply-1",
+            "text": "/img 一只猫",
+            "user": {"id": "user-1", "username": "alice"},
+            "reply": {
+                "text": "机器人原帖",
+                "user": {"id": "bot-id", "username": "testbot"},
+            },
+        },
+    }
+
+    await bot.mention.handle(event)
+
+    reply = misskey_server.calls["notes/create"][0]
+    assert reply["replyId"] == "reply-1"
+    assert reply["text"] == "图片生成完成"
+    assert reply["fileIds"] == ["file-1"]
 
 
 async def test_reply_to_same_username_with_other_id_is_ignored(

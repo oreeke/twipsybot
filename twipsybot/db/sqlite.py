@@ -104,7 +104,6 @@ class DBManager:
         try:
             for statement in schema_statements:
                 await conn.execute(statement)
-            await conn.execute("DROP INDEX IF EXISTS idx_plugin_data_name_key")
             for index_sql in index_statements:
                 await conn.execute(index_sql)
             await conn.commit()

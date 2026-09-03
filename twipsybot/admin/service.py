@@ -58,7 +58,7 @@ class AdminCommandService(CmdHandlersMixin):
             "post": _SlashCommand(
                 self.bot.auto_post.generate_response,
                 "/post",
-                "指示 AI 现在就发一篇帖子 (用法: /post <你更喜欢夏天还是冬天？200 字以内>)",
+                "手动发帖 (用法: /post [-p|-h|-f] [-l] <发一篇关于夏天的帖子，150 字>)",
                 private_only=True,
             ),
         }
@@ -200,6 +200,8 @@ class AdminCommandService(CmdHandlersMixin):
     @staticmethod
     def _extract_slash_command(text: str) -> tuple[str, str] | None:
         value = text.strip()
+        if not value:
+            return None
         while value.startswith("@"):
             parts = value.split(maxsplit=1)
             if len(parts) != 2:

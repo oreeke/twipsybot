@@ -30,7 +30,12 @@ class MisskeyDrive:
         try:
             session: aiohttp.ClientSession = self._api.session
             url = f"{self._api.instance_url}/api/drive/files/create"
-            async with self._api.semaphore, session.post(url, data=form) as response:
+            async with (
+                self._api.semaphore,
+                session.post(
+                    url, data=form, headers=self._api.auth_headers
+                ) as response,
+            ):
                 return await self._api._process_response(response, "drive/files/create")
         except (aiohttp.ClientError, OSError) as e:
             raise APIConnectionError() from e

@@ -15,6 +15,7 @@ from openai import (
 from ...shared.constants import (
     API_TIMEOUT,
     OPENAI_MAX_CONCURRENCY,
+    REQUEST_TIMEOUT,
 )
 from ...shared.exceptions import APIConnectionError, AuthenticationError
 from .extract import (
@@ -77,6 +78,7 @@ class OpenAIAPI:
         max_tokens: int | None,
         temperature: float | None,
         call_type: str,
+        json_output: bool = False,
     ) -> str:
         messages = self._to_chat_completions_messages(messages)
         try:
@@ -88,6 +90,7 @@ class OpenAIAPI:
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                json_output=json_output,
             )
             return process_chat_completions_response(response, call_type)
         except BadRequestError as e:
@@ -160,10 +163,11 @@ class OpenAIAPI:
         max_tokens: int | None,
         temperature: float | None,
         call_type: str,
+        json_output: bool = False,
     ) -> str:
         if not self.uses_responses_api:
             return await self._call_api_common(
-                messages, max_tokens, temperature, call_type
+                messages, max_tokens, temperature, call_type, json_output
             )
         try:
             response = await make_responses_request(
@@ -173,6 +177,7 @@ class OpenAIAPI:
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                json_output=json_output,
             )
             text = extract_responses_text(response)
             logger.debug(
@@ -193,7 +198,7 @@ class OpenAIAPI:
                 f"Responses API unavailable; falling back to Chat Completions: {e}"
             )
             return await self._call_api_common(
-                messages, max_tokens, temperature, call_type
+                messages, max_tokens, temperature, call_type, json_output
             )
         except (ValueError, TypeError, KeyError) as e:
             logger.error(f"Invalid API response format: {e}")
@@ -220,10 +225,11 @@ class OpenAIAPI:
         system_prompt: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        json_output: bool = False,
     ) -> str:
         messages = self._build_messages(prompt, system_prompt)
         return await self._call_api(
-            messages, max_tokens, temperature, "single-turn text"
+            messages, max_tokens, temperature, "single-turn text", json_output
         )
 
     async def generate_chat(
@@ -235,6 +241,21 @@ class OpenAIAPI:
         return await self._call_api(
             messages, max_tokens, temperature, "multi-turn chat"
         )
+
+    async def moderate_texts(self, texts: list[str]) -> list[frozenset[str]]:
+        async with self._semaphore:
+            response = await asyncio.wait_for(
+                self.client.moderations.create(
+                    model="omni-moderation-latest", input=texts
+                ),
+                timeout=REQUEST_TIMEOUT,
+            )
+        return [
+            frozenset(
+                name for name, flagged in result.categories.to_dict().items() if flagged
+            )
+            for result in response.results
+        ]
 
     async def generate_image(self, prompt: str) -> bytes | str:
         if not self.image_model:

@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import signal
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 import yaml
+from aiohttp import web
+from aiohttp.multipart import BodyPartReader
+from aiohttp.test_utils import TestServer
 from conftest import MakeBot, WriteConfig
 from httpx2 import Request, Response
 from openai import APIStatusError
@@ -22,11 +26,26 @@ from twipsybot.bot.engine.pipeline import AIResponse
 from twipsybot.bot.flows.image import ImageGenerationService
 from twipsybot.bot.flows.post import AutoPostService
 from twipsybot.clients.misskey.api import MisskeyAPI
+from twipsybot.clients.misskey.payloads import (
+    extract_chat_text,
+    extract_note_text,
+    extract_user_id,
+)
 from twipsybot.clients.misskey.socket import _redact_access_token
+from twipsybot.clients.misskey.streaming import StreamingClient
 from twipsybot.clients.openai.api import OpenAIAPI
+from twipsybot.clients.openai.requests import (
+    make_chat_completions_request,
+    make_responses_request,
+)
 from twipsybot.shared.config_keys import ConfigKeys
 from twipsybot.shared.constants import API_MAX_RETRIES
-from twipsybot.shared.exceptions import APIConnectionError, ConfigurationError
+from twipsybot.shared.exceptions import (
+    APIBadRequestError,
+    APIConnectionError,
+    ConfigurationError,
+    WebSocketConnectionError,
+)
 
 
 class _BadRequest:
@@ -50,6 +69,84 @@ def test_misskey_access_token_is_redacted() -> None:
     assert _redact_access_token(text) == (
         'https://example.com/streaming?i=***&x=1 {"i":"***"}'
     )
+
+
+def test_misskey_payload_extractors_use_current_fields() -> None:
+    assert extract_chat_text({"content": "legacy", "body": "legacy"}) == ""
+    assert extract_note_text({"body": "legacy"}) == ""
+    assert extract_user_id({"userId": "legacy"}) is None
+
+
+def test_misskey_error_format_uses_current_fields() -> None:
+    assert (
+        MisskeyAPI._format_error_text(
+            '{"error":{"code":"INVALID_PARAM","message":"Invalid parameter","id":"id"}}'
+        )
+        == "INVALID_PARAM: Invalid parameter"
+    )
+    legacy = '{"error":{"id":"legacy","info":"Legacy error","kind":"legacy"}}'
+    assert MisskeyAPI._format_error_text(legacy) == legacy
+
+
+async def test_room_timeline_uses_room_id_without_fallback() -> None:
+    request = AsyncMock(side_effect=APIBadRequestError("invalid roomId"))
+    api = object.__new__(MisskeyAPI)
+    api.make_read_request = request
+
+    with pytest.raises(APIBadRequestError):
+        await api.get_room_messages("room-1", limit=20, since_id="message-1")
+
+    request.assert_awaited_once_with(
+        "chat/messages/room-timeline",
+        {"roomId": "room-1", "limit": 20, "sinceId": "message-1"},
+    )
+
+
+async def test_misskey_requests_prefer_bearer_and_keep_legacy_token() -> None:
+    requests: list[tuple[str, str | None, dict[str, Any]]] = []
+
+    async def api_handler(request: web.Request) -> web.Response:
+        endpoint = request.match_info["endpoint"]
+        if endpoint == "drive/files/create":
+            payload = {}
+            async for field in await request.multipart():
+                assert isinstance(field, BodyPartReader)
+                assert field.name is not None
+                payload[field.name] = (
+                    await field.read() if field.name == "file" else await field.text()
+                )
+        else:
+            payload = await request.json()
+        requests.append((endpoint, request.headers.get("Authorization"), payload))
+        return web.json_response({})
+
+    async def file_handler(request: web.Request) -> web.Response:
+        requests.append(("external", request.headers.get("Authorization"), {}))
+        return web.Response(body=b"image")
+
+    app = web.Application()
+    app.router.add_post("/api/{endpoint:.*}", api_handler)
+    app.router.add_get("/file", file_handler)
+    server = TestServer(app)
+    await server.start_server()
+    api = MisskeyAPI(str(server.make_url("/")).rstrip("/"), "token")
+    try:
+        await api.make_request("i", {"i": "override", "probe": True})
+        await api.drive.upload_bytes(b"image", name="image.png")
+        await api.drive.fetch_bytes(str(server.make_url("/file")))
+    finally:
+        await api.close()
+        await server.close()
+
+    assert requests == [
+        ("i", "Bearer token", {"i": "token", "probe": True}),
+        (
+            "drive/files/create",
+            "Bearer token",
+            {"i": "token", "name": "image.png", "file": b"image"},
+        ),
+        ("external", None, {}),
+    ]
 
 
 async def test_misskey_api_retries_connection_errors(
@@ -91,6 +188,102 @@ async def test_misskey_api_does_not_retry_writes() -> None:
         await api.make_request("notes/create")
 
     request.assert_awaited_once_with("notes/create", None)
+
+
+async def test_streaming_reconnect_backoff_caps_and_resets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    client.running = True
+    connect_once = AsyncMock()
+    listen = AsyncMock(side_effect=[WebSocketConnectionError()] * 7 + [None])
+    reconnect = AsyncMock(side_effect=[WebSocketConnectionError()] * 5 + [None, None])
+    monkeypatch.setattr(client, "connect_once", connect_once)
+    monkeypatch.setattr(client, "_listen_messages", listen)
+    monkeypatch.setattr(client, "_reconnect_with_backoff", reconnect)
+
+    await client.connect()
+
+    connect_once.assert_awaited_once_with([])
+    assert reconnect.await_args_list == [
+        call(1.0),
+        call(2.0),
+        call(4.0),
+        call(8.0),
+        call(16.0),
+        call(30.0),
+        call(1.0),
+    ]
+
+
+async def test_streaming_reconnect_runs_resubscribe_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    close = AsyncMock()
+    sleep = AsyncMock()
+    reconnect = AsyncMock()
+    monkeypatch.setattr(client, "_close_websocket", close)
+    monkeypatch.setattr(client, "_connect_and_resubscribe", reconnect)
+    monkeypatch.setattr("twipsybot.clients.misskey.socket.asyncio.sleep", sleep)
+
+    await client._reconnect_with_backoff(4.0)
+
+    close.assert_awaited_once_with()
+    sleep.assert_awaited_once_with(4.0)
+    reconnect.assert_awaited_once_with()
+
+
+async def test_streaming_resubscribes_existing_channels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    client.channels = {
+        "main-id": {"name": "main", "params": {}},
+        "antenna-id": {"name": "antenna", "params": {"antennaId": "a-1"}},
+    }
+    send = AsyncMock()
+    monkeypatch.setattr(client, "_send_control", send)
+
+    await client._resubscribe_channels()
+
+    assert send.await_args_list == [
+        call(
+            {
+                "type": "connect",
+                "body": {"channel": "main", "id": "main-id", "params": {}},
+            }
+        ),
+        call(
+            {
+                "type": "connect",
+                "body": {
+                    "channel": "antenna",
+                    "id": "antenna-id",
+                    "params": {"antennaId": "a-1"},
+                },
+            }
+        ),
+    ]
+
+
+async def test_streaming_flushes_send_buffer_in_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    client.ws_connection = cast(Any, SimpleNamespace(closed=False))
+    messages = [
+        {"type": "ch", "body": {"id": "main-id", "type": "first"}},
+        {"type": "ch", "body": {"id": "main-id", "type": "second"}},
+    ]
+    client._send_buffer.extend(messages)
+    send = AsyncMock()
+    monkeypatch.setattr(client, "_send_control", send)
+
+    await client._flush_send_buffer()
+
+    assert send.await_args_list == [call(message) for message in messages]
+    assert not client._send_buffer
 
 
 @pytest.mark.parametrize(
@@ -144,6 +337,8 @@ def test_invalid_config_fails_fast(tmp_path: Path) -> None:
         ("画图 一只戴眼镜的猫", None),
         ("/image watercolor landscape", ("image", "watercolor landscape")),
         ("介绍一下绘画", None),
+        ("", None),
+        ("   ", None),
     ],
 )
 def test_slash_command_detection(text: str, expected: tuple[str, str] | None) -> None:
@@ -679,6 +874,47 @@ def test_responses_unavailable_rejects_parameter_error() -> None:
     )
 
 
+async def test_responses_request_enables_json_output() -> None:
+    create = AsyncMock(return_value={})
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+
+    await make_responses_request(
+        client=cast(Any, client),
+        semaphore=asyncio.Semaphore(1),
+        model="test",
+        messages=[],
+        max_tokens=None,
+        temperature=None,
+        json_output=True,
+    )
+
+    call = create.await_args
+    assert call is not None
+    assert call.kwargs["text"] == {"format": {"type": "json_object"}}
+
+
+async def test_chat_completions_request_enables_json_output() -> None:
+    create = AsyncMock(return_value={})
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+
+    await make_chat_completions_request(
+        client=cast(Any, client),
+        semaphore=asyncio.Semaphore(1),
+        model="test",
+        api_base="https://api.deepseek.com",
+        messages=[],
+        max_tokens=None,
+        temperature=None,
+        json_output=True,
+    )
+
+    call = create.await_args
+    assert call is not None
+    assert call.kwargs["response_format"] == {"type": "json_object"}
+
+
 @pytest.mark.parametrize("status_code", (404, 405, 501))
 def test_responses_unavailable_recognizes_http_status(status_code: int) -> None:
     assert OpenAIAPI._is_responses_unavailable(
@@ -716,3 +952,19 @@ async def test_openai_client_uses_sdk_retries() -> None:
 
     assert api.client.max_retries == 2
     await api.close()
+
+
+async def test_openai_moderates_texts_in_batch() -> None:
+    categories = SimpleNamespace(
+        to_dict=lambda: {"harassment": True, "hate": False, "illicit": True}
+    )
+    create = AsyncMock(
+        return_value=SimpleNamespace(results=[SimpleNamespace(categories=categories)])
+    )
+    api = OpenAIAPI("test")
+    api.client = cast(Any, SimpleNamespace(moderations=SimpleNamespace(create=create)))
+
+    result = await api.moderate_texts(["text"])
+
+    assert result == [frozenset({"harassment", "illicit"})]
+    create.assert_awaited_once_with(model="omni-moderation-latest", input=["text"])

@@ -1,5 +1,5 @@
 from .api import PLUGIN_API_VERSION
-from .base import PluginBase
+from .base import PluginBase, PluginConfig
 from .context import PluginContext
 from .contracts import (
     BotControl,
@@ -33,6 +33,7 @@ __all__ = (
     "NotificationEvent",
     "OpenAIService",
     "PluginBase",
+    "PluginConfig",
     "PluginContext",
     "PluginStorage",
     "PromptModificationResult",

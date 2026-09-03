@@ -15,6 +15,7 @@ async def make_responses_request(
     messages: list[dict[str, Any]],
     max_tokens: int | None,
     temperature: float | None,
+    json_output: bool = False,
 ):
     async with semaphore:
         kwargs: dict[str, Any] = {
@@ -24,6 +25,8 @@ async def make_responses_request(
         }
         if max_tokens is not None:
             kwargs["max_output_tokens"] = max_tokens
+        if json_output:
+            kwargs["text"] = {"format": {"type": "json_object"}}
         return await asyncio.wait_for(
             client.responses.create(**kwargs),
             timeout=REQUEST_TIMEOUT,
@@ -39,6 +42,7 @@ async def make_chat_completions_request(
     messages: list[dict[str, Any]],
     max_tokens: int | None,
     temperature: float | None,
+    json_output: bool = False,
 ):
     async with semaphore:
         kwargs: dict[str, Any] = {
@@ -54,6 +58,8 @@ async def make_chat_completions_request(
                 kwargs["max_completion_tokens"] = max_tokens
             else:
                 kwargs["max_tokens"] = max_tokens
+        if json_output:
+            kwargs["response_format"] = {"type": "json_object"}
         return await asyncio.wait_for(
             client.chat.completions.create(**kwargs),
             timeout=REQUEST_TIMEOUT,

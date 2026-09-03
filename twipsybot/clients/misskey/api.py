@@ -58,6 +58,10 @@ class MisskeyAPI:
     def semaphore(self) -> asyncio.Semaphore:
         return self._semaphore
 
+    @property
+    def auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.access_token}"}
+
     @staticmethod
     def _format_error_text(error_text: str) -> str:
         s = error_text.strip()
@@ -72,8 +76,8 @@ class MisskeyAPI:
         err = obj.get("error")
         if not isinstance(err, dict):
             return s
-        code = err.get("code") or err.get("id")
-        msg = err.get("message") or err.get("info") or err.get("kind")
+        code = err.get("code")
+        msg = err.get("message")
         if isinstance(code, str) and isinstance(msg, str):
             return f"{code}: {msg}"
         if isinstance(msg, str):
@@ -130,12 +134,14 @@ class MisskeyAPI:
         self, endpoint: str, data: dict[str, Any] | None = None
     ) -> Any:
         url = f"{self.instance_url}/api/{endpoint}"
-        payload = {"i": self.access_token}
-        if data:
-            payload.update(data)
+        payload = dict(data) if data else {}
+        payload["i"] = self.access_token
         try:
             session: aiohttp.ClientSession = self.session
-            async with self._semaphore, session.post(url, json=payload) as response:
+            async with (
+                self._semaphore,
+                session.post(url, json=payload, headers=self.auth_headers) as response,
+            ):
                 return await self._process_response(response, endpoint)
         except (
             aiohttp.ClientError,
@@ -367,13 +373,4 @@ class MisskeyAPI:
         data = {"roomId": room_id, "limit": limit}
         if since_id:
             data["sinceId"] = since_id
-        try:
-            return await self.make_read_request("chat/messages/room-timeline", data)
-        except APIBadRequestError as e:
-            m = str(e)
-            if m and "roomId" not in m and "toRoomId" not in m:
-                raise
-            data = {"toRoomId": room_id, "limit": limit}
-            if since_id:
-                data["sinceId"] = since_id
-            return await self.make_read_request("chat/messages/room-timeline", data)
+        return await self.make_read_request("chat/messages/room-timeline", data)

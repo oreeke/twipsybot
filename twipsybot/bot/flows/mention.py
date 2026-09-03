@@ -26,6 +26,7 @@ class MentionContext:
     text: str
     user_id: str | None
     username: str | None
+    explicit_mention: bool
 
 
 class MentionHandler:
@@ -41,7 +42,9 @@ class MentionHandler:
 
     @staticmethod
     def _format_mention_reply(mention: MentionContext, text: str) -> str:
-        return f"@{mention.username}\n{text}" if mention.username else text
+        if mention.explicit_mention and mention.username:
+            return f"@{mention.username}\n{text}"
+        return text
 
     async def _send_mention_reply(
         self, mention: MentionContext, text: str, file_id: str | None = None
@@ -184,7 +187,7 @@ class MentionHandler:
             )
             note_data = normalize_payload(note, kind="mention")
             if not note_data:
-                return MentionContext(None, None, "", None, None)
+                return MentionContext(None, None, "", None, None, False)
             note_type = note.get("type")
             is_reply_event = note_type == "reply"
             note_id = (
@@ -211,10 +214,17 @@ class MentionHandler:
                         f"Mention from @{display} does not mention the bot; skipping"
                     )
                 note_id = None
-            return MentionContext(note_id, reply_target_id, text, user_id, username)
+            return MentionContext(
+                note_id,
+                reply_target_id,
+                text,
+                user_id,
+                username,
+                not is_reply_event,
+            )
         except Exception:
             logger.exception("Failed to parse message data")
-            return MentionContext(None, None, "", None, None)
+            return MentionContext(None, None, "", None, None, False)
 
     def _mentions_bot(self, note_data: dict[str, Any]) -> bool:
         mentions = note_data.get("mentions")

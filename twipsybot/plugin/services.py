@@ -75,6 +75,9 @@ class MisskeyServiceAdapter:
     ) -> dict[str, Any]:
         return await self._misskey.create_renote(note_id, visibility, text, local_only)
 
+    async def send_message(self, user_id: str, text: str) -> dict[str, Any]:
+        return await self._misskey.send_message(user_id, text)
+
 
 class OpenAIServiceAdapter:
     def __init__(self, openai: Any, config: Any):
@@ -103,10 +106,14 @@ class OpenAIServiceAdapter:
         system_prompt: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        json_output: bool = False,
     ) -> str:
         return await self._openai.generate_text(
-            prompt, system_prompt, max_tokens, temperature
+            prompt, system_prompt, max_tokens, temperature, json_output
         )
+
+    async def moderate_texts(self, texts: list[str]) -> list[frozenset[str]]:
+        return await self._openai.moderate_texts(texts)
 
     async def generate_chat(
         self,

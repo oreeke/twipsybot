@@ -348,6 +348,7 @@ systemctl start twipsybot.service
 
 | 插件 | 功能描述 |
 | :---: | --- |
+| [Iincho](./plugins/iincho) | 定时汇总本地时间线趋势并审查疑似违规内容 |
 | [KeyAct](./plugins/keyact) | 匹配自定义关键词触发直接回复，绕过 AI |
 | [Radar](./plugins/radar) | 主动与天线发现的帖子互动（反应、回复、转发、引用） |
 | [Topics](./plugins/topics) | 为自动发帖提供内容源（文本主题 / RSS） |

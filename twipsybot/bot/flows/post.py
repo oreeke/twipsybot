@@ -70,8 +70,11 @@ class AutoPostService:
         logger.debug("Post counter reset")
 
     async def generate_response(self, prompt: str) -> AIResponse:
+        prompt, visibility, local_only = self._parse_manual_options(prompt)
         try:
-            content = await self._create_ai_post(prompt)
+            content = await self._create_ai_post(
+                prompt, visibility=visibility, local_only=local_only
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -79,6 +82,26 @@ class AutoPostService:
             return AIResponse("发帖失败，请稍后再试。")
         logger.info(f"Manual post succeeded: {self.bot.format_log_text(content)}")
         return AIResponse("发帖完成")
+
+    @staticmethod
+    def _parse_manual_options(prompt: str) -> tuple[str, str | None, bool | None]:
+        visibility = None
+        local_only = None
+        remaining = prompt
+        while (parts := remaining.split(maxsplit=1)) and parts[0] in {
+            "-p",
+            "-h",
+            "-f",
+            "-l",
+        }:
+            option = parts[0]
+            remaining = parts[1] if len(parts) == 2 else ""
+            if option == "-l":
+                local_only = True
+            else:
+                visibility = {"-p": "public", "-h": "home", "-f": "followers"}[option]
+                local_only = local_only or False
+        return remaining, visibility, local_only
 
     async def run(self) -> None:
         if not self.bot.config.get(ConfigKeys.BOT_AUTO_POST_ENABLED):
@@ -189,6 +212,9 @@ class AutoPostService:
         prompt: str,
         plugin_prompt: str = "",
         timestamp_override: int | None = None,
+        *,
+        visibility: str | None = None,
+        local_only: bool | None = None,
     ) -> str:
         content = await self._generate_post(
             self.bot.system_prompt,
@@ -198,8 +224,16 @@ class AutoPostService:
         )
         await self.bot.misskey.create_note(
             content,
-            visibility=self.bot.config.get(ConfigKeys.BOT_AUTO_POST_VISIBILITY),
-            local_only=self.bot.config.get(ConfigKeys.BOT_AUTO_POST_LOCAL_ONLY),
+            visibility=(
+                visibility
+                if visibility is not None
+                else self.bot.config.get(ConfigKeys.BOT_AUTO_POST_VISIBILITY)
+            ),
+            local_only=(
+                local_only
+                if local_only is not None
+                else self.bot.config.get(ConfigKeys.BOT_AUTO_POST_LOCAL_ONLY)
+            ),
         )
         return content
 

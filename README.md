@@ -14,7 +14,7 @@
 
 <br>它有时是抽象气氛组，有时是靠谱小帮手。它把所看所想寄向联邦宇宙，也把星尘里的帖子带回家。
 
-··· [用户指南](./docs/README.md) ··· [开发指南](./docs/dev-guide/README.md) ··· [变更日志](./CHANGELOG.md) ···
+··· [使用手册](https://twipsybot.oreeke.com/) ··· [开发指南](https://twipsybot.oreeke.com/dev-guide/) ··· [变更日志](./CHANGELOG.md) ···
 <br><br>❤️
 
 </div>

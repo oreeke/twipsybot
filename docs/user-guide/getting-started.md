@@ -5,7 +5,7 @@ description: 使用 Docker Compose 快速部署 TwipsyBot，并连接 Misskey �
 
 # 快速开始
 
-本页使用 Docker Compose 启动 TwipsyBot。完成后，机器人可以响应 Misskey 提及和聊天，并按配置自动发帖。
+推荐使用 Docker Compose 启动 TwipsyBot。完成后，机器人可以响应 Misskey 提及和聊天，并按配置自动发帖。
 
 ## 准备账号和密钥
 

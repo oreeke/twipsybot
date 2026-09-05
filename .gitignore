@@ -38,6 +38,11 @@ logs/
 *.tmp
 *.bak
 
+# Documentation site
+node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+
 # OS files
 .DS_Store
 Thumbs.db

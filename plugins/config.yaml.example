@@ -44,7 +44,7 @@ iincho:
   max_tokens: 2000                               # AI 输出 token 上限
   temperature: 0.2                               # AI 生成温度，范围 0-2
   local_only: true                               # 是否禁止联合，仅在本实例显示
-  admin_ids:                                     # 收到小报告私信的 Misskey 用户 ID
+  admin_ids:                                     # 接收小报告私信的 Misskey 用户 ID
     - "9abcdef012345678"
 
 topics:
@@ -56,7 +56,7 @@ topics:
   rss_list:                                      # RSS 订阅列表（source=rss 时生效）
     - "https://example.com/feed.xml"
     - "https://example.com/rss"
-  rss_post_mode: "batch"                         # RSS 发送模式：batch=每轮每个 RSS 发一条；rotate=每轮只发一个 RSS 并轮换
+  rss_post_mode: "rotate"                        # RSS 发送模式：batch=每轮每个 RSS 发一条；rotate=每轮只发一个 RSS 并轮换
   rss_ai: false                                  # RSS 是否交给 AI 处理，RSS 页面至少有标题或摘要，否则需要 AI 有能力通过 URL 预览原文
   rss_ai_prefix: ""                              # RSS 交给 AI 的提示模板；可用 {summary}/{title}/{link}；留空使用默认值
 

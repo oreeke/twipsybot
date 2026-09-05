@@ -2,11 +2,12 @@
 
 ### 功能描述
 
-为自动发帖提供内容源<br>
+为自动发帖提供内容源
 
 ### 使用方法
 
-复制 `config.yaml.example` 为 `config.yaml` 并修改配置<br>
+复制 `config.yaml.example` 为 `config.yaml` 并修改配置
+
 `source` 可选：
 - `txt`
   - 像装填弹夹一样，每行一词，将主题关键词写入 `topics.txt`

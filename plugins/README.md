@@ -2,10 +2,13 @@
 
 Plugin API v1。只从 `twipsybot.plugin` 导入公共接口。
 
+完整开发流程另见[开发指南](../docs/dev-guide/plugins.md)。
+
 ### 最小示例
 
 ```text
 plugins/echo/
+├── __init__.py
 ├── config.yaml
 └── echo.py
 ```
@@ -26,12 +29,11 @@ enabled: true
 priority: 100
 ```
 
-目录名、文件名和类名应对应。`api_version` 不兼容时拒绝加载。
+目录名和文件名必须相同。插件类名应为目录名转换成大驼峰后加 `Plugin`，例如 `echo_bot/echo_bot.py` 对应 `EchoBotPlugin`。`api_version` 不兼容时，插件不会加载。
 
 ### 类型化配置
 
-有自定义配置时，继承 `PluginConfig` 声明默认值和约束，再通过
-`config_class` 挂载。`enabled`、`priority` 等框架字段会自动忽略，配置对象只读。
+有自定义配置时，继承 `PluginConfig` 声明默认值和约束，再通过 `config_class` 挂载。`enabled`、`priority` 等框架字段不会进入配置模型。
 
 ```python
 from pydantic import Field
@@ -47,34 +49,35 @@ class EchoConfig(PluginConfig):
 class EchoPlugin(PluginBase):
     api_version = PLUGIN_API_VERSION
     config_class = EchoConfig
+    settings: EchoConfig
 ```
 
-简单插件无需定义配置类；复杂格式可使用 Pydantic 的字段或模型验证器集中处理。
+验证后的配置通过 `self.settings` 读取，配置实例只读。简单插件无需定义配置类；复杂格式可使用 Pydantic 的字段或模型验证器集中处理。
 
-### Context
+### PluginContext
 
 通过 `self.context` 使用：
 
 | 字段 | 内容 |
 | --- | --- |
 | `name` | 插件名 |
-| `config` | 插件配置 |
+| `config` | 原始插件配置的只读映射 |
 | `storage` | 插件私有存储 |
 | `misskey` | Misskey 服务 |
 | `openai` | AI 服务 |
 | `bot` | Bot 控制接口 |
 
-只承诺这些 Protocol 中声明的成员稳定。
+仅服务 `Protocol` 中声明的成员属于稳定接口。不要导入 `twipsybot.bot`、`twipsybot.clients` 或 `twipsybot.db`，这些模块不保证插件兼容性。
 
 #### Storage
 
 ```python
 value = await self.context.storage.get("key")
 await self.context.storage.set("key", "value")
-await self.context.storage.delete("key")  # key=None 时清空本插件数据
+deleted = await self.context.storage.delete("key")
 ```
 
-存储按插件名隔离，键和值均为字符串；`delete` 返回删除数量。
+存储按插件名隔离，键和值均为字符串。`delete(None)` 会清空当前插件的存储并返回删除数量。
 
 #### Misskey 与 Drive
 
@@ -92,13 +95,13 @@ await self.context.storage.delete("key")  # key=None 时清空本插件数据
 | `misskey.drive.upload_bytes(data, name=..., content_type=...)` | 上传文件 |
 
 `visibility` 可为 `public`、`home` 或 `followers`。上传结果中的 `id` 是文件 ID。
-当前 `create_note` 和 handled 回复尚不支持附带文件 ID。
+当前 `create_note` 和 `HandledResult` 尚不支持附带文件 ID。
 
 #### OpenAI 与 Bot
 
 | 接口 | 用途 |
 | --- | --- |
-| `openai.generate_text(prompt, system_prompt, max_tokens, temperature, json_output)` | 单轮生成，可选 JSON Object 输出 |
+| `openai.generate_text(prompt, system_prompt, max_tokens, temperature, json_output)` | 单轮文本生成，可请求 JSON Object |
 | `openai.generate_chat(messages, max_tokens, temperature)` | 多轮或多模态生成 |
 | `openai.moderate_texts(texts)` | 批量审核文本，按输入顺序返回命中的类别集合 |
 | `openai.system_prompt / max_tokens / temperature` | 读取全局生成参数 |
@@ -123,24 +126,22 @@ await self.context.storage.delete("key")  # key=None 时清空本插件数据
 | `UserRef` | `id username host handle` |
 | `FileRef` | `id mime_type url thumbnail_url raw` |
 
-`id`、`cw`、`host`、文件 URL 等字段可能为空。`UserRef.handle` 会自动组合为
+`NotificationEvent.id`、`UserRef.id`、`cw`、`host`、文件 URL 等字段可能为空；消息、提及和时间线事件的 `id` 始终是非空字符串。`UserRef.handle` 会自动组合为
 `username@host`；本地用户仅为 `username`。时间线 `channel` 通常为
 `homeTimeline`、`localTimeline`、`hybridTimeline`、`globalTimeline` 或 `antenna`。
-`files` 可配合 Drive 接口读取；`raw` 仅用于缺失的原始字段。
+`files` 可配合 Drive 接口读取。每个插件收到独立的 `raw` 副本，但嵌套值并非深度只读；应将其视为只读后备数据，且不依赖其长期兼容性。
 
 ### Hook
 
 | 方法 | 输入 | 返回 |
 | --- | --- | --- |
-| `on_message` | `MessageEvent` | `HandledResult | None` |
-| `on_mention` | `MentionEvent` | `HandledResult | None` |
+| `on_message` | `MessageEvent` | `HandledResult \| None` |
+| `on_mention` | `MentionEvent` | `HandledResult \| None` |
 | `on_notification` | `NotificationEvent` | `None` |
 | `on_timeline_note` | `TimelineNoteEvent` | `None` |
-| `on_auto_post` | `AutoPostEvent` | `AutoPostResult | PromptModificationResult | None` |
+| `on_auto_post` | `AutoPostEvent` | `AutoPostResult \| PromptModificationResult \| None` |
 
-按 `priority` 降序调用。message/mention 返回 handled 后，后续插件和默认 AI
-均不再执行；返回 `None` 则继续。notification/timeline_note 仅用于观察，所有插件
-都会收到。事件字段只读；`raw` 是隔离副本且不保证兼容。
+插件按 `priority` 从高到低调用。`on_message` 或 `on_mention` 返回 `HandledResult` 后，后续插件和默认 AI 不再执行；返回 `None` 则继续。通知和时间线 Hook 仅用于观察，所有插件都会收到。事件数据类不可变，`raw` 的隔离副本仅用于读取公共事件尚未提供的字段。
 
 ```python
 return self.handled("已处理")
@@ -151,7 +152,7 @@ return {"prompt": "以天气为主题，"}
 `contents`、其中的帖子文本和 `prompt` 必须非空。
 
 - `contents`：直接发帖，不调用 AI。
-- `prompt`：追加自动发帖提示，由 AI 生成内容。
+- `prompt`：放在全局自动发帖提示词之前，由 AI 生成内容。
 - `timestamp`：可选的分钟级时间戳，用于稳定生成输入。
 
 返回字典必须严格符合对应 Result 类型，不能添加其他字段。自动发帖仍受全局每日限额限制。
@@ -162,20 +163,20 @@ return {"prompt": "以天气为主题，"}
 __init__ -> initialize -> on_startup -> hooks -> on_shutdown -> cleanup
 ```
 
-方法均可缺省，但必须 `async def`；生命周期方法不得要求额外参数，Hook 必须能接收事件参数。`initialize` 只有返回 `True` 才算成功。生命周期超时 30 秒，Hook 超时 60 秒。
+生命周期方法和 Hook 均可不覆盖；覆盖时必须使用 `async def`。生命周期方法不得要求额外参数，Hook 必须能接收事件参数。`initialize` 只有返回 `True` 才算成功。生命周期超时 30 秒，Hook 超时 60 秒。
 
-- 初始化或启动失败：cleanup 并禁用。
-- Bot 停止：on_shutdown 后 cleanup。
+- 初始化或启动失败：调用 `cleanup` 并禁用。
+- Bot 停止：先调用 `on_shutdown`，再调用 `cleanup`。
 - Hook 异常或超时只隔离本次调用。
 
-`context.config` 只读。配置优先读取 `plugins/config.yaml` 中的插件条目，否则读取
-插件目录内的 `config.yaml`，两者不合并。修改配置后需重启 Bot。关闭时会等待正在
-执行的 Hook 完成。插件类可设置 `description` 供插件信息展示。
+通过 `_register_resource(resource)` 注册带 `close()` 的资源，基类会在 `cleanup` 时关闭。插件自行创建的任务应在 `on_shutdown()` 中停止，并在 `cleanup()` 中完成最终释放。不要吞掉 `asyncio.CancelledError`，长时间 I/O 应设置自身超时。
 
-### 边界
+`context.config` 是原始配置的只读映射。集中配置 `plugins/config.yaml` 中存在同名条目时，会完整取代插件目录的 `config.yaml`，两处不会合并。修改配置后需重启 Bot。关闭时会等待正在执行的 Hook 完成。插件类可设置 `description` 供插件信息展示。
 
-公共 API：`twipsybot.plugin` 导出的 Base、Context、事件、结果和服务 Protocol。
+### API 边界
 
-内部 API：其他 `twipsybot.*` 模块、`PluginManager`、底层对象、私有属性和事件 `raw`。
+公共 API 包括 `twipsybot.plugin` 导出的 `PluginBase`、`PluginContext`、事件类型、结果类型和服务 `Protocol`，以及本文明确说明的 `PluginBase` 辅助方法。
 
-API v1 仅做向后兼容扩展；删除、改名或语义变化将提升主版本。
+内部 API 包括其他 `twipsybot.*` 模块、`PluginManager`、底层对象、未文档化的私有属性和事件 `raw`。
+
+插件 API v1 只进行向后兼容的扩展。删除、重命名公共 API 成员或改变其语义属于破坏性变更，需要提升 API 主版本号。

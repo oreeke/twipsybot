@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -109,33 +111,28 @@ async def test_mention_generates_and_attaches_image(
     assert note["fileIds"] == ["file-1"]
 
 
-async def test_mention_does_not_publish_manual_post(
+@pytest.mark.parametrize(
+    "event",
+    [
+        {**_MENTION_NOTE, "text": "@testbot /post 夏夜的风"},
+        {**_MENTION_NOTE, "mentions": ["other-id"]},
+    ],
+    ids=("manual-post", "missing-bot-id"),
+)
+async def test_mention_ignores_unsupported_events(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
+    event: dict[str, Any],
 ) -> None:
     bot = await make_bot(write_config())
 
-    await bot.mention.handle({**_MENTION_NOTE, "text": "@testbot /post 夏夜的风"})
+    await bot.mention.handle(event)
 
     assert openai_server.calls == []
     assert "notes/create" not in misskey_server.calls
     assert bot.auto_post.posts_today == 0
-
-
-async def test_mention_text_without_bot_id_is_ignored(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    bot = await make_bot(write_config())
-
-    await bot.mention.handle({**_MENTION_NOTE, "mentions": ["other-id"]})
-
-    assert openai_server.calls == []
-    assert "notes/create" not in misskey_server.calls
 
 
 async def test_chat_message_plugin_takeover(
@@ -164,10 +161,11 @@ async def test_image_only_chat_is_handled_by_vision_plugin(
     openai_server: FakeOpenAIServer,
 ) -> None:
     plugins_dir = make_plugin_dir(
-        "vision",
-        "from plugins.vision.vision import VisionPlugin as BaseVisionPlugin\n\n\n"
+        "vision_test",
+        "from plugins.vision.plugin import VisionPlugin as BaseVisionPlugin\n\n\n"
         "class VisionPlugin(BaseVisionPlugin):\n"
-        "    pass\n",
+        "    pass\n\n"
+        "plugin = VisionPlugin\n",
         config="enabled: true\nuse_thumbnail: false\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
@@ -307,7 +305,8 @@ async def test_auto_post_preserves_zero_timestamp(
         "class EpochPlugin(PluginBase):\n"
         "    api_version = PLUGIN_API_VERSION\n"
         "    async def on_auto_post(self, event):\n"
-        "        return {'prompt': 'epoch ', 'timestamp': 0}\n",
+        "        return {'prompt': 'epoch ', 'timestamp': 0}\n\n"
+        "plugin = EpochPlugin\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     bot.runtime.running = True
@@ -330,7 +329,8 @@ async def test_auto_post_uses_highest_priority_prompt_and_timestamp(
         "class HighPlugin(PluginBase):\n"
         "    api_version = PLUGIN_API_VERSION\n"
         "    async def on_auto_post(self, event):\n"
-        "        return {'prompt': 'high ', 'timestamp': 1}\n",
+        "        return {'prompt': 'high ', 'timestamp': 1}\n\n"
+        "plugin = HighPlugin\n",
         config="enabled: true\npriority: 20\n",
     )
     make_plugin_dir(
@@ -339,7 +339,8 @@ async def test_auto_post_uses_highest_priority_prompt_and_timestamp(
         "class LowPlugin(PluginBase):\n"
         "    api_version = PLUGIN_API_VERSION\n"
         "    async def on_auto_post(self, event):\n"
-        "        return {'prompt': 'low ', 'timestamp': 2}\n",
+        "        return {'prompt': 'low ', 'timestamp': 2}\n\n"
+        "plugin = LowPlugin\n",
         config="enabled: true\npriority: 10\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
@@ -539,16 +540,28 @@ def test_manual_post_options_preserve_prompt_whitespace() -> None:
     )
 
 
-async def test_chat_rejects_unauthorized_manual_post(
+@pytest.mark.parametrize(
+    ("command", "openai_config"),
+    [
+        ("/post 夏夜的风", {}),
+        ("/img 一只猫", {"image_model": "gpt-image-1"}),
+    ],
+    ids=("post", "image"),
+)
+async def test_chat_rejects_unauthorized_commands(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
+    command: str,
+    openai_config: dict[str, Any],
 ) -> None:
-    bot = await make_bot(write_config())
+    bot = await make_bot(write_config(openai=openai_config))
+    bot.openai.generate_image = AsyncMock()
 
-    await bot.chat.handle({**_CHAT_MESSAGE, "text": "/post 夏夜的风"})
+    await bot.chat.handle({**_CHAT_MESSAGE, "text": command})
 
+    bot.openai.generate_image.assert_not_awaited()
     assert openai_server.calls == []
     assert "notes/create" not in misskey_server.calls
     reply = misskey_server.calls["chat/messages/create-to-user"][0]
@@ -613,23 +626,6 @@ async def test_disabled_image_generation_replies_with_failure(
     reply = misskey_server.calls["chat/messages/create-to-user"][0]
     assert reply["text"] == "图片生成失败，请稍后再试。"
     assert "fileId" not in reply
-
-
-async def test_chat_rejects_unauthorized_image_generation(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    bot = await make_bot(write_config(openai={"image_model": "gpt-image-1"}))
-    bot.openai.generate_image = AsyncMock()
-
-    await bot.chat.handle({**_CHAT_MESSAGE, "text": "/img 一只猫"})
-
-    bot.openai.generate_image.assert_not_awaited()
-    assert openai_server.calls == []
-    reply = misskey_server.calls["chat/messages/create-to-user"][0]
-    assert reply["text"] == "您没有权限使用命令。"
 
 
 async def test_image_send_failure_does_not_record_response(
@@ -697,6 +693,64 @@ async def test_room_chat_requires_mention_and_replies_to_room(
     reply = misskey_server.calls["chat/messages/create-to-room"][0]
     assert reply["toRoomId"] == "room-1"
     assert reply["text"] == f"@bob\n{DEFAULT_AI_REPLY}"
+
+
+async def test_room_chat_serializes_shared_history(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot = await make_bot(
+        write_config(bot={"response": {"rate_limit": -1, "max_turns": -1}})
+    )
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    calls: list[list[dict[str, str]]] = []
+
+    async def generate_chat(messages: list[dict[str, str]], **_: object) -> str:
+        calls.append([dict(message) for message in messages])
+        if len(calls) == 1:
+            first_started.set()
+            await release_first.wait()
+            return "第一条回复"
+        return "第二条回复"
+
+    monkeypatch.setattr(bot.openai, "generate_chat", generate_chat)
+    room = {"toRoomId": "room-1", "toRoom": {"id": "room-1", "name": "测试房间"}}
+    first = asyncio.create_task(
+        bot.chat.handle(
+            {
+                **_CHAT_MESSAGE,
+                **room,
+                "text": "@testbot 第一条",
+            }
+        )
+    )
+    await first_started.wait()
+    second = asyncio.create_task(
+        bot.chat.handle(
+            {
+                **_CHAT_MESSAGE,
+                **room,
+                "id": "msg-2",
+                "text": "@testbot 第二条",
+                "user": {"id": "user-3", "username": "alice"},
+            }
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert len(calls) == 1
+
+    release_first.set()
+    await asyncio.gather(first, second)
+
+    assert [message["content"] for message in calls[1]] == [
+        "你是测试机器人",
+        "bob: @testbot 第一条",
+        "第一条回复",
+        "alice: @testbot 第二条",
+    ]
 
 
 async def test_room_chat_does_not_publish_manual_post(
@@ -815,7 +869,8 @@ async def test_plugin_reply_to_bot_does_not_mention_sender(
         "class EchoPlugin(PluginBase):\n"
         "    api_version = PLUGIN_API_VERSION\n\n"
         "    async def on_mention(self, event):\n"
-        "        return self.handled('plugin reply')\n",
+        "        return self.handled('plugin reply')\n\n"
+        "plugin = EchoPlugin\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     event = {
@@ -936,7 +991,8 @@ async def test_plugin_can_take_over_mention(
         "class EchoPlugin(PluginBase):\n"
         "    api_version = PLUGIN_API_VERSION\n\n"
         "    async def on_mention(self, note):\n"
-        "        return self.handled('mention handled')\n",
+        "        return self.handled('mention handled')\n\n"
+        "plugin = EchoPlugin\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
@@ -975,7 +1031,8 @@ async def test_plugin_can_modify_auto_post_prompt(
         "class PromptPlugin(PluginBase):\n"
         "    api_version = PLUGIN_API_VERSION\n\n"
         "    async def on_auto_post(self, event: AutoPostEvent):\n"
-        "        return {'prompt': '今日主题：测试。'}\n",
+        "        return {'prompt': '今日主题：测试。'}\n\n"
+        "plugin = PromptPlugin\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     bot.runtime.running = True

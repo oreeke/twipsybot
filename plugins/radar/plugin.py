@@ -4,7 +4,6 @@ from loguru import logger
 from pydantic import Field
 
 from twipsybot.plugin import (
-    PLUGIN_API_VERSION,
     PluginBase,
     PluginConfig,
     TimelineNoteEvent,
@@ -30,7 +29,7 @@ class _Config(PluginConfig):
 
 
 class RadarPlugin(PluginBase):
-    api_version = PLUGIN_API_VERSION
+    api_version = 2
     config_class = _Config
     settings: _Config
     description = "主动与天线发现的帖子互动（反应、回复、转发、引用）"
@@ -217,3 +216,6 @@ class RadarPlugin(PluginBase):
         did_quote = await self._maybe_quote(note_data, note_id, channel)
         if not did_quote:
             await self._maybe_renote(note_id, channel)
+
+
+plugin = RadarPlugin

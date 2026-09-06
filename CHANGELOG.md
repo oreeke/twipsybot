@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.0 - 2026-09-06
+
+发布 Plugin API v2
+
+### Added
+
+- 插件支持通过固定 `plugin` 导出接入，并可使用标准 Python Entry Points 独立安装和声明依赖
+- Plugin API 新增 `on_auto_post_published` 回调，在插件提供的自动发帖内容成功发布后提交状态
+
+### Changed
+
+- Plugin API 升级到 v2，本地插件统一使用 `plugin.py` 和固定 `plugin` 导出；移除旧同名模块与类名推导加载方式
+- 第三方插件支持通过 Entry Points 分发，仍需集中配置启用
+- 插件上下文名称、结果标识和存储命名空间统一使用稳定插件 ID，不再受插件类名变化影响
+- 插件 Hook 超时统一为 180 秒，避免提前中断 AI 请求
+- 关闭机器人时插件 Hook 最多等待 3 秒，整体关闭最多等待 5 秒
+
+### Fixed
+
+- 关闭机器人时，自动发帖任务不再将正常取消记录为异常
+
+<br>
+
 ## 0.5.0 - 2026-09-04
 
 完善 Plugin API，新增 Iincho 时间线趋势与内容风险观察，并适配 Misskey 2025+ 数据接口

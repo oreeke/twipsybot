@@ -5,7 +5,6 @@ from typing import Annotated, Any
 from pydantic import StringConstraints, field_validator
 
 from twipsybot.plugin import (
-    PLUGIN_API_VERSION,
     HandledResult,
     MentionEvent,
     MessageEvent,
@@ -45,7 +44,7 @@ class _Config(PluginConfig):
 
 
 class KeyActPlugin(PluginBase):
-    api_version = PLUGIN_API_VERSION
+    api_version = 2
     config_class = _Config
     settings: _Config
     description = "匹配自定义关键词触发直接回复，绕过 AI"
@@ -97,3 +96,6 @@ class KeyActPlugin(PluginBase):
         if not self.settings.chat_enabled:
             return None
         return self._handle(event.text)
+
+
+plugin = KeyActPlugin

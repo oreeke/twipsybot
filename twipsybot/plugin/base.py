@@ -52,6 +52,9 @@ class PluginBase:
     async def on_shutdown(self) -> None:
         await asyncio.sleep(0)
 
+    async def on_auto_post_published(self, _content: str) -> None:
+        await asyncio.sleep(0)
+
     def _get_info(self) -> dict[str, Any]:
         return {
             "name": self.context.name,

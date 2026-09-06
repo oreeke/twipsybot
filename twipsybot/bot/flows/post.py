@@ -118,7 +118,9 @@ class AutoPostService:
                 return
             await self._generate_ai_post(plugin_results, max_posts)
         except asyncio.CancelledError:
-            raise
+            if self.bot.runtime.running:
+                raise
+            logger.debug("Auto-post cancelled during shutdown")
         except Exception as e:
             logger.error(f"Error during auto-post: {e}")
 

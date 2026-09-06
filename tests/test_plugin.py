@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -10,11 +12,11 @@ from unittest.mock import AsyncMock
 import pytest
 from conftest import FakeMisskeyServer, MakeBot, MakePluginDir, WriteConfig
 
-from plugins.iincho.iincho import IinchoPlugin, _Sample
-from plugins.keyact.keyact import KeyActPlugin
-from plugins.radar.radar import RadarPlugin
-from plugins.topics.topics import TopicsPlugin
-from plugins.vision.vision import VisionPlugin
+from plugins.iincho.plugin import IinchoPlugin, _Sample
+from plugins.keyact.plugin import KeyActPlugin
+from plugins.radar.plugin import RadarPlugin
+from plugins.topics.plugin import TopicsPlugin
+from plugins.vision.plugin import VisionPlugin
 from twipsybot.plugin import (
     FileRef,
     MentionEvent,
@@ -158,7 +160,8 @@ async def test_all_hooks_receive_stable_events(
         "    async def on_timeline_note(self, event: TimelineNoteEvent):\n"
         "        self.received.append((type(event), event.id, event.channel))\n\n"
         "    async def on_auto_post(self, event: AutoPostEvent):\n"
-        "        self.received.append((type(event), bool(event.triggered_at), None))\n",
+        "        self.received.append((type(event), bool(event.triggered_at), None))\n\n"
+        "plugin = EventsPlugin\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     manager = bot.plugin_manager
@@ -206,21 +209,14 @@ async def test_priority_and_handled_short_circuit(
 ) -> None:
     plugins_dir = make_plugin_dir(
         "low",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class LowPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_message(self, event):\n"
-        "        await self.context.storage.set('called', 'yes')\n"
-        "        return self.handled('low')\n",
+        body="async def on_message(self, event):\n"
+        "    await self.context.storage.set('called', 'yes')\n"
+        "    return self.handled('low')\n",
         config="enabled: true\npriority: 10\n",
     )
     make_plugin_dir(
         "high",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class HighPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_message(self, event):\n"
-        "        return self.handled('high')\n",
+        body="async def on_message(self, event):\n    return self.handled('high')\n",
         config="enabled: true\npriority: 20\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
@@ -229,7 +225,7 @@ async def test_priority_and_handled_short_circuit(
         "on_message", {"id": "message-1", "user": {"username": "a"}}
     )
 
-    assert results == [{"handled": True, "response": "high", "plugin_name": "High"}]
+    assert results == [{"handled": True, "response": "high", "plugin_name": "high"}]
     assert await bot.db.get_plugin_data("low", "called") is None
 
 
@@ -244,30 +240,19 @@ async def test_hook_timeout_and_exception_are_isolated(
     monkeypatch.setattr(manager_module, "_PLUGIN_HOOK_TIMEOUT_SECONDS", 0.01)
     plugins_dir = make_plugin_dir(
         "broken",
-        "import asyncio\n"
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class BrokenPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_message(self, event):\n"
-        "        await asyncio.sleep(1)\n",
+        body="async def on_message(self, event):\n"
+        "    import asyncio\n"
+        "    await asyncio.sleep(1)\n",
         config="enabled: true\npriority: 30\n",
     )
     make_plugin_dir(
         "error",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class ErrorPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_message(self, event):\n"
-        "        raise RuntimeError('boom')\n",
+        body="async def on_message(self, event):\n    raise RuntimeError('boom')\n",
         config="enabled: true\npriority: 20\n",
     )
     make_plugin_dir(
         "healthy",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class HealthyPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_message(self, event):\n"
-        "        return self.handled('ok')\n",
+        body="async def on_message(self, event):\n    return self.handled('ok')\n",
         config="enabled: true\npriority: 10\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
@@ -276,7 +261,30 @@ async def test_hook_timeout_and_exception_are_isolated(
         "on_message", {"id": "message-1", "user": {"username": "a"}}
     )
 
-    assert results == [{"handled": True, "response": "ok", "plugin_name": "Healthy"}]
+    assert results == [{"handled": True, "response": "ok", "plugin_name": "healthy"}]
+
+
+async def test_auto_post_uses_shared_hook_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+) -> None:
+    import twipsybot.plugin.manager as manager_module
+
+    monkeypatch.setattr(manager_module, "_PLUGIN_HOOK_TIMEOUT_SECONDS", 0.01)
+    plugins_dir = make_plugin_dir(
+        "slow_auto_post",
+        body="async def on_auto_post(self, event):\n"
+        "    import asyncio\n"
+        "    await asyncio.sleep(0.03)\n"
+        "    return {'prompt': 'ready'}\n",
+    )
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    results = await bot.plugin_manager.call_plugin_hook("on_auto_post")
+
+    assert results == []
 
 
 async def test_lifecycle_order(
@@ -284,23 +292,20 @@ async def test_lifecycle_order(
 ) -> None:
     plugins_dir = make_plugin_dir(
         "lifecycle",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class LifecyclePlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    def __init__(self, context):\n"
-        "        super().__init__(context)\n"
-        "        self.events = ['init']\n"
-        "    async def initialize(self):\n"
-        "        self.events.append('initialize')\n"
-        "        return True\n"
-        "    async def on_startup(self):\n"
-        "        self.events.append('startup')\n"
-        "    async def on_message(self, event):\n"
-        "        self.events.append('hook')\n"
-        "    async def on_shutdown(self):\n"
-        "        self.events.append('shutdown')\n"
-        "    async def cleanup(self):\n"
-        "        self.events.append('cleanup')\n",
+        body="def __init__(self, context):\n"
+        "    super().__init__(context)\n"
+        "    self.events = ['init']\n"
+        "async def initialize(self):\n"
+        "    self.events.append('initialize')\n"
+        "    return True\n"
+        "async def on_startup(self):\n"
+        "    self.events.append('startup')\n"
+        "async def on_message(self, event):\n"
+        "    self.events.append('hook')\n"
+        "async def on_shutdown(self):\n"
+        "    self.events.append('shutdown')\n"
+        "async def cleanup(self):\n"
+        "    self.events.append('cleanup')\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     plugin = bot.plugin_manager.get_plugin("lifecycle")
@@ -333,15 +338,12 @@ async def test_initialize_timeout_runs_cleanup(
     monkeypatch.setattr(manager_module, "_PLUGIN_LIFECYCLE_TIMEOUT_SECONDS", 0.01)
     plugins_dir = make_plugin_dir(
         "slow",
-        "import asyncio\n"
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class SlowPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def initialize(self):\n"
-        "        await asyncio.sleep(1)\n"
-        "        return True\n"
-        "    async def cleanup(self):\n"
-        "        self.cleaned = True\n",
+        body="async def initialize(self):\n"
+        "    import asyncio\n"
+        "    await asyncio.sleep(1)\n"
+        "    return True\n"
+        "async def cleanup(self):\n"
+        "    self.cleaned = True\n",
     )
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
@@ -359,13 +361,10 @@ async def test_failed_plugin_initialization_runs_cleanup(
 ) -> None:
     plugins_dir = make_plugin_dir(
         "failing",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n\n"
-        "class FailingPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n\n"
-        "    async def initialize(self):\n"
-        "        return False\n\n"
-        "    async def cleanup(self):\n"
-        "        await self.context.storage.set('cleaned', 'yes')\n",
+        body="async def initialize(self):\n"
+        "    return False\n"
+        "async def cleanup(self):\n"
+        "    await self.context.storage.set('cleaned', 'yes')\n",
     )
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
@@ -373,7 +372,7 @@ async def test_failed_plugin_initialization_runs_cleanup(
     plugin = bot.plugin_manager.get_plugin("failing")
     assert plugin is not None
     assert bot.plugin_manager.get_plugin_info()[0]["enabled"] is False
-    assert await bot.db.get_plugin_data("Failing", "cleaned") == "yes"
+    assert await bot.db.get_plugin_data("failing", "cleaned") == "yes"
 
 
 async def test_invalid_hook_results_are_rejected(
@@ -381,13 +380,10 @@ async def test_invalid_hook_results_are_rejected(
 ) -> None:
     plugins_dir = make_plugin_dir(
         "invalid",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class InvalidPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_message(self, event):\n"
-        "        return {'handled': True, 'response': 42}\n"
-        "    async def on_auto_post(self, event):\n"
-        "        return {'contents': []}\n",
+        body="async def on_message(self, event):\n"
+        "    return {'handled': True, 'response': 42}\n"
+        "async def on_auto_post(self, event):\n"
+        "    return {'contents': []}\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
@@ -413,11 +409,7 @@ async def test_sync_hook_is_rejected_at_load(
 ) -> None:
     plugins_dir = make_plugin_dir(
         "sync",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class SyncPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    def on_message(self, event):\n"
-        "        return self.handled('invalid')\n",
+        body="def on_message(self, event):\n    return self.handled('invalid')\n\n",
     )
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
@@ -432,6 +424,10 @@ async def test_sync_hook_is_rejected_at_load(
         (
             "extrarequired",
             "async def initialize(self, required):\n        return True",
+        ),
+        (
+            "missingcontent",
+            "async def on_auto_post_published(self):\n        pass",
         ),
     ],
 )
@@ -448,7 +444,8 @@ async def test_incompatible_plugin_signature_is_rejected_at_load(
         "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
         f"class {class_name}Plugin(PluginBase):\n"
         "    api_version = PLUGIN_API_VERSION\n"
-        f"    {method}\n",
+        f"    {method}\n\n"
+        f"plugin = {class_name}Plugin\n",
     )
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
@@ -456,60 +453,214 @@ async def test_incompatible_plugin_signature_is_rejected_at_load(
     assert bot.plugin_manager.get_plugin(name) is None
 
 
-async def test_plugin_api_version_requires_exact_integer(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "boolean",
-        "from twipsybot.plugin import PluginBase\n\n"
-        "class BooleanPlugin(PluginBase):\n"
-        "    api_version = True\n",
-    )
-    make_plugin_dir(
-        "float",
-        "from twipsybot.plugin import PluginBase\n\n"
-        "class FloatPlugin(PluginBase):\n"
-        "    api_version = 1.0\n",
-    )
-
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-
-    assert bot.plugin_manager.get_plugin("boolean") is None
-    assert bot.plugin_manager.get_plugin("float") is None
-
-
+@pytest.mark.parametrize(
+    ("name", "api_version"),
+    [("boolean", "True"), ("float", "2.0"), ("future", "3")],
+)
 async def test_incompatible_plugin_api_is_rejected(
+    name: str,
+    api_version: str,
     make_bot: MakeBot,
     make_plugin_dir: MakePluginDir,
     write_config: WriteConfig,
 ) -> None:
     plugins_dir = make_plugin_dir(
-        "future",
+        name,
         "from twipsybot.plugin import PluginBase\n\n\n"
-        "class FuturePlugin(PluginBase):\n"
-        "    api_version = 2\n",
+        "class Plugin(PluginBase):\n"
+        f"    api_version = {api_version}\n\n"
+        "plugin = Plugin\n",
     )
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    assert bot.plugin_manager.get_plugin("future") is None
+    assert bot.plugin_manager.get_plugin(name) is None
 
 
-async def test_plugin_class_name_allows_acronym_casing(
+async def test_plugin_context_uses_stable_plugin_id(
     make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
 ) -> None:
-    plugins_dir = make_plugin_dir(
-        "keyact",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class KeyActPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n",
-    )
+    plugins_dir = make_plugin_dir("keyact")
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
     plugin = bot.plugin_manager.get_plugin("keyact")
     assert plugin is not None
-    assert plugin.context.name == "KeyAct"
+    assert plugin.context.name == "keyact"
+    assert plugin.__class__.__module__ != "plugins.keyact.plugin"
+
+
+async def test_plugin_module_uses_explicit_export(
+    tmp_path: Path, make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "echo"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "config.yaml").write_text("enabled: true\n", encoding="utf-8")
+    (plugin_dir / "plugin.py").write_text(
+        "from twipsybot.plugin import PluginBase\n\n"
+        "class Reply(PluginBase):\n"
+        "    api_version = 2\n"
+        "    async def on_message(self, event):\n"
+        "        return self.handled('explicit')\n\n"
+        "plugin = Reply\n",
+        encoding="utf-8",
+    )
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    plugin = bot.plugin_manager.get_plugin("echo")
+    assert plugin is not None
+    assert plugin.__class__.__name__ == "Reply"
+
+
+async def test_legacy_named_module_is_not_loaded(
+    tmp_path: Path, make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "legacy"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "config.yaml").write_text("enabled: true\n", encoding="utf-8")
+    (plugin_dir / "legacy.py").write_text(
+        "from twipsybot.plugin import PluginBase\n\n"
+        "class LegacyPlugin(PluginBase):\n"
+        "    api_version = 2\n\n"
+        "plugin = LegacyPlugin\n",
+        encoding="utf-8",
+    )
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    assert bot.plugin_manager.get_plugin("legacy") is None
+
+
+async def test_plugin_module_requires_explicit_export(
+    tmp_path: Path, make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "implicit"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "config.yaml").write_text("enabled: true\n", encoding="utf-8")
+    (plugin_dir / "plugin.py").write_text(
+        "from twipsybot.plugin import PluginBase\n\n"
+        "class ImplicitPlugin(PluginBase):\n"
+        "    api_version = 2\n",
+        encoding="utf-8",
+    )
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    assert bot.plugin_manager.get_plugin("implicit") is None
+
+
+async def test_failed_plugin_import_removes_partial_module(
+    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+) -> None:
+    module_prefix = "_twipsybot_plugin_broken_import_"
+    previous_modules = {name for name in sys.modules if name.startswith(module_prefix)}
+    plugins_dir = make_plugin_dir(
+        "broken_import",
+        "from twipsybot.plugin import PluginBase\n\n"
+        "class BrokenImportPlugin(PluginBase):\n"
+        "    api_version = 2\n\n"
+        "plugin = BrokenImportPlugin\n"
+        "raise RuntimeError('broken import')\n",
+    )
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    assert bot.plugin_manager.get_plugin("broken_import") is None
+    assert {name for name in sys.modules if name.startswith(module_prefix)} == (
+        previous_modules
+    )
+
+
+async def test_entry_point_plugin_uses_central_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+) -> None:
+    import twipsybot.plugin.manager as manager_module
+
+    class ExternalPlugin(PluginBase):
+        api_version = 2
+
+    entry_point = SimpleNamespace(name="external", load=lambda: ExternalPlugin)
+    monkeypatch.setattr(
+        manager_module,
+        "entry_points",
+        lambda *, group: [entry_point] if group == "twipsybot.plugins" else [],
+    )
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    (plugins_dir / "config.yaml").write_text(
+        "external:\n  enabled: true\n", encoding="utf-8"
+    )
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    plugin = bot.plugin_manager.get_plugin("external")
+    assert plugin is not None
+    assert plugin.context.name == "external"
+
+
+async def test_unconfigured_entry_point_is_not_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+) -> None:
+    import twipsybot.plugin.manager as manager_module
+
+    load = AsyncMock()
+    entry_point = SimpleNamespace(name="external", load=load)
+    monkeypatch.setattr(manager_module, "entry_points", lambda *, group: [entry_point])
+
+    bot = await make_bot(write_config(), plugins_dir=tmp_path / "plugins")
+
+    assert bot.plugin_manager.get_plugin("external") is None
+    load.assert_not_called()
+
+
+async def test_invalid_central_plugin_config_does_not_fall_back_to_local_config(
+    tmp_path: Path, make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "invalid_config"
+    plugin_dir.mkdir(parents=True)
+    (plugins_dir / "config.yaml").write_text("invalid_config: true\n", encoding="utf-8")
+    (plugin_dir / "config.yaml").write_text("enabled: true\n", encoding="utf-8")
+    (plugin_dir / "plugin.py").write_text(
+        "from twipsybot.plugin import PluginBase\n\n"
+        "class InvalidConfigPlugin(PluginBase):\n"
+        "    api_version = 2\n\n"
+        "plugin = InvalidConfigPlugin\n",
+        encoding="utf-8",
+    )
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    assert bot.plugin_manager.get_plugin("invalid_config") is None
+
+
+async def test_local_plugin_shadows_entry_point(
+    monkeypatch: pytest.MonkeyPatch,
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+) -> None:
+    import twipsybot.plugin.manager as manager_module
+
+    load = AsyncMock()
+    entry_point = SimpleNamespace(name="echo", load=load)
+    monkeypatch.setattr(manager_module, "entry_points", lambda *, group: [entry_point])
+    plugins_dir = make_plugin_dir("echo")
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    assert bot.plugin_manager.get_plugin("echo") is not None
+    load.assert_not_called()
 
 
 async def test_invalid_event_input_is_rejected(
@@ -517,11 +668,8 @@ async def test_invalid_event_input_is_rejected(
 ) -> None:
     plugins_dir = make_plugin_dir(
         "input",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class InputPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_message(self, event):\n"
-        "        raise AssertionError('must not run')\n",
+        body="async def on_message(self, event):\n"
+        "    raise AssertionError('must not run')\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
@@ -536,20 +684,14 @@ async def test_event_raw_is_isolated_between_plugins(
 ) -> None:
     plugins_dir = make_plugin_dir(
         "mutator",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class MutatorPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_message(self, event):\n"
-        "        event.raw['user']['username'] = 'changed'\n",
+        body="async def on_message(self, event):\n"
+        "    event.raw['user']['username'] = 'changed'\n",
         config="enabled: true\npriority: 20\n",
     )
     make_plugin_dir(
         "observer",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class ObserverPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_message(self, event):\n"
-        "        return self.handled(event.raw['user']['username'])\n",
+        body="async def on_message(self, event):\n"
+        "    return self.handled(event.raw['user']['username'])\n",
         config="enabled: true\npriority: 10\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
@@ -566,23 +708,17 @@ async def test_non_bool_initialize_and_startup_failure_cleanup(
 ) -> None:
     plugins_dir = make_plugin_dir(
         "nonbool",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class NonboolPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def initialize(self):\n"
-        "        return 'yes'\n"
-        "    async def cleanup(self):\n"
-        "        self.cleaned = True\n",
+        body="async def initialize(self):\n"
+        "    return 'yes'\n"
+        "async def cleanup(self):\n"
+        "    self.cleaned = True\n",
     )
     make_plugin_dir(
         "startup",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class StartupPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_startup(self):\n"
-        "        raise RuntimeError('boom')\n"
-        "    async def cleanup(self):\n"
-        "        self.cleaned = True\n",
+        body="async def on_startup(self):\n"
+        "    raise RuntimeError('boom')\n"
+        "async def cleanup(self):\n"
+        "    self.cleaned = True\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     nonbool = bot.plugin_manager.get_plugin("nonbool")
@@ -591,8 +727,8 @@ async def test_non_bool_initialize_and_startup_failure_cleanup(
     assert startup is not None
 
     info = {item["name"]: item for item in bot.plugin_manager.get_plugin_info()}
-    assert info["Nonbool"]["enabled"] is False
-    assert info["Startup"]["enabled"] is False
+    assert info["nonbool"]["enabled"] is False
+    assert info["startup"]["enabled"] is False
     assert nonbool.cleaned is True
     assert startup.cleaned is True
 
@@ -603,12 +739,7 @@ async def test_context_uses_isolated_service_adapters(
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
 ) -> None:
-    plugins_dir = make_plugin_dir(
-        "context",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class ContextPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n",
-    )
+    plugins_dir = make_plugin_dir("context")
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     plugin = bot.plugin_manager.get_plugin("context")
     assert plugin is not None
@@ -622,8 +753,7 @@ async def test_context_uses_isolated_service_adapters(
     await plugin.context.storage.set("key", "value")
 
     assert misskey_server.calls["notes/create"][-1]["text"] == "adapter"
-    assert await bot.db.get_plugin_data("Context", "key") == "value"
-    assert await bot.db.get_plugin_data("context", "key") is None
+    assert await bot.db.get_plugin_data("context", "key") == "value"
 
     antenna = {"id": "antenna-1", "name": "original"}
     misskey_server.set_response("antennas/list", lambda payload: [antenna])
@@ -638,14 +768,11 @@ async def test_reused_result_is_not_mutated(
 ) -> None:
     plugins_dir = make_plugin_dir(
         "reuse",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class ReusePlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    def __init__(self, context):\n"
-        "        super().__init__(context)\n"
-        "        self.result = self.handled('ok')\n"
-        "    async def on_message(self, event):\n"
-        "        return self.result\n",
+        body="def __init__(self, context):\n"
+        "    super().__init__(context)\n"
+        "    self.result = self.handled('ok')\n"
+        "async def on_message(self, event):\n"
+        "    return self.result\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     payload = {"id": "message-1", "user": {"username": "alice"}}
@@ -664,11 +791,8 @@ async def test_shutdown_stops_hook_dispatch(
 ) -> None:
     plugins_dir = make_plugin_dir(
         "shutdown",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class ShutdownPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_message(self, event):\n"
-        "        raise AssertionError('must not run')\n",
+        body="async def on_message(self, event):\n"
+        "    raise AssertionError('must not run')\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
@@ -682,6 +806,154 @@ async def test_shutdown_stops_hook_dispatch(
     )
 
 
+async def test_shutdown_waits_for_active_hook_and_rejects_new_hooks(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugins_dir = make_plugin_dir("shutdown")
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    plugin = bot.plugin_manager.get_plugin("shutdown")
+    assert plugin is not None
+    hook_started = asyncio.Event()
+    release_hook = asyncio.Event()
+    events: list[str] = []
+
+    async def on_message(_: Any) -> None:
+        events.append("hook-started")
+        hook_started.set()
+        await release_hook.wait()
+        events.append("hook-finished")
+
+    async def on_shutdown() -> None:
+        events.append("shutdown")
+
+    monkeypatch.setattr(plugin, "on_message", on_message, raising=False)
+    monkeypatch.setattr(plugin, "on_shutdown", on_shutdown, raising=False)
+    payload = {"id": "message-1", "user": {"username": "alice"}}
+    active_hook = asyncio.create_task(
+        bot.plugin_manager.call_plugin_hook("on_message", payload)
+    )
+    await hook_started.wait()
+    shutdown = asyncio.create_task(bot.plugin_manager.shutdown_plugins())
+    while bot.plugin_manager._accepting_hooks:
+        await asyncio.sleep(0)
+
+    assert await bot.plugin_manager.call_plugin_hook("on_message", payload) == []
+    assert not shutdown.done()
+    assert events == ["hook-started"]
+
+    release_hook.set()
+    await asyncio.gather(active_hook, shutdown)
+
+    assert events == ["hook-started", "hook-finished", "shutdown"]
+
+
+async def test_shutdown_cancels_hook_after_grace_period(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import twipsybot.plugin.manager as manager_module
+
+    monkeypatch.setattr(manager_module, "_PLUGIN_SHUTDOWN_GRACE_SECONDS", 0.01)
+    plugins_dir = make_plugin_dir("shutdown")
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    plugin = bot.plugin_manager.get_plugin("shutdown")
+    assert plugin is not None
+    hook_started = asyncio.Event()
+    hook_cancelled = asyncio.Event()
+
+    async def on_message(_: Any) -> None:
+        hook_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            hook_cancelled.set()
+            raise
+
+    monkeypatch.setattr(plugin, "on_message", on_message, raising=False)
+    active_hook = asyncio.create_task(
+        bot.plugin_manager.call_plugin_hook(
+            "on_message", {"id": "message-1", "user": {"username": "alice"}}
+        )
+    )
+    await hook_started.wait()
+
+    await bot.plugin_manager.shutdown_plugins()
+
+    assert active_hook.cancelled()
+    assert hook_cancelled.is_set()
+
+
+async def test_plugin_cleanup_responds_to_cancellation(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugins_dir = make_plugin_dir("cleanup")
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    plugin = bot.plugin_manager.get_plugin("cleanup")
+    assert plugin is not None
+    cleanup_started = asyncio.Event()
+    cleanup_cancelled = asyncio.Event()
+
+    async def cleanup() -> None:
+        cleanup_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cleanup_cancelled.set()
+            raise
+
+    monkeypatch.setattr(plugin, "cleanup", cleanup)
+    task = asyncio.create_task(bot.plugin_manager._cleanup_plugin(plugin))
+    await cleanup_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cleanup_cancelled.is_set()
+
+
+async def test_auto_post_confirmation_responds_to_cancellation(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugins_dir = make_plugin_dir("publisher")
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    plugin = bot.plugin_manager.get_plugin("publisher")
+    assert plugin is not None
+    confirmation_started = asyncio.Event()
+    confirmation_cancelled = asyncio.Event()
+
+    async def confirm(_: str) -> None:
+        confirmation_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            confirmation_cancelled.set()
+            raise
+
+    monkeypatch.setattr(plugin, "on_auto_post_published", confirm)
+    task = asyncio.create_task(
+        bot.plugin_manager.confirm_auto_post_published(
+            {"plugin_name": "publisher"}, "content"
+        )
+    )
+    await confirmation_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert confirmation_cancelled.is_set()
+
+
 async def test_auto_post_plugins_share_trigger_time(
     make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
 ) -> None:
@@ -689,13 +961,15 @@ async def test_auto_post_plugins_share_trigger_time(
         "first",
         "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
         "class FirstPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n",
+        "    api_version = PLUGIN_API_VERSION\n\n"
+        "plugin = FirstPlugin\n",
     )
     make_plugin_dir(
         "second",
         "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
         "class SecondPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n",
+        "    api_version = PLUGIN_API_VERSION\n\n"
+        "plugin = SecondPlugin\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     timestamps = []
@@ -721,12 +995,9 @@ async def test_actor_lock_does_not_reenter_response_pipeline(
 ) -> None:
     plugins_dir = make_plugin_dir(
         "actor",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class ActorPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n"
-        "    async def on_message(self, event):\n"
-        "        async with self.context.bot.actor_lock(event.user.id, event.user.username):\n"
-        "            return self.handled('ok')\n",
+        body="async def on_message(self, event):\n"
+        "    async with self.context.bot.actor_lock(event.user.id, event.user.username):\n"
+        "        return self.handled('ok')\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
@@ -738,7 +1009,7 @@ async def test_actor_lock_does_not_reenter_response_pipeline(
         timeout=0.2,
     )
 
-    assert results == [{"handled": True, "response": "ok", "plugin_name": "Actor"}]
+    assert results == [{"handled": True, "response": "ok", "plugin_name": "actor"}]
 
 
 async def test_keyact_matches_body_when_mention_has_cw() -> None:
@@ -845,14 +1116,14 @@ async def test_topics_rss_is_recorded_only_after_publish() -> None:
     assert await plugin._get_next_rss_posts() == ["content"]
     plugin._set_recent_rss_keys.assert_not_awaited()
 
-    await plugin._on_auto_post_published("content")
+    await plugin.on_auto_post_published("content")
 
     plugin._set_recent_rss_keys.assert_awaited_once_with(["entry-key"])
 
     plugin._pending_rss["failed"] = [("failed-key", None)]
     plugin._set_recent_rss_keys = AsyncMock(return_value=False)
     with pytest.raises(RuntimeError, match="persist published RSS entry"):
-        await plugin._on_auto_post_published("failed")
+        await plugin.on_auto_post_published("failed")
 
 
 async def test_topics_rss_retains_2000_published_keys() -> None:
@@ -863,7 +1134,7 @@ async def test_topics_rss_retains_2000_published_keys() -> None:
     )
     plugin._set_recent_rss_keys = AsyncMock(return_value=True)
 
-    await plugin._on_auto_post_published("content")
+    await plugin.on_auto_post_published("content")
 
     saved_keys = plugin._set_recent_rss_keys.await_args_list[0].args[0]
     assert len(saved_keys) == 2000
@@ -901,7 +1172,7 @@ async def test_topics_rotate_advances_only_after_publish() -> None:
     assert await plugin._get_next_rss_posts_rotate(["feed"]) == ["content"]
     storage.set.assert_not_awaited()
 
-    await plugin._on_auto_post_published("content")
+    await plugin.on_auto_post_published("content")
 
     storage.set.assert_any_await("rss_recent_keys", '["entry-key"]')
     storage.set.assert_any_await("rss_last_feed_idx", "0")

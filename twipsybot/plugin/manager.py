@@ -1,11 +1,10 @@
 import asyncio
+import hashlib
 import importlib.util
 import inspect
-import re
 import sys
-from collections.abc import Coroutine
-from contextlib import suppress
 from copy import deepcopy
+from importlib.metadata import entry_points
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -28,8 +27,10 @@ from .services import (
 __all__ = ("PluginManager",)
 
 _PLUGIN_CONFIG_FILENAME = "config.yaml"
-_PLUGIN_HOOK_TIMEOUT_SECONDS = 60.0
+_PLUGIN_ENTRY_POINT_GROUP = "twipsybot.plugins"
+_PLUGIN_HOOK_TIMEOUT_SECONDS = 180.0
 _PLUGIN_LIFECYCLE_TIMEOUT_SECONDS = 30.0
+_PLUGIN_SHUTDOWN_GRACE_SECONDS = 3.0
 _EVENT_HOOKS = {
     "on_message",
     "on_mention",
@@ -37,10 +38,12 @@ _EVENT_HOOKS = {
     "on_timeline_note",
     "on_auto_post",
 }
+_CALLBACK_HOOKS = {"on_auto_post_published"}
+_PLUGIN_HOOKS = _EVENT_HOOKS | _CALLBACK_HOOKS
 _ASYNC_PLUGIN_METHODS = {
     "initialize",
     "on_startup",
-    *_EVENT_HOOKS,
+    *_PLUGIN_HOOKS,
     "on_shutdown",
     "cleanup",
 }
@@ -67,7 +70,7 @@ class PluginManager:
         self.bot = bot
         self._master_config: dict[str, Any] = {}
         self._accepting_hooks = False
-        self._active_hooks = 0
+        self._active_hook_tasks: dict[asyncio.Task[Any], int] = {}
         self._hooks_idle = asyncio.Event()
         self._hooks_idle.set()
 
@@ -83,35 +86,44 @@ class PluginManager:
     def _discover_plugin_dir(
         self, plugin_dir: Path, plugin_config: dict[str, Any]
     ) -> tuple[bool, bool]:
-        configured = self._is_plugin_configured(plugin_dir)
+        return self._discover_plugin(
+            plugin_dir.name,
+            plugin_config,
+            configured=self._is_plugin_configured(plugin_dir),
+        )
+
+    def _discover_plugin(
+        self, key: str, plugin_config: dict[str, Any], *, configured: bool
+    ) -> tuple[bool, bool]:
         try:
             enabled = PluginBase._parse_bool(plugin_config.get("enabled"), False)
         except ValueError as e:
-            logger.error(f"Invalid plugin config: plugin={plugin_dir.name}: {e}")
+            logger.error(f"Invalid plugin config: plugin={key}: {e}")
             enabled = False
-        key = plugin_dir.name
-        name = self._camelize(key)
         self.discovered_plugins[key] = {
-            "name": name,
+            "name": key,
             "enabled": enabled,
             "priority": plugin_config.get("priority", 0),
             "configured": configured,
         }
         if configured:
             status = "enabled" if enabled else "disabled"
-            logger.debug(f"Discovered plugin: {plugin_dir.name} (status: {status})")
+            logger.debug(f"Discovered plugin: {key} (status: {status})")
         return configured, enabled
 
     async def load_plugins(self) -> None:
-        if not self.plugins_dir.exists():
-            logger.info(f"Plugins directory not found: {self.plugins_dir}")
-            return
         self._master_config = self._load_master_config()
-        for plugin_dir in self._iter_plugin_dirs():
-            plugin_config = self._load_plugin_config(plugin_dir)
-            configured, enabled = self._discover_plugin_dir(plugin_dir, plugin_config)
-            if configured and enabled:
-                self._load_plugin(plugin_dir, plugin_config)
+        if self.plugins_dir.exists():
+            for plugin_dir in self._iter_plugin_dirs():
+                plugin_config = self._load_plugin_config(plugin_dir)
+                configured, enabled = self._discover_plugin_dir(
+                    plugin_dir, plugin_config
+                )
+                if configured and enabled:
+                    self._load_plugin(plugin_dir, plugin_config)
+        else:
+            logger.info(f"Plugins directory not found: {self.plugins_dir}")
+        self._load_entry_point_plugins()
         await self._initialize_plugins()
         enabled_count = sum(plugin._enabled for plugin in self.plugins.values())
         logger.info(
@@ -145,6 +157,11 @@ class PluginManager:
         master_entry = self._master_config.get(plugin_dir.name)
         if isinstance(master_entry, dict):
             return master_entry
+        if plugin_dir.name in self._master_config:
+            logger.error(
+                f"Invalid plugin config for {plugin_dir.name}: entry must be an object"
+            )
+            return {"enabled": False}
         config_file = plugin_dir / _PLUGIN_CONFIG_FILENAME
         if not config_file.exists():
             return {"enabled": False}
@@ -163,93 +180,99 @@ class PluginManager:
 
     def _load_plugin(self, plugin_dir: Path, plugin_config: dict[str, Any]) -> None:
         try:
-            plugin_file = plugin_dir / f"{plugin_dir.name}.py"
+            plugin_file = plugin_dir / "plugin.py"
             if not plugin_file.exists():
-                logger.warning(
-                    f"Missing plugin file in {plugin_dir.name}: {plugin_dir.name}.py"
-                )
+                logger.warning(f"Missing plugin file in {plugin_dir.name}: plugin.py")
                 return
             if not (module := self._load_plugin_module(plugin_dir, plugin_file)):
                 return
-            if not (plugin_class := self._find_plugin_class(module, plugin_dir.name)):
-                return
-            api_version = getattr(plugin_class, "api_version", None)
-            if type(api_version) is not int or api_version != PLUGIN_API_VERSION:
-                logger.error(
-                    f"Incompatible plugin API: plugin={plugin_dir.name} "
-                    f"requires={api_version} "
-                    f"supported={PLUGIN_API_VERSION}"
-                )
-                return
-            if invalid := self._find_sync_plugin_method(plugin_class):
-                logger.error(
-                    f"Invalid plugin method: plugin={plugin_dir.name} "
-                    f"method={invalid} must be async"
-                )
-                return
-            if invalid := self._find_invalid_plugin_signature(plugin_class):
-                logger.error(
-                    f"Invalid plugin method: plugin={plugin_dir.name} "
-                    f"method={invalid} has incompatible signature"
-                )
-                return
-            plugin_instance = self._create_plugin_instance(plugin_class, plugin_config)
-            self.plugins[plugin_dir.name] = plugin_instance
+            self._register_plugin(
+                plugin_dir.name, getattr(module, "plugin", None), plugin_config
+            )
         except Exception as e:
             logger.error(f"Failed to load plugin {plugin_dir.name}: {e}")
 
-    @staticmethod
-    def _camelize(name: str) -> str:
-        parts = [p for p in re.split(r"[^a-zA-Z0-9]+", name) if p]
-        if not parts:
-            return name.capitalize()
-        return "".join(part[:1].upper() + part[1:] for part in parts)
+    def _load_entry_point_plugins(self) -> None:
+        for entry_point in entry_points(group=_PLUGIN_ENTRY_POINT_GROUP):
+            name = entry_point.name
+            if name in self.discovered_plugins:
+                logger.warning(
+                    f"Ignoring entry point plugin shadowed by local plugin: {name}"
+                )
+                continue
+            plugin_config = self._master_config.get(name)
+            configured = name in self._master_config
+            if configured and not isinstance(plugin_config, dict):
+                logger.error(
+                    f"Invalid plugin config for {name}: entry must be an object"
+                )
+                config = {"enabled": False}
+            else:
+                config = plugin_config if isinstance(plugin_config, dict) else {}
+            _, enabled = self._discover_plugin(name, config, configured=configured)
+            if not configured or not enabled:
+                continue
+            try:
+                self._register_plugin(name, entry_point.load(), config)
+            except Exception as e:
+                logger.error(f"Failed to load plugin {name}: {e}")
+
+    def _register_plugin(
+        self,
+        plugin_name: str,
+        plugin_class: Any,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        if not (
+            isinstance(plugin_class, type)
+            and issubclass(plugin_class, PluginBase)
+            and plugin_class is not PluginBase
+        ):
+            logger.warning(
+                f"Invalid plugin export in {plugin_name}: expected PluginBase subclass"
+            )
+            return
+        api_version = getattr(plugin_class, "api_version", None)
+        if type(api_version) is not int or api_version != PLUGIN_API_VERSION:
+            logger.error(
+                f"Incompatible plugin API: plugin={plugin_name} "
+                f"requires={api_version} supported={PLUGIN_API_VERSION}"
+            )
+            return
+        if invalid := self._find_sync_plugin_method(plugin_class):
+            logger.error(
+                f"Invalid plugin method: plugin={plugin_name} "
+                f"method={invalid} must be async"
+            )
+            return
+        if invalid := self._find_invalid_plugin_signature(plugin_class):
+            logger.error(
+                f"Invalid plugin method: plugin={plugin_name} "
+                f"method={invalid} has incompatible signature"
+            )
+            return
+        plugin_instance = self._create_plugin_instance(
+            plugin_name, plugin_class, plugin_config
+        )
+        self.plugins[plugin_name] = plugin_instance
 
     @staticmethod
     def _load_plugin_module(plugin_dir: Path, plugin_file: Path):
-        project_root = str(plugin_dir.parent.parent.resolve())
-        if project_root not in sys.path:
-            sys.path.insert(0, project_root)
+        digest = hashlib.sha256(str(plugin_file.resolve()).encode()).hexdigest()[:12]
         spec = importlib.util.spec_from_file_location(
-            f"plugins.{plugin_dir.name}.plugin", plugin_file
+            f"_twipsybot_plugin_{plugin_dir.name}_{digest}", plugin_file
         )
         if spec is None or spec.loader is None:
             logger.warning(f"Failed to load plugin spec: {plugin_dir.name}")
             return None
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(spec.name, None)
+            raise
         return module
-
-    @staticmethod
-    def _find_plugin_class(module, plugin_name):
-        candidates = [
-            attr
-            for attr in (getattr(module, name) for name in dir(module))
-            if isinstance(attr, type)
-            and attr.__module__ == module.__name__
-            and issubclass(attr, PluginBase)
-            and attr is not PluginBase
-        ]
-        if not candidates:
-            logger.warning(f"No valid plugin class found in {plugin_name.capitalize()}")
-            return None
-        expected = f"{PluginManager._camelize(plugin_name)}Plugin"
-        for cls in candidates:
-            if cls.__name__ == expected:
-                return cls
-        expected_lower = expected.lower()
-        case_insensitive = [
-            cls for cls in candidates if cls.__name__.lower() == expected_lower
-        ]
-        if len(case_insensitive) == 1:
-            return case_insensitive[0]
-        names = sorted(cls.__name__ for cls in candidates)
-        logger.warning(
-            f"No matching plugin class found in {plugin_name.capitalize()}: "
-            f"{names}; expected {expected}"
-        )
-        return None
 
     @staticmethod
     def _find_sync_plugin_method(plugin_class: type[PluginBase]) -> str | None:
@@ -267,21 +290,18 @@ class PluginManager:
             method = getattr(plugin_class, method_name, None)
             if method is None:
                 continue
-            args = (instance, event) if method_name in _EVENT_HOOKS else (instance,)
+            args = (instance, event) if method_name in _PLUGIN_HOOKS else (instance,)
             try:
                 inspect.signature(method).bind(*args)
             except (TypeError, ValueError):
                 return method_name
         return None
 
-    def _create_plugin_instance(self, plugin_class, plugin_config):
-        name = plugin_class.__name__
-        if name.endswith("Plugin"):
-            name = name[: -len("Plugin")]
+    def _create_plugin_instance(self, plugin_name, plugin_class, plugin_config):
         context = PluginContext(
-            name=name,
+            name=plugin_name,
             config=MappingProxyType(deepcopy(plugin_config)),
-            storage=NamespacedPluginStorage(self.db, name),
+            storage=NamespacedPluginStorage(self.db, plugin_name),
             misskey=MisskeyServiceAdapter(self.misskey),
             openai=OpenAIServiceAdapter(self.openai, self.config),
             bot=BotControlAdapter(self.bot),
@@ -363,35 +383,40 @@ class PluginManager:
             if plugin._initialized:
                 await self._cleanup_plugin(plugin)
 
-    def _begin_hook_dispatch(self) -> bool:
+    def _begin_hook_dispatch(self) -> asyncio.Task[Any] | None:
         if not self._accepting_hooks:
-            return False
-        self._active_hooks += 1
+            return None
+        task = asyncio.current_task()
+        if task is None:
+            return None
+        self._active_hook_tasks[task] = self._active_hook_tasks.get(task, 0) + 1
         self._hooks_idle.clear()
-        return True
+        return task
 
-    def _end_hook_dispatch(self) -> None:
-        self._active_hooks -= 1
-        if self._active_hooks == 0:
+    def _end_hook_dispatch(self, task: asyncio.Task[Any]) -> None:
+        depth = self._active_hook_tasks[task] - 1
+        if depth:
+            self._active_hook_tasks[task] = depth
+        else:
+            del self._active_hook_tasks[task]
+        if not self._active_hook_tasks:
             self._hooks_idle.set()
 
     async def _pause_hook_dispatch(self) -> None:
         self._accepting_hooks = False
-        await self._hooks_idle.wait()
-
-    @staticmethod
-    async def _complete_before_cancellation(
-        awaitable: Coroutine[Any, Any, Any],
-    ) -> Any:
-        task = asyncio.create_task(awaitable)
         try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            while not task.done():
-                with suppress(asyncio.CancelledError):
-                    await asyncio.shield(task)
-            task.result()
-            raise
+            async with asyncio.timeout(_PLUGIN_SHUTDOWN_GRACE_SECONDS):
+                await self._hooks_idle.wait()
+            return
+        except TimeoutError:
+            tasks = tuple(self._active_hook_tasks)
+            logger.warning(
+                f"Cancelling {len(tasks)} active plugin hook task(s) after "
+                f"{_PLUGIN_SHUTDOWN_GRACE_SECONDS:g}s shutdown grace period"
+            )
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def _iter_enabled_plugins(self):
         yield from sorted(
@@ -429,10 +454,7 @@ class PluginManager:
                 f"Ignoring invalid plugin result: plugin={plugin.context.name} hook={hook_name} type={type(result).__name__}"
             )
             return None
-        output = {**result, "plugin_name": plugin.context.name}
-        if hook_name == "on_auto_post" and hasattr(plugin, "_on_auto_post_published"):
-            output["_publisher"] = plugin
-        return output
+        return {**result, "plugin_name": plugin.context.name}
 
     @staticmethod
     def _validate_hook_result(hook_name: str, result: Any) -> bool:
@@ -470,12 +492,12 @@ class PluginManager:
         return False
 
     async def call_plugin_hook(self, hook_name: str, *args, **kwargs) -> list[Any]:
-        if not self._begin_hook_dispatch():
+        if (task := self._begin_hook_dispatch()) is None:
             return []
         try:
             return await self._dispatch_plugin_hook(hook_name, args, kwargs)
         finally:
-            self._end_hook_dispatch()
+            self._end_hook_dispatch(task)
 
     async def _dispatch_plugin_hook(
         self, hook_name: str, args: tuple[Any, ...], kwargs: dict[str, Any]
@@ -525,19 +547,15 @@ class PluginManager:
     async def confirm_auto_post_published(
         self, result: dict[str, Any], content: str
     ) -> None:
-        plugin = result.get("_publisher")
-        if plugin is None:
+        plugin_name = result.get("plugin_name")
+        if not isinstance(plugin_name, str) or not (
+            plugin := self.plugins.get(plugin_name)
+        ):
             return
-        callback = getattr(plugin, "_on_auto_post_published", None)
-        if callback is None:
-            return
-
-        async def confirm() -> None:
-            async with asyncio.timeout(_PLUGIN_HOOK_TIMEOUT_SECONDS):
-                await callback(content)
 
         try:
-            await self._complete_before_cancellation(confirm())
+            async with asyncio.timeout(_PLUGIN_HOOK_TIMEOUT_SECONDS):
+                await plugin.on_auto_post_published(content)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -547,15 +565,6 @@ class PluginManager:
 
     @staticmethod
     async def _cleanup_plugin(plugin: PluginBase) -> None:
-        cleanup_task = asyncio.create_task(PluginManager._run_cleanup(plugin))
-        try:
-            await asyncio.shield(cleanup_task)
-        except asyncio.CancelledError:
-            await cleanup_task
-            raise
-
-    @staticmethod
-    async def _run_cleanup(plugin: PluginBase) -> None:
         try:
             async with asyncio.timeout(_PLUGIN_LIFECYCLE_TIMEOUT_SECONDS):
                 await plugin.cleanup()

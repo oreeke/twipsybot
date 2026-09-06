@@ -5,7 +5,6 @@ from loguru import logger
 from pydantic import ByteSize, Field, field_validator
 
 from twipsybot.plugin import (
-    PLUGIN_API_VERSION,
     FileRef,
     HandledResult,
     MentionEvent,
@@ -30,7 +29,7 @@ class _Config(PluginConfig):
 
 
 class VisionPlugin(PluginBase):
-    api_version = PLUGIN_API_VERSION
+    api_version = 2
     config_class = _Config
     settings: _Config
     description = "理解 @提及或聊天中的图片并生成回复"
@@ -176,3 +175,6 @@ class VisionPlugin(PluginBase):
         )
         logger.debug(f"Vision {call_type} reply generated; length: {len(reply)}")
         return reply
+
+
+plugin = VisionPlugin

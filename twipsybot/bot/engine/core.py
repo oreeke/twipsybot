@@ -32,6 +32,8 @@ from .runtime import BotRuntime
 
 __all__ = ("MisskeyBot",)
 
+_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+
 
 class MisskeyBot:
     def __init__(self, config: Config):
@@ -233,28 +235,37 @@ class MisskeyBot:
         logger.info("Stopping services...")
         self.runtime.running = False
         try:
-            await self._run_stop_steps(
-                (
-                    ("shutting down plugins", self.plugin_manager.shutdown_plugins),
-                    ("cleaning up plugins", self.plugin_manager.cleanup_plugins),
-                )
-            )
-            try:
-                if self.scheduler.running:
-                    self.scheduler.shutdown(wait=False)
-            except Exception as e:
-                logger.exception(f"Error stopping scheduler: {e}")
-            await self._run_stop_steps(
-                (
-                    ("cleaning up tasks", self.runtime.cleanup_tasks),
-                    ("closing streaming client", self.streaming.close),
-                    ("closing Misskey client", self.misskey.close),
-                    ("closing OpenAI client", self.openai.close),
-                    ("closing database", self.db.close),
-                )
+            async with asyncio.timeout(_SHUTDOWN_TIMEOUT_SECONDS):
+                await self._stop_services()
+        except TimeoutError:
+            logger.warning(
+                f"Shutdown timed out after {_SHUTDOWN_TIMEOUT_SECONDS:g}s; "
+                "remaining cleanup cancelled"
             )
         finally:
             logger.info("Services stopped")
+
+    async def _stop_services(self) -> None:
+        await self._run_stop_steps(
+            (
+                ("shutting down plugins", self.plugin_manager.shutdown_plugins),
+                ("cleaning up plugins", self.plugin_manager.cleanup_plugins),
+            )
+        )
+        try:
+            if self.scheduler.running:
+                self.scheduler.shutdown(wait=False)
+        except Exception as e:
+            logger.exception(f"Error stopping scheduler: {e}")
+        await self._run_stop_steps(
+            (
+                ("cleaning up tasks", self.runtime.cleanup_tasks),
+                ("closing streaming client", self.streaming.close),
+                ("closing Misskey client", self.misskey.close),
+                ("closing OpenAI client", self.openai.close),
+                ("closing database", self.db.close),
+            )
+        )
 
     def is_bot_mentioned(self, text: str) -> bool:
         if not text or not self.bot_username:

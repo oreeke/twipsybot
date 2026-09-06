@@ -4,13 +4,11 @@ import asyncio
 import base64
 import signal
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
-import yaml
 from aiohttp import web
 from aiohttp.multipart import BodyPartReader
 from aiohttp.test_utils import TestServer
@@ -18,7 +16,7 @@ from conftest import MakeBot, WriteConfig
 from httpx2 import Request, Response
 from openai import APIStatusError
 
-from twipsybot import Config, MisskeyBot
+from twipsybot import MisskeyBot
 from twipsybot.admin.service import AdminCommandService
 from twipsybot.app import cli as app_cli
 from twipsybot.app import main as app_main
@@ -308,21 +306,9 @@ def test_bot_mention_matches_complete_local_account(text: str, expected: bool) -
     assert bot.is_bot_mentioned(text) is expected
 
 
-def test_invalid_config_fails_fast(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        yaml.safe_dump(
-            {
-                "misskey": {
-                    "instance_url": "http://example.invalid",
-                    "access_token": "token",
-                },
-                "openai": {"api_key": "key", "temperature": 5.0},
-            }
-        ),
-        encoding="utf-8",
-    )
-    config = Config(config_path=str(config_path))
+def test_invalid_config_fails_fast(write_config: WriteConfig) -> None:
+    config = write_config(load=False, openai={"temperature": 5.0})
+
     with pytest.raises(ConfigurationError):
         config.load()
 
@@ -463,19 +449,9 @@ async def test_image_service_rejects_invalid_or_oversized_data(data: bytes) -> N
     ],
 )
 def test_unknown_config_fields_fail_fast(
-    tmp_path: Path, unknown_config: dict[str, Any]
+    write_config: WriteConfig, unknown_config: dict[str, Any]
 ) -> None:
-    data = {
-        "misskey": {
-            "instance_url": "http://example.invalid",
-            "access_token": "token",
-        },
-        "openai": {"api_key": "key"},
-        **unknown_config,
-    }
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(yaml.safe_dump(data), encoding="utf-8")
-    config = Config(config_path=str(config_path))
+    config = write_config(load=False, **unknown_config)
 
     with pytest.raises(ConfigurationError, match="Extra inputs are not permitted"):
         config.load()
@@ -518,6 +494,44 @@ async def test_startup_error_hold_stops_on_termination_signal(
     await app_main._hold_until_terminated()
 
 
+async def test_streaming_startup_failure_closes_initialized_services(
+    monkeypatch: pytest.MonkeyPatch, write_config: WriteConfig
+) -> None:
+    config = write_config()
+    bot = MisskeyBot(config)
+    monkeypatch.setattr(bot, "_initialize_services", AsyncMock())
+    monkeypatch.setattr(bot, "_setup_scheduler", Mock())
+    monkeypatch.setattr(
+        bot.connect,
+        "setup_streaming",
+        AsyncMock(side_effect=RuntimeError("streaming failed")),
+    )
+    monkeypatch.setattr(bot.plugin_manager, "shutdown_plugins", AsyncMock())
+    monkeypatch.setattr(bot.plugin_manager, "cleanup_plugins", AsyncMock())
+    monkeypatch.setattr(bot.runtime, "cleanup_tasks", AsyncMock())
+    monkeypatch.setattr(bot.streaming, "close", AsyncMock())
+    monkeypatch.setattr(bot.misskey, "close", AsyncMock())
+    monkeypatch.setattr(bot.openai, "close", AsyncMock())
+    monkeypatch.setattr(bot.db, "close", AsyncMock())
+    bot.scheduler = SimpleNamespace(running=True, shutdown=Mock())
+    monkeypatch.setattr(app_main, "Config", lambda: config)
+    monkeypatch.setattr(app_main, "MisskeyBot", lambda _: bot)
+    runner = app_main.BotRunner()
+
+    with pytest.raises(RuntimeError, match="streaming failed"):
+        await runner.run()
+
+    assert bot.runtime.running is False
+    bot.plugin_manager.shutdown_plugins.assert_awaited_once()
+    bot.plugin_manager.cleanup_plugins.assert_awaited_once()
+    bot.scheduler.shutdown.assert_called_once_with(wait=False)
+    bot.runtime.cleanup_tasks.assert_awaited_once()
+    bot.streaming.close.assert_awaited_once()
+    bot.misskey.close.assert_awaited_once()
+    bot.openai.close.assert_awaited_once()
+    bot.db.close.assert_awaited_once()
+
+
 def test_environment_overrides_yaml_config(
     monkeypatch: pytest.MonkeyPatch,
     write_config: WriteConfig,
@@ -548,23 +562,9 @@ def test_timeline_channels_are_independently_enabled(write_config: WriteConfig) 
 
 
 def test_legacy_auto_post_interval_field_is_rejected(
-    tmp_path: Path,
+    write_config: WriteConfig,
 ) -> None:
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        yaml.safe_dump(
-            {
-                "misskey": {
-                    "instance_url": "http://example.invalid",
-                    "access_token": "token",
-                },
-                "openai": {"api_key": "key"},
-                "bot": {"auto_post": {"interval_minutes": 180}},
-            }
-        ),
-        encoding="utf-8",
-    )
-    config = Config(config_path=str(config_path))
+    config = write_config(load=False, bot={"auto_post": {"interval_minutes": 180}})
 
     with pytest.raises(ConfigurationError, match="interval_minutes"):
         config.load()
@@ -812,6 +812,37 @@ async def test_stop_continues_after_cleanup_failure() -> None:
     bot.db.close.assert_awaited_once()
 
 
+async def test_stop_cancels_remaining_cleanup_after_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import twipsybot.bot.engine.core as core_module
+
+    monkeypatch.setattr(core_module, "_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
+    close_cancelled = asyncio.Event()
+
+    async def blocking_close() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            close_cancelled.set()
+            raise
+
+    bot = object.__new__(MisskeyBot)
+    bot.runtime = SimpleNamespace(running=True, cleanup_tasks=AsyncMock())
+    bot.plugin_manager = SimpleNamespace(
+        shutdown_plugins=AsyncMock(), cleanup_plugins=AsyncMock()
+    )
+    bot.scheduler = SimpleNamespace(running=False)
+    bot.streaming = SimpleNamespace(close=AsyncMock())
+    bot.misskey = SimpleNamespace(close=AsyncMock())
+    bot.openai = SimpleNamespace(close=AsyncMock())
+    bot.db = SimpleNamespace(close=blocking_close)
+
+    await bot.stop()
+
+    assert close_cancelled.is_set()
+
+
 async def test_auto_post_confirms_only_successful_publish(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -854,6 +885,46 @@ async def test_auto_post_keeps_memory_count_when_persistence_fails() -> None:
         await service.post_count()
 
     assert service.posts_today == 1
+
+
+async def test_auto_post_suppresses_cancellation_during_shutdown() -> None:
+    bot = SimpleNamespace(
+        config=SimpleNamespace(
+            get=lambda key, default=None: {
+                ConfigKeys.BOT_AUTO_POST_ENABLED: True,
+                ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY: 1,
+                ConfigKeys.BOT_AUTO_POST_LOCAL_ONLY: False,
+            }.get(key, default)
+        ),
+        runtime=SimpleNamespace(running=True),
+    )
+
+    async def cancel_during_shutdown(*args: Any) -> None:
+        bot.runtime.running = False
+        raise asyncio.CancelledError
+
+    bot.plugin_manager = SimpleNamespace(call_plugin_hook=cancel_during_shutdown)
+
+    await AutoPostService(cast(Any, bot)).run()
+
+
+async def test_auto_post_propagates_cancellation_while_running() -> None:
+    plugin_hook = AsyncMock(side_effect=asyncio.CancelledError)
+    bot = SimpleNamespace(
+        config=SimpleNamespace(
+            get=lambda key, default=None: {
+                ConfigKeys.BOT_AUTO_POST_ENABLED: True,
+                ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY: 1,
+                ConfigKeys.BOT_AUTO_POST_LOCAL_ONLY: False,
+            }.get(key, default)
+        ),
+        runtime=SimpleNamespace(running=True),
+        plugin_manager=SimpleNamespace(call_plugin_hook=plugin_hook),
+    )
+    service = AutoPostService(cast(Any, bot))
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.run()
 
 
 @pytest.mark.parametrize(

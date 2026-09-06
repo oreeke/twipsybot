@@ -13,7 +13,6 @@ from loguru import logger
 from pydantic import Field, field_validator
 
 from twipsybot.plugin import (
-    PLUGIN_API_VERSION,
     AutoPostEvent,
     AutoPostResult,
     PluginBase,
@@ -46,7 +45,7 @@ class _Config(PluginConfig):
 
 
 class TopicsPlugin(PluginBase):
-    api_version = PLUGIN_API_VERSION
+    api_version = 2
     config_class = _Config
     settings: _Config
     description = "为自动发帖提供内容源（文本主题 / RSS）"
@@ -263,7 +262,7 @@ class TopicsPlugin(PluginBase):
             contents.append(f"📡 {primary}\n\n📎 {link}")
         return contents
 
-    async def _on_auto_post_published(self, content: str) -> None:
+    async def on_auto_post_published(self, content: str) -> None:
         pending = self._pending_rss.get(content)
         if not pending:
             return
@@ -470,3 +469,6 @@ class TopicsPlugin(PluginBase):
         except Exception as e:
             logger.warning(f"Failed to get next topic: {e}")
             return fallback
+
+
+plugin = TopicsPlugin

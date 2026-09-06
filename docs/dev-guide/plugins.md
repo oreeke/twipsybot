@@ -5,16 +5,15 @@ description: 使用 TwipsyBot 插件 API 创建事件 Hook、配置、存储和�
 
 # 插件开发
 
-插件位于 `plugins/<name>/`。目录、模块和配置键使用相同的小写名称：
+本地插件位于 `plugins/<name>/`，通过固定模块和导出接入：
 
 ```text
 plugins/example/
-├── __init__.py
-├── example.py
+├── plugin.py
 └── config.yaml
 ```
 
-插件类名应为目录名转换成大驼峰后加 `Plugin`，例如 `example_bot/example_bot.py` 对应 `ExampleBotPlugin`。`api_version` 不兼容时，插件不会加载。
+`plugin.py` 必须通过模块级 `plugin` 导出插件类。入口按单文件加载，不支持相对导入；多模块插件应使用 Entry Points。
 
 集中配置 `plugins/config.yaml` 中存在同名条目时，会完整取代插件目录的 `config.yaml`，两处不会合并。
 
@@ -22,7 +21,6 @@ plugins/example/
 
 ```python
 from twipsybot.plugin import (
-    PLUGIN_API_VERSION,
     MentionEvent,
     PluginBase,
     PluginConfig,
@@ -34,7 +32,7 @@ class ExampleConfig(PluginConfig):
 
 
 class ExamplePlugin(PluginBase):
-    api_version = PLUGIN_API_VERSION
+    api_version = 2
     config_class = ExampleConfig
     settings: ExampleConfig
 
@@ -42,6 +40,9 @@ class ExamplePlugin(PluginBase):
         if event.text.strip() != "ping":
             return None
         return self.handled(self.settings.response)
+
+
+plugin = ExamplePlugin
 ```
 
 ```yaml
@@ -59,7 +60,39 @@ example:
     response: "pong"
 ```
 
-插件必须声明当前 `PLUGIN_API_VERSION`。所有被覆盖的生命周期和 Hook 方法必须是异步方法。`PluginConfig` 使用 Pydantic 验证，`enabled`、`priority` 等框架字段不会进入配置模型。验证后的配置通过 `self.settings` 读取，配置实例只读。
+插件必须用字面量声明其支持的 API 版本。不要将 `api_version` 赋值为宿主当前版本常量，否则宿主升级后无法识别旧插件不兼容。所有被覆盖的生命周期和 Hook 方法必须是异步方法。`PluginConfig` 使用 Pydantic 验证，`enabled`、`priority` 等框架字段不会进入配置模型。验证后的配置通过 `self.settings` 读取，配置实例只读。
+
+## 第三方包
+
+需要独立发布或声明依赖的插件可使用 Python Entry Points。在第三方包的 `pyproject.toml` 中注册：
+
+```toml
+[project.entry-points."twipsybot.plugins"]
+example = "twipsybot_example:plugin"
+```
+
+对应模块仍导出插件类：
+
+```python
+from twipsybot.plugin import PluginBase
+
+
+class ExamplePlugin(PluginBase):
+    api_version = 2
+
+
+plugin = ExamplePlugin
+```
+
+入口名称是插件 ID，也是 `plugins/config.yaml` 中的配置键。安装第三方包不会自动启用代码；必须集中配置后才会加载：
+
+```yaml
+example:
+    enabled: true
+    priority: 100
+```
+
+第三方插件的依赖和版本由自身管理。
 
 复杂配置可以使用 Pydantic 字段和模型验证器集中约束：
 
@@ -94,6 +127,9 @@ class ExampleConfig(PluginConfig):
 | `on_notification` | `NotificationEvent` | `None` |
 | `on_timeline_note` | `TimelineNoteEvent` | `None` |
 | `on_auto_post` | `AutoPostEvent` | `AutoPostResult \| PromptModificationResult \| None` |
+| `on_auto_post_published` | `str` | `None` |
+
+`on_auto_post_published(content)` 仅在当前插件通过 `AutoPostResult` 返回的内容成功发布后调用，可用于提交去重记录或轮换位置。发布失败时不会调用。
 
 事件字段如下：
 
@@ -131,9 +167,9 @@ return {"prompt": "围绕开源维护写一篇短文。"}
 
 `self.context` 提供：
 
-- `name`：插件名。
+- `name`：稳定插件 ID；本地插件为目录名，第三方插件为 Entry Point 名称。
 - `config`：原始插件配置的只读映射。
-- `storage`：当前插件命名空间内的 `get`、`set`、`delete`。
+- `storage`：以插件 ID 隔离的命名空间，提供 `get`、`set`、`delete`。
 - `misskey`：发帖、转帖、反应、聊天、天线和 Drive 服务。
 - `openai`：文本、聊天和 Moderations API。
 - `bot`：机器人账号信息、用户锁和天线解析。
@@ -193,7 +229,7 @@ async with self.context.bot.actor_lock(event.user.id, event.user.handle):
 
 ## 失败处理
 
-Hook 异常或超时只隔离本次调用，不会终止其他插件。插件仍应捕获可预期的网络或解析错误并记录清楚。不要吞掉 `asyncio.CancelledError`。长时间 I/O 应设置自身超时，并确保整个 Hook 能在 60 秒内返回。
+Hook 异常或超时只隔离本次调用，不会终止其他插件。Hook 超时为 180 秒；关闭时最多等待 3 秒，随后取消。插件仍应捕获可预期的网络或解析错误，不要吞掉 `asyncio.CancelledError`。
 
 生命周期方法超时 30 秒。初始化或启动失败时，插件会执行 `cleanup` 并被禁用；Bot 停止时会先执行 `on_shutdown`，再执行 `cleanup`。
 
@@ -205,4 +241,4 @@ Hook 异常或超时只隔离本次调用，不会终止其他插件。插件仍
 
 内部 API 包括其他 `twipsybot.*` 模块、`PluginManager`、底层对象、未文档化的私有属性和事件 `raw`。
 
-插件 API v1 只进行向后兼容的扩展。删除、重命名公共 API 成员或改变其语义属于破坏性变更，需要提升 API 主版本号。
+插件 API v2 只进行向后兼容的扩展。删除、重命名公共 API 成员或改变其语义属于破坏性变更，需要提升 API 主版本号。

@@ -1,6 +1,6 @@
 ## 插件开发
 
-Plugin API v1。只从 `twipsybot.plugin` 导入公共接口。
+Plugin API v2。只从 `twipsybot.plugin` 导入公共接口。
 
 完整开发流程另见[开发指南](../docs/dev-guide/plugins.md)。
 
@@ -8,20 +8,22 @@ Plugin API v1。只从 `twipsybot.plugin` 导入公共接口。
 
 ```text
 plugins/echo/
-├── __init__.py
 ├── config.yaml
-└── echo.py
+└── plugin.py
 ```
 
 ```python
-from twipsybot.plugin import PLUGIN_API_VERSION, MessageEvent, PluginBase
+from twipsybot.plugin import MessageEvent, PluginBase
 
 
 class EchoPlugin(PluginBase):
-    api_version = PLUGIN_API_VERSION
+    api_version = 2
 
     async def on_message(self, event: MessageEvent):
         return self.handled(f"echo: {event.text}")
+
+
+plugin = EchoPlugin
 ```
 
 ```yaml
@@ -29,7 +31,7 @@ enabled: true
 priority: 100
 ```
 
-目录名和文件名必须相同。插件类名应为目录名转换成大驼峰后加 `Plugin`，例如 `echo_bot/echo_bot.py` 对应 `EchoBotPlugin`。`api_version` 不兼容时，插件不会加载。
+本地插件使用 `plugin.py`，并通过模块级 `plugin` 导出插件类。入口按单文件加载，不支持相对导入；多模块插件应使用 Entry Points。
 
 ### 类型化配置
 
@@ -38,7 +40,7 @@ priority: 100
 ```python
 from pydantic import Field
 
-from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase, PluginConfig
+from twipsybot.plugin import PluginBase, PluginConfig
 
 
 class EchoConfig(PluginConfig):
@@ -47,10 +49,29 @@ class EchoConfig(PluginConfig):
 
 
 class EchoPlugin(PluginBase):
-    api_version = PLUGIN_API_VERSION
+    api_version = 2
     config_class = EchoConfig
     settings: EchoConfig
 ```
+
+### 第三方包
+
+第三方插件可通过 Python Entry Points 分发，无需复制到 `plugins/`：
+
+```toml
+[project.entry-points."twipsybot.plugins"]
+echo = "twipsybot_echo:plugin"
+```
+
+入口名称是集中配置中的插件键，入口值必须指向 `PluginBase` 子类。安装后仍需在 `plugins/config.yaml` 中显式启用：
+
+```yaml
+echo:
+    enabled: true
+    priority: 100
+```
+
+第三方包自行声明依赖和版本。
 
 验证后的配置通过 `self.settings` 读取，配置实例只读。简单插件无需定义配置类；复杂格式可使用 Pydantic 的字段或模型验证器集中处理。
 
@@ -60,7 +81,7 @@ class EchoPlugin(PluginBase):
 
 | 字段 | 内容 |
 | --- | --- |
-| `name` | 插件名 |
+| `name` | 稳定插件 ID（本地目录名或 Entry Point 名称） |
 | `config` | 原始插件配置的只读映射 |
 | `storage` | 插件私有存储 |
 | `misskey` | Misskey 服务 |
@@ -77,7 +98,7 @@ await self.context.storage.set("key", "value")
 deleted = await self.context.storage.delete("key")
 ```
 
-存储按插件名隔离，键和值均为字符串。`delete(None)` 会清空当前插件的存储并返回删除数量。
+存储按插件 ID 隔离，键和值均为字符串。`delete(None)` 会清空当前插件的存储并返回删除数量。
 
 #### Misskey 与 Drive
 
@@ -140,8 +161,11 @@ deleted = await self.context.storage.delete("key")
 | `on_notification` | `NotificationEvent` | `None` |
 | `on_timeline_note` | `TimelineNoteEvent` | `None` |
 | `on_auto_post` | `AutoPostEvent` | `AutoPostResult \| PromptModificationResult \| None` |
+| `on_auto_post_published` | `str` | `None` |
 
 插件按 `priority` 从高到低调用。`on_message` 或 `on_mention` 返回 `HandledResult` 后，后续插件和默认 AI 不再执行；返回 `None` 则继续。通知和时间线 Hook 仅用于观察，所有插件都会收到。事件数据类不可变，`raw` 的隔离副本仅用于读取公共事件尚未提供的字段。
+
+`on_auto_post_published(content)` 仅在当前插件通过 `AutoPostResult` 返回的内容成功发布后调用，可用于提交去重记录或轮换位置。发布失败时不会调用。
 
 ```python
 return self.handled("已处理")
@@ -163,7 +187,7 @@ return {"prompt": "以天气为主题，"}
 __init__ -> initialize -> on_startup -> hooks -> on_shutdown -> cleanup
 ```
 
-生命周期方法和 Hook 均可不覆盖；覆盖时必须使用 `async def`。生命周期方法不得要求额外参数，Hook 必须能接收事件参数。`initialize` 只有返回 `True` 才算成功。生命周期超时 30 秒，Hook 超时 60 秒。
+生命周期方法和 Hook 均可不覆盖；覆盖时必须使用 `async def`。生命周期方法不得要求额外参数，事件 Hook 必须能接收事件参数，发布成功回调必须能接收内容字符串。`initialize` 只有返回 `True` 才算成功。生命周期超时 30 秒，Hook 超时 180 秒。
 
 - 初始化或启动失败：调用 `cleanup` 并禁用。
 - Bot 停止：先调用 `on_shutdown`，再调用 `cleanup`。
@@ -171,7 +195,7 @@ __init__ -> initialize -> on_startup -> hooks -> on_shutdown -> cleanup
 
 通过 `_register_resource(resource)` 注册带 `close()` 的资源，基类会在 `cleanup` 时关闭。插件自行创建的任务应在 `on_shutdown()` 中停止，并在 `cleanup()` 中完成最终释放。不要吞掉 `asyncio.CancelledError`，长时间 I/O 应设置自身超时。
 
-`context.config` 是原始配置的只读映射。集中配置 `plugins/config.yaml` 中存在同名条目时，会完整取代插件目录的 `config.yaml`，两处不会合并。修改配置后需重启 Bot。关闭时会等待正在执行的 Hook 完成。插件类可设置 `description` 供插件信息展示。
+`context.config` 是原始配置的只读映射。集中配置 `plugins/config.yaml` 中存在同名条目时，会完整取代插件目录的 `config.yaml`，两处不会合并。修改配置后需重启 Bot。关闭时最多等待 Hook 3 秒，随后取消。插件类可设置 `description` 供插件信息展示。
 
 ### API 边界
 
@@ -179,4 +203,4 @@ __init__ -> initialize -> on_startup -> hooks -> on_shutdown -> cleanup
 
 内部 API 包括其他 `twipsybot.*` 模块、`PluginManager`、底层对象、未文档化的私有属性和事件 `raw`。
 
-插件 API v1 只进行向后兼容的扩展。删除、重命名公共 API 成员或改变其语义属于破坏性变更，需要提升 API 主版本号。
+插件 API v2 只进行向后兼容的扩展。删除、重命名公共 API 成员或改变其语义属于破坏性变更，需要提升 API 主版本号。

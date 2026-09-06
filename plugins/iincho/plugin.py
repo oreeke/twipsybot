@@ -12,7 +12,6 @@ from loguru import logger
 from pydantic import Field, field_validator, model_validator
 
 from twipsybot.plugin import (
-    PLUGIN_API_VERSION,
     PluginBase,
     PluginConfig,
     TimelineNoteEvent,
@@ -90,7 +89,7 @@ class _Config(PluginConfig):
 
 
 class IinchoPlugin(PluginBase):
-    api_version = PLUGIN_API_VERSION
+    api_version = 2
     config_class = _Config
     settings: _Config
     description = "定时汇总本地时间线趋势并审查疑似违规内容"
@@ -367,3 +366,6 @@ class IinchoPlugin(PluginBase):
         text = _URL_PATTERN.sub("[链接]", text)
         text = _HANDLE_PATTERN.sub("[账号]", text)
         return text
+
+
+plugin = IinchoPlugin

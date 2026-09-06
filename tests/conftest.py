@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 from collections.abc import AsyncIterator
 from pathlib import Path
+from textwrap import indent
 from typing import Any, Protocol
 
 import pytest
@@ -26,7 +27,7 @@ DEFAULT_AI_REPLY = "这是 AI 生成的回复"
 
 
 class WriteConfig(Protocol):
-    def __call__(self, **overrides: Any) -> Config: ...
+    def __call__(self, *, load: bool = True, **overrides: Any) -> Config: ...
 
 
 class MakeBot(Protocol):
@@ -37,7 +38,12 @@ class MakeBot(Protocol):
 
 class MakePluginDir(Protocol):
     def __call__(
-        self, name: str, source: str, *, config: str = "enabled: true\n"
+        self,
+        name: str,
+        source: str | None = None,
+        *,
+        body: str = "",
+        config: str = "enabled: true\n",
     ) -> Path: ...
 
 
@@ -172,7 +178,7 @@ def write_config(
             else:
                 target[key] = value
 
-    def _write(**overrides: Any) -> Config:
+    def _write(*, load: bool = True, **overrides: Any) -> Config:
         data: dict[str, Any] = {
             "misskey": {
                 "instance_url": misskey_server.url,
@@ -198,7 +204,8 @@ def write_config(
             yaml.safe_dump(data, allow_unicode=True), encoding="utf-8"
         )
         config = Config(config_path=str(config_path))
-        config.load()
+        if load:
+            config.load()
         return config
 
     return _write
@@ -208,11 +215,27 @@ def write_config(
 def make_plugin_dir(tmp_path: Path) -> MakePluginDir:
     plugins_dir = tmp_path / "plugins"
 
-    def _make(name: str, source: str, *, config: str = "enabled: true\n") -> Path:
+    def _make(
+        name: str,
+        source: str | None = None,
+        *,
+        body: str = "",
+        config: str = "enabled: true\n",
+    ) -> Path:
         plugin_dir = plugins_dir / name
         plugin_dir.mkdir(parents=True, exist_ok=True)
         (plugin_dir / "config.yaml").write_text(config, encoding="utf-8")
-        (plugin_dir / f"{name}.py").write_text(source, encoding="utf-8")
+        if source is None:
+            source = (
+                "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
+                "class Plugin(PluginBase):\n"
+                "    api_version = PLUGIN_API_VERSION\n"
+                f"{indent(body, '    ')}\n"
+                "plugin = Plugin\n"
+            )
+        if "\nplugin = " not in source:
+            raise ValueError("test plugin source must explicitly export plugin")
+        (plugin_dir / "plugin.py").write_text(source, encoding="utf-8")
         return plugins_dir
 
     return _make
@@ -229,7 +252,8 @@ def echo_plugin_dir(make_plugin_dir: MakePluginDir) -> Path:
         "        assert event.id == 'msg-1'\n"
         "        assert event.text == '你好，机器人'\n"
         "        assert event.user.username == 'bob'\n"
-        "        return self.handled('echo: plugin took over')\n",
+        "        return self.handled('echo: plugin took over')\n\n"
+        "plugin = EchoPlugin\n",
     )
 
 

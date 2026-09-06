@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from conftest import FakeMisskeyServer, MakeBot, MakePluginDir, WriteConfig
@@ -1455,6 +1455,17 @@ def test_iincho_uses_defaults_for_one_hundred_notes() -> None:
     assert plugin.settings.sample_size == 100
     assert plugin.settings.max_input_chars == 24000
     assert plugin.settings.max_tokens == 2000
+
+
+async def test_iincho_logs_readable_interval_on_initialize() -> None:
+    plugin = IinchoPlugin(_iincho_context())
+
+    with patch.object(plugin, "_log_plugin_action") as log_action:
+        assert await plugin.initialize()
+
+    log_action.assert_called_once_with(
+        "initialized", "interval=0:05:00 sample_size=100"
+    )
 
 
 def test_iincho_rejects_fractional_integer_config() -> None:

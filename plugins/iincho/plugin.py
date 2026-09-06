@@ -4,7 +4,7 @@ import random
 import re
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import durationpy
@@ -103,7 +103,7 @@ class IinchoPlugin(PluginBase):
     async def initialize(self) -> bool:
         self._log_plugin_action(
             "initialized",
-            f"interval={self.settings.interval_seconds:g}s "
+            f"interval={timedelta(seconds=self.settings.interval_seconds)} "
             f"sample_size={self.settings.sample_size}",
         )
         return True

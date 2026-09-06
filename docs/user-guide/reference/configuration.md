@@ -7,7 +7,7 @@ description: 查询 TwipsyBot 主配置、环境变量、默认值和有效取�
 
 TwipsyBot 读取项目根目录的 `config.yaml`。环境变量会覆盖 YAML 中的同名配置；未列入本页的未知字段会导致配置检查失败。
 
-插件使用独立的 `plugins/config.yaml`，请查看[插件](../plugins/README.md)。
+插件使用独立的 `plugins/config.yaml`，请查看[插件](/user-guide/plugins/)。
 
 ## Misskey
 

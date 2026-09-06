@@ -1,11 +1,13 @@
 import { defineConfig } from "vitepress"
 import { withMermaid } from "vitepress-plugin-mermaid"
 
+const currentYear = new Date().getFullYear()
+
 export default withMermaid(
   defineConfig({
     lang: "zh-CN",
     title: "TwipsyBot",
-    description: "轻量、可扩展的 Misskey API 机器人文档。",
+    description: "轻量、可扩展的 Misskey API 机器人",
     cleanUrls: true,
     lastUpdated: true,
     vite: {
@@ -23,6 +25,14 @@ export default withMermaid(
       "user-guide/plugins/README.md": "user-guide/plugins/index.md",
     },
     head: [
+      [
+        "link",
+        {
+          rel: "icon",
+          type: "image/svg+xml",
+          href: "https://r2-img.oreeke.com/OREEkE-logo.svg",
+        },
+      ],
       ["meta", { name: "author", content: "OREEkE" }],
       [
         "meta",
@@ -109,8 +119,10 @@ export default withMermaid(
       lastUpdated: { text: "最后更新" },
       docFooter: { prev: "上一页", next: "下一页" },
       footer: {
-        message: "基于 AGPL-3.0 许可发布",
-        copyright: "Copyright © OREEkE",
+        message:
+          '基于 <a href="https://github.com/oreeke/twipsybot/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0</a> 许可发布',
+        copyright:
+          `© ${currentYear} <a href="https://github.com/oreeke" target="_blank" rel="noopener noreferrer">OREEkE</a>. All rights reserved.`,
       },
     },
     mermaid: {

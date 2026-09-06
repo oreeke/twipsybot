@@ -11,12 +11,12 @@ description: TwipsyBot 的安装、配置、功能、插件与运行维护文档
 
 - [快速开始](user-guide/getting-started.md)
 - [配置](user-guide/configuration.md)
-- [功能](user-guide/features/README.md)
-- [插件](user-guide/plugins/README.md)
+- [功能](/user-guide/features/)
+- [插件](/user-guide/plugins/)
 - [运维](user-guide/operations.md)
 - [故障排查](user-guide/troubleshooting.md)
 - [配置参考](user-guide/reference/configuration.md)
-- [开发](dev-guide/README.md)
+- [开发](/dev-guide/)
 
 ## 能做什么
 

@@ -1,4 +1,5 @@
 import asyncio
+import random
 import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -52,13 +53,13 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         self._queue_put_timeout = STREAM_QUEUE_PUT_TIMEOUT
         self._workers: list[asyncio.Task[None]] = []
         self.running = False
-        self.should_reconnect = True
         self._first_connection = True
         self._chat_channel_tasks: dict[str, asyncio.Task[None]] = {}
         self._chat_user_channel_ids: dict[str, str] = {}
         self._chat_channel_other_ids: dict[str, str] = {}
         self._chat_user_cache: dict[str, dict[str, Any]] = {}
         self._send_buffer: deque[dict[str, Any]] = deque(maxlen=STREAM_SEND_BUFFER_MAX)
+        self._send_buffer_overflow_warned = False
         self._ws_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
         self._lifecycle_lock = asyncio.Lock()
@@ -103,34 +104,36 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
     async def connect(
         self, channels: list[ChannelSpec] | None = None, *, reconnect: bool = True
     ) -> None:
-        self.should_reconnect = reconnect
         specs = self._normalize_channel_specs(channels)
-        await self.connect_once(specs)
+        await self.connect_once(specs, raise_on_error=not reconnect)
         retry_delay = 1.0
-        while self.should_reconnect and self.running:
+        while self.running:
             try:
                 await self._listen_messages()
                 return
             except WebSocketConnectionError:
+                if not self.running:
+                    return
                 if not reconnect:
                     raise
                 self.state = "reconnecting"
-                logger.debug(f"WebSocket disconnected; reconnecting in {retry_delay}s")
+                delay = random.uniform(retry_delay / 2, retry_delay)
+                logger.debug(f"WebSocket disconnected; reconnecting in {delay:.1f}s")
                 try:
-                    await self._reconnect_with_backoff(retry_delay)
+                    await self._reconnect_with_backoff(delay)
                     retry_delay = 1.0
                 except WebSocketConnectionError:
                     retry_delay = min(retry_delay * 2, 30.0)
 
     async def disconnect(self) -> None:
         async with self._lifecycle_lock:
-            self.should_reconnect = False
             self.running = False
             self._cancel_chat_channel_tasks()
             await self._disconnect_all_channels()
             await self._close_websocket()
             self.processed_events.clear()
             self._send_buffer.clear()
+            self._send_buffer_overflow_warned = False
             self.state = "disconnected"
 
     async def connect_channel(
@@ -231,7 +234,12 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
                 return ch_id
         return None
 
-    async def connect_once(self, channels: list[ChannelSpec] | None = None) -> None:
+    async def connect_once(
+        self,
+        channels: list[ChannelSpec] | None = None,
+        *,
+        raise_on_error: bool = False,
+    ) -> None:
         async with self._lifecycle_lock:
             if self.running:
                 return
@@ -253,6 +261,12 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
                 await self._connect_and_resubscribe()
             except WebSocketConnectionError:
                 self.state = "reconnecting"
+                if raise_on_error:
+                    self.running = False
+                    self.state = "disconnected"
+                    await self._close_websocket()
+                    await self._stop_workers()
+                    raise
             if self._first_connection:
                 logger.info("Streaming client started")
                 self._first_connection = False

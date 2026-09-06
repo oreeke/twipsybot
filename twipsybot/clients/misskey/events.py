@@ -33,9 +33,9 @@ class _StreamingEventsMixin:
         if isinstance(event_data, dict) and "streamingChannelId" not in event_data:
             event_data["streamingChannelId"] = channel_id
         event_id = self._extract_event_id(event_data, event_type)
-        if self._is_duplicate_event(event_id, event_type):
+        if self._is_duplicate_event(event_id, event_type, channel_name):
             return
-        self._track_event(event_id, event_type)
+        self._track_event(event_id, event_type, channel_name)
         if event_type:
             logger.debug(
                 f"Received {channel_name} event: {event_type} (channel_id={channel_id}, event_id={event_id})"
@@ -311,10 +311,11 @@ class _StreamingEventsMixin:
         except Exception as e:
             logger.debug(f"Failed to disconnect chatUser channel {channel_id}: {e}")
         finally:
-            if self._chat_user_channel_ids.get(other_id) == channel_id:
-                self._chat_user_channel_ids.pop(other_id, None)
-            self._chat_channel_other_ids.pop(channel_id, None)
-            self._chat_channel_tasks.pop(channel_id, None)
+            if self._chat_channel_tasks.get(channel_id) is asyncio.current_task():
+                if self._chat_user_channel_ids.get(other_id) == channel_id:
+                    self._chat_user_channel_ids.pop(other_id, None)
+                self._chat_channel_other_ids.pop(channel_id, None)
+                self._chat_channel_tasks.pop(channel_id, None)
 
     def _refresh_chat_channel_timer(self, channel_id: str) -> None:
         other_id = self._chat_channel_other_ids.get(channel_id)
@@ -370,8 +371,10 @@ class _StreamingEventsMixin:
             except Exception as e:
                 logger.exception(f"Event handler failed ({event_type}): {e}")
 
-    def _is_duplicate_event(self, event_id: str | None, event_type: str | None) -> bool:
-        dedup_key = self._event_dedup_key(event_id, event_type)
+    def _is_duplicate_event(
+        self, event_id: str | None, event_type: str | None, channel_name: str
+    ) -> bool:
+        dedup_key = self._event_dedup_key(event_id, event_type, channel_name)
         if dedup_key and dedup_key in self.processed_events:
             logger.debug(
                 f"Duplicate event detected; skipping - {event_type}, event_id={event_id}"
@@ -379,17 +382,23 @@ class _StreamingEventsMixin:
             return True
         return False
 
-    def _track_event(self, event_id: str | None, event_type: str | None) -> None:
-        dedup_key = self._event_dedup_key(event_id, event_type)
+    def _track_event(
+        self, event_id: str | None, event_type: str | None, channel_name: str
+    ) -> None:
+        dedup_key = self._event_dedup_key(event_id, event_type, channel_name)
         if dedup_key:
             self.processed_events[dedup_key] = True
 
     @staticmethod
-    def _event_dedup_key(event_id: str | None, event_type: str | None) -> str | None:
+    def _event_dedup_key(
+        event_id: str | None, event_type: str | None, channel_name: str
+    ) -> str | None:
         if not event_id:
             return None
         if not event_type:
             return event_id
+        if event_type == "note":
+            return f"note:{channel_name}:{event_id}"
         if event_type in {"newChatMessage", "message"}:
             return f"chatMessage:{event_id}"
         return f"{event_type}:{event_id}"

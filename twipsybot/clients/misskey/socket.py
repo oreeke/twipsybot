@@ -25,6 +25,12 @@ class _StreamingSocketMixin:
         return self.ws_connection is not None and not self.ws_connection.closed
 
     def _buffer_outgoing(self, message: dict[str, Any]) -> None:
+        if (
+            len(self._send_buffer) == self._send_buffer.maxlen
+            and not self._send_buffer_overflow_warned
+        ):
+            logger.warning("WebSocket send buffer full; dropping oldest messages")
+            self._send_buffer_overflow_warned = True
         self._send_buffer.append(message)
 
     async def _send_or_buffer(self, message: dict[str, Any]) -> None:
@@ -58,6 +64,8 @@ class _StreamingSocketMixin:
         while self._send_buffer and self._ws_available:
             message = self._send_buffer.popleft()
             await self._send_control(message)
+        if not self._send_buffer:
+            self._send_buffer_overflow_warned = False
 
     async def _reconnect_with_backoff(self, delay_seconds: float) -> None:
         await self._close_websocket()
@@ -136,11 +144,7 @@ class _StreamingSocketMixin:
                     await self._process_message(data, msg.data)
             except TimeoutError:
                 continue
-            except (
-                aiohttp.ClientError,
-                json.JSONDecodeError,
-                OSError,
-            ) as e:
+            except (aiohttp.ClientError, OSError) as e:
                 raise WebSocketReconnectError() from e
             except (ValueError, TypeError, AttributeError, KeyError) as e:
                 logger.error(f"Failed to parse message: {e}")

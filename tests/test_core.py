@@ -9,7 +9,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
-from aiohttp import web
+from aiohttp import WSMsgType, web
 from aiohttp.multipart import BodyPartReader
 from aiohttp.test_utils import TestServer
 from conftest import MakeBot, WriteConfig
@@ -199,10 +199,14 @@ async def test_streaming_reconnect_backoff_caps_and_resets(
     monkeypatch.setattr(client, "connect_once", connect_once)
     monkeypatch.setattr(client, "_listen_messages", listen)
     monkeypatch.setattr(client, "_reconnect_with_backoff", reconnect)
+    monkeypatch.setattr(
+        "twipsybot.clients.misskey.streaming.random.uniform",
+        lambda lower, upper: upper,
+    )
 
     await client.connect()
 
-    connect_once.assert_awaited_once_with([])
+    connect_once.assert_awaited_once_with([], raise_on_error=False)
     assert reconnect.await_args_list == [
         call(1.0),
         call(2.0),
@@ -212,6 +216,169 @@ async def test_streaming_reconnect_backoff_caps_and_resets(
         call(30.0),
         call(1.0),
     ]
+
+
+async def test_streaming_reconnect_uses_jitter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    client.running = True
+    monkeypatch.setattr(client, "connect_once", AsyncMock())
+    monkeypatch.setattr(
+        client,
+        "_listen_messages",
+        AsyncMock(side_effect=[WebSocketConnectionError(), None]),
+    )
+    reconnect = AsyncMock()
+    monkeypatch.setattr(client, "_reconnect_with_backoff", reconnect)
+    jitter = Mock(return_value=0.75)
+    monkeypatch.setattr("twipsybot.clients.misskey.streaming.random.uniform", jitter)
+
+    await client.connect()
+
+    jitter.assert_called_once_with(0.5, 1.0)
+    reconnect.assert_awaited_once_with(0.75)
+
+
+async def test_streaming_without_reconnect_exposes_initial_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    error = WebSocketConnectionError("handshake failed")
+    websocket = SimpleNamespace(closed=False, send_json=AsyncMock(), close=AsyncMock())
+    handshake = AsyncMock(side_effect=[error, websocket])
+    monkeypatch.setattr(client.transport, "ws_connect", handshake)
+    monkeypatch.setattr(client, "_listen_messages", AsyncMock())
+
+    try:
+        with pytest.raises(WebSocketConnectionError) as exc_info:
+            await client.connect(reconnect=False)
+
+        assert exc_info.value is error
+        assert not client.running
+        assert client.state == "disconnected"
+        assert not client._workers
+        assert client.ws_connection is None
+
+        await client.connect(reconnect=False)
+
+        assert handshake.await_count == 2
+        assert client.running
+        assert client.state == "connected"
+        websocket.send_json.assert_awaited_once()
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize("reconnect", [False, True])
+async def test_streaming_disconnect_stops_listener(reconnect: bool) -> None:
+    subscribed = asyncio.Event()
+
+    async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
+        websocket = web.WebSocketResponse()
+        await websocket.prepare(request)
+        async for message in websocket:
+            if message.type == WSMsgType.TEXT:
+                subscribed.set()
+        return websocket
+
+    app = web.Application()
+    app.router.add_get("/streaming", websocket_handler)
+    async with TestServer(app) as server:
+        client = StreamingClient(str(server.make_url("/")), "token")
+        listener = asyncio.create_task(client.connect(reconnect=reconnect))
+        try:
+            await asyncio.wait_for(subscribed.wait(), timeout=2)
+            await client.disconnect()
+            await asyncio.wait_for(listener, timeout=2)
+
+            assert not client.running
+            assert client.state == "disconnected"
+            assert client.ws_connection is None
+        finally:
+            listener.cancel()
+            await asyncio.gather(listener, return_exceptions=True)
+            await client.close()
+
+
+async def test_streaming_without_reconnect_still_listens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    client.running = True
+    client.ws_connection = cast(Any, SimpleNamespace(closed=False))
+    connect_once = AsyncMock()
+    monkeypatch.setattr(client, "connect_once", connect_once)
+    listen = AsyncMock()
+    monkeypatch.setattr(client, "_listen_messages", listen)
+
+    await client.connect(reconnect=False)
+
+    connect_once.assert_awaited_once_with([], raise_on_error=True)
+    listen.assert_awaited_once_with()
+
+
+async def test_streaming_skips_invalid_json() -> None:
+    client = StreamingClient("https://example.com", "token")
+    client.running = True
+    receive = AsyncMock(
+        side_effect=[
+            SimpleNamespace(type=WSMsgType.TEXT, data="{"),
+            SimpleNamespace(type=WSMsgType.CLOSED, data=None),
+        ]
+    )
+    client.ws_connection = cast(Any, SimpleNamespace(closed=False, receive=receive))
+
+    with pytest.raises(WebSocketConnectionError):
+        await client._listen_messages()
+
+    assert receive.await_count == 2
+
+
+@pytest.mark.parametrize(
+    ("first_channel", "first_type", "second_channel", "second_type", "expected_count"),
+    [
+        ("localTimeline", "note", "antenna", "note", 2),
+        ("antenna", "note", "localTimeline", "note", 2),
+        ("homeTimeline", "note", "localTimeline", "note", 2),
+        ("localTimeline", "note", "localTimeline", "note", 1),
+        ("antenna", "note", "antenna", "note", 1),
+        ("main", "newChatMessage", "chatUser", "message", 1),
+        ("chatUser", "message", "main", "newChatMessage", 1),
+        ("main", "mention", "main", "mention", 1),
+        ("main", "mention", "main", "reply", 2),
+    ],
+)
+async def test_streaming_event_deduplication_respects_channel_type(
+    monkeypatch: pytest.MonkeyPatch,
+    first_channel: str,
+    first_type: str,
+    second_channel: str,
+    second_type: str,
+    expected_count: int,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    enqueue = AsyncMock()
+    monkeypatch.setattr(client, "_enqueue_event", enqueue)
+    for channel_id, channel_name, event_type in (
+        ("first-id", first_channel, first_type),
+        ("second-id", second_channel, second_type),
+    ):
+        params = {"antennaId": channel_id} if channel_name == "antenna" else {}
+        client.channels[channel_id] = {"name": channel_name, "params": params}
+        await client._handle_channel_message(
+            {
+                "id": channel_id,
+                "type": event_type,
+                "body": {"id": "same-event", "text": "hello"},
+            }
+        )
+
+    assert enqueue.await_count == expected_count
+    assert [entry.args[0] for entry in enqueue.await_args_list] == [
+        first_channel,
+        second_channel,
+    ][:expected_count]
 
 
 async def test_streaming_reconnect_runs_resubscribe_flow(
@@ -265,6 +432,57 @@ async def test_streaming_resubscribes_existing_channels(
     ]
 
 
+async def test_streaming_chat_timer_preserves_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    timer_started = asyncio.Event()
+    expire = asyncio.Event()
+    tasks: list[asyncio.Task[None]] = []
+
+    async def wait_for_expiry(delay: float) -> None:
+        assert delay == 120
+        timer_started.set()
+        await expire.wait()
+
+    monkeypatch.setattr(
+        "twipsybot.clients.misskey.events.asyncio.sleep", wait_for_expiry
+    )
+    try:
+        channel_id = await client._ensure_chat_user_stream({"fromUserId": "user-1"})
+        assert channel_id is not None
+        tasks.append(client._chat_channel_tasks[channel_id])
+        await asyncio.wait_for(timer_started.wait(), timeout=2)
+
+        for _ in range(2):
+            previous = client._chat_channel_tasks[channel_id]
+            timer_started.clear()
+            client._refresh_chat_channel_timer(channel_id)
+            current = client._chat_channel_tasks[channel_id]
+            tasks.append(current)
+            await asyncio.gather(previous, return_exceptions=True)
+
+            assert previous.cancelled()
+            assert client._chat_channel_tasks.get(channel_id) is current
+            assert client._chat_user_channel_ids.get("user-1") == channel_id
+            assert client._chat_channel_other_ids.get(channel_id) == "user-1"
+            assert channel_id in client.channels
+            await asyncio.wait_for(timer_started.wait(), timeout=2)
+
+        expire.set()
+        await asyncio.wait_for(tasks[-1], timeout=2)
+
+        assert channel_id not in client.channels
+        assert not client._chat_channel_tasks
+        assert not client._chat_user_channel_ids
+        assert not client._chat_channel_other_ids
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await client.close()
+
+
 async def test_streaming_flushes_send_buffer_in_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -282,6 +500,28 @@ async def test_streaming_flushes_send_buffer_in_order(
 
     assert send.await_args_list == [call(message) for message in messages]
     assert not client._send_buffer
+
+
+async def test_streaming_warns_once_per_send_buffer_overflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    warning = Mock()
+    monkeypatch.setattr("twipsybot.clients.misskey.socket.logger.warning", warning)
+    maxlen = client._send_buffer.maxlen
+    assert maxlen is not None
+
+    for index in range(maxlen + 2):
+        client._buffer_outgoing({"index": index})
+
+    warning.assert_called_once()
+    client.ws_connection = cast(Any, SimpleNamespace(closed=False))
+    monkeypatch.setattr(client, "_send_control", AsyncMock())
+    await client._flush_send_buffer()
+    client._send_buffer.extend({"index": index} for index in range(maxlen))
+    client._buffer_outgoing({"index": maxlen})
+
+    assert warning.call_count == 2
 
 
 @pytest.mark.parametrize(

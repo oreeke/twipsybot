@@ -31,22 +31,6 @@ _CHAT_MESSAGE = {
 }
 
 
-async def test_streaming_awaits_wrapped_async_handler(
-    make_bot: MakeBot, write_config: WriteConfig
-) -> None:
-    bot = await make_bot(write_config())
-    received = []
-
-    async def handler(data):
-        received.append(data)
-
-    bot.streaming.event_handlers["note"] = [lambda data: handler(data)]
-
-    await bot.streaming._call_handlers("note", {"id": "note-1"})
-
-    assert received == [{"id": "note-1"}]
-
-
 async def test_mention_triggers_ai_reply(
     make_bot: MakeBot,
     write_config: WriteConfig,

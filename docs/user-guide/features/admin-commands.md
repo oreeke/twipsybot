@@ -13,17 +13,17 @@ description: 查询 TwipsyBot 的状态、模型、功能开关、用户访问�
 
 | 命令 | 作用 |
 | --- | --- |
-| `^help` | 查看当前可用命令 |
-| `^status` | 查看运行时长、账号、模型、功能开关、插件和授权用户数量 |
-| `^model` | 查看当前模型及已保存覆盖 |
-| `^model <模型名>` | 在当前 `api_base` 下切换模型并保存 |
-| `^model reset` | 删除模型覆盖，恢复启动配置 |
-| `^autopost on\|off` | 切换当前进程的自动发帖状态 |
-| `^autopost reset` | 重置当天自动发帖计数 |
-| `^mention on\|off` | 切换当前进程的提及响应 |
-| `^chat on\|off` | 切换当前进程的聊天响应 |
-| `^whitelist ...` | 查看或修改回复白名单 |
-| `^blacklist ...` | 查看或修改回复黑名单 |
+| `^help` | 查看可用命令 |
+| `^status` | 机器人状态 |
+| `^model` | 查看当前模型 |
+| `^model <模型名>` | 切换模型（相同 `api_base`） |
+| `^model reset` | 恢复默认模型 |
+| `^autopost on\|off` | 自动发帖开关 |
+| `^autopost reset` | 重置当天发帖计数 |
+| `^mention on\|off` | 响应提及开关 |
+| `^chat on\|off` | 响应聊天开关 |
+| `^whitelist ...` | 查看/修改白名单 |
+| `^blacklist ...` | 查看/修改黑名单 |
 
 名单命令支持：
 

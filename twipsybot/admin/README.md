@@ -12,12 +12,12 @@
 管理本地 Bot 的 `^` 命令：
 | 命令 | 说明 |
 | --- | --- |
-| `^help` | 可用命令 |
+| `^help` | 查看可用命令 |
 | `^status` | 机器人状态 |
 | `^model` | 查看当前模型 |
 | `^model <模型名>` | 切换模型（相同 `api_base`） |
 | `^model reset` | 恢复默认模型 |
-| `^autopost <on\|off\|reset>` | 自动发帖开关或重置每日计数 |
+| `^autopost <on\|off\|reset>` | 自动发帖开关或重置当天发帖计数 |
 | `^mention <on\|off>` | 响应提及开关 |
 | `^chat <on\|off>` | 响应聊天开关 |
 | `^whitelist [list\|add\|del\|set\|clear\|reset]` | 查看/修改白名单 |

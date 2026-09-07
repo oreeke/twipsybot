@@ -5,7 +5,7 @@ description: TwipsyBot 的安装、配置、功能、插件与运行维护文档
 
 # TwipsyBot
 
-为 [Misskey](https://misskey-hub.net/) 提供一套轻量、可扩展的机器人运行方式。
+一只轻量、可扩展的 [Misskey](https://misskey-hub.net/) AI 机器人。
 
 ## 开始使用
 

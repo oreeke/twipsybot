@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
 from conftest import MakeBot, WriteConfig
 
 from twipsybot import MisskeyBot
@@ -21,6 +23,184 @@ from twipsybot.shared.config_keys import ConfigKeys
 from twipsybot.shared.exceptions import (
     ConfigurationError,
 )
+
+
+@pytest.mark.parametrize("plugin_count", (0, 5))
+async def test_admin_status_preserves_code_block_layout(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    plugin_count: int,
+) -> None:
+    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot.runtime.startup_time = datetime.now(UTC)
+    bot.bot_username = "testbot"
+    bot.bot_user_id = "bot-id"
+    bot.streaming.state = "connected"
+    bot.streaming.channels = {
+        "main": {"name": "main"},
+        "home": {"name": "homeTimeline"},
+        "antenna-1": {"name": "antenna"},
+        "antenna-2": {"name": "antenna"},
+        "chat": {"name": "chatUser"},
+    }
+    monkeypatch.setattr(
+        bot.misskey, "instance_url", "https://user:secret@example.com/path?token=secret"
+    )
+    monkeypatch.setattr(
+        bot.plugin_manager,
+        "get_plugin_info",
+        Mock(return_value=[{"enabled": True} for _ in range(plugin_count)]),
+    )
+    response = await bot.admin.on_message(
+        {"text": "^status", "user": {"id": "user-2", "username": "bob"}}
+    )
+    assert response is not None
+    assert response.count("```") == 2
+    assert "状态  🟨 未运行 · " in response
+    assert "连接  🟩 connected" in response.splitlines()
+    assert "任务  stream 🟨 · scheduler 🟨" in response.splitlines()
+    assert " · busy 0 · queue 0/1000" in response
+    assert "存活" not in response
+    assert "忙" not in response
+    assert "queue 0/1000\n\n账号  @testbot (bot-id)" in response
+    assert "实例  example.com" in response
+    assert "secret" not in response
+    assert "频道  main · home\n\u3000\u3000  antenna x2 · chat x1" in response
+    if plugin_count:
+        assert "chat x1\n\n插件  5/5 已启用\n授权  1" in response
+    else:
+        assert "chat x1\n授权  1" in response
+    assert "授权  1" in response.splitlines()
+
+
+@pytest.mark.parametrize(
+    ("status", "marker"),
+    (
+        ("connected", "🟩"),
+        ("initializing", "🟨"),
+        ("reconnecting", "🟨"),
+        ("disconnected", "🟥"),
+    ),
+)
+@pytest.mark.parametrize("running", (True, False))
+async def test_admin_status_connection_markers(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    marker: str,
+    running: bool,
+) -> None:
+    bot = await make_bot(write_config())
+    monkeypatch.setattr(bot.runtime, "running", running)
+    bot.streaming.state = status
+    expected = "🟨" if marker == "🟥" and not running else marker
+    assert f"连接  {expected} {status}" in bot.admin._get_status_text().splitlines()
+
+
+@pytest.mark.parametrize(
+    ("state", "marker"),
+    ((STATE_RUNNING, "🟩"), (STATE_PAUSED, "🟨"), (STATE_STOPPED, "🟥")),
+)
+@pytest.mark.parametrize("running", (True, False))
+async def test_admin_status_scheduler_markers(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    state: int,
+    marker: str,
+    running: bool,
+) -> None:
+    bot = await make_bot(write_config())
+    monkeypatch.setattr(bot.runtime, "running", running)
+    monkeypatch.setattr(bot.scheduler, "state", state)
+    expected = "🟨" if marker == "🟥" and not running else marker
+    assert (
+        bot.admin._get_task_status_text() == f"任务  stream 🟨 · scheduler {expected}"
+    )
+
+
+@pytest.mark.parametrize("running", (True, False))
+@pytest.mark.parametrize("outcome", ("running", "success", "error", "cancel"))
+async def test_admin_status_reports_stream_task_state(
+    make_bot: MakeBot, write_config: WriteConfig, outcome: str, running: bool
+) -> None:
+    bot = await make_bot(write_config())
+    bot.runtime.running = running
+
+    async def run() -> None:
+        if outcome in {"running", "cancel"}:
+            await asyncio.Event().wait()
+        if outcome == "error":
+            raise ValueError("private details")
+
+    task = bot.runtime.add_task("streaming", run())
+    try:
+        if outcome == "cancel":
+            task.cancel()
+        if outcome != "running":
+            await asyncio.gather(task, return_exceptions=True)
+        expected = "🟩" if outcome == "running" else "🟥" if running else "🟨"
+        text = bot.admin._get_status_text()
+        scheduler = "🟥" if running else "🟨"
+        assert f"任务  stream {expected} · scheduler {scheduler}" in text.splitlines()
+        status = "🟩 运行中" if running else "🟨 未运行"
+        assert f"状态  {status} · " in text
+        assert "private details" not in text
+    finally:
+        bot.runtime.running = False
+        await bot.runtime.cleanup_tasks()
+
+
+@pytest.mark.parametrize(
+    ("enabled", "count", "scheduler_state", "has_job", "expected"),
+    (
+        (False, 2, 1, True, "已关闭"),
+        (True, 5, 1, True, "今日已达上限"),
+        (True, 2, 0, True, "未调度"),
+        (True, 2, 2, True, "未调度"),
+        (True, 2, 1, False, "未调度"),
+        (True, 2, 1, True, "下次"),
+    ),
+)
+async def test_admin_status_reports_auto_post_schedule(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
+    count: int,
+    scheduler_state: int,
+    has_job: bool,
+    expected: str,
+) -> None:
+    bot = await make_bot(
+        write_config(bot={"auto_post": {"enabled": enabled, "max_posts_per_day": 5}})
+    )
+    bot.auto_post.posts_today = count
+    next_run = datetime(2026, 9, 9, 14, 30, tzinfo=UTC)
+    scheduler = SimpleNamespace(
+        state=scheduler_state,
+        get_job=Mock(
+            return_value=SimpleNamespace(next_run_time=next_run) if has_job else None
+        ),
+    )
+    monkeypatch.setattr(bot, "scheduler", scheduler)
+    text = bot.admin._get_auto_post_status_text()
+    assert text.startswith(f"发帖  {count}/5 · {expected}")
+    if expected == "下次":
+        assert next_run.astimezone().strftime("%m-%d %H:%M %z") in text
+    else:
+        assert "下次" not in text
+
+
+def test_auto_post_status_does_not_show_previous_day_count() -> None:
+    service = AutoPostService(cast(Any, None))
+    service.posts_today = 5
+    assert service.daily_post_count == 5
+    service._post_date = "2000-01-01"
+    assert service.daily_post_count == 0
+    assert service.posts_today == 5
 
 
 @pytest.mark.parametrize(

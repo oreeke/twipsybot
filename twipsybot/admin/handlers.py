@@ -1,6 +1,11 @@
 import json
+from collections import Counter
 from datetime import UTC, datetime
+from importlib.metadata import version as package_version
 from typing import Any
+from urllib.parse import urlsplit
+
+from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 
 from ..shared.config_keys import ConfigKeys
 from ..shared.utils import normalize_tokens
@@ -13,6 +18,12 @@ def _format_duration(seconds: float) -> str:
     minutes, seconds = divmod(remainder, 60)
     value = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     return f"{days}d {value}" if days else value
+
+
+def _status_light(*, healthy: bool, waiting: bool = True) -> str:
+    if healthy:
+        return "🟩"
+    return "🟨" if waiting else "🟥"
 
 
 class CmdHandlersMixin:
@@ -41,14 +52,14 @@ class CmdHandlersMixin:
         chat = "on" if cfg.get(ConfigKeys.BOT_RESPONSE_CHAT) else "off"
         mention = "on" if cfg.get(ConfigKeys.BOT_RESPONSE_MENTION) else "off"
         autopost = "on" if cfg.get(ConfigKeys.BOT_AUTO_POST_ENABLED) else "off"
-        return f"开关: chat={chat} mention={mention} autopost={autopost}"
+        return f"开关  chat={chat} mention={mention} autopost={autopost}"
 
     def _get_plugin_status_text(self) -> str | None:
         plugins = self.plugin_manager.get_plugin_info()
         if not plugins:
             return None
         enabled = sum(plugin.get("enabled") is True for plugin in plugins)
-        return f"插件: {enabled}/{len(plugins)} 已启用"
+        return f"插件  {enabled}/{len(plugins)} 已启用"
 
     def _get_help_text(self) -> str:
         lines = []
@@ -59,22 +70,93 @@ class CmdHandlersMixin:
             lines.append(f"^{name}{alias_text} - {description}")
         return "\n".join(lines)
 
+    def _get_task_status_text(self) -> str:
+        task = self.bot.runtime.tasks.get("streaming")
+        running = self.bot.runtime.running
+        stream = _status_light(
+            healthy=task is not None and not task.done(),
+            waiting=task is None or not running,
+        )
+        scheduler = _status_light(
+            healthy=self.bot.scheduler.state == STATE_RUNNING,
+            waiting=self.bot.scheduler.state == STATE_PAUSED or not running,
+        )
+        return f"任务  stream {stream} · scheduler {scheduler}"
+
+    def _get_auto_post_status_text(self) -> str:
+        count = self.bot.auto_post.daily_post_count
+        limit = self.global_config.get(ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY)
+        text = f"发帖  {count}/{limit}"
+        if not self.global_config.get(ConfigKeys.BOT_AUTO_POST_ENABLED):
+            return f"{text} · 已关闭"
+        if count >= limit:
+            return f"{text} · 今日已达上限"
+        job = self.bot.scheduler.get_job("auto_post")
+        next_run = getattr(job, "next_run_time", None)
+        if self.bot.scheduler.state != STATE_RUNNING or next_run is None:
+            return f"{text} · 未调度"
+        return f"{text} · 下次 {next_run.astimezone():%m-%d %H:%M %z}"
+
+    def _get_channel_status_text(self) -> str:
+        counts = Counter(
+            channel["name"] for channel in self.bot.streaming.channels.values()
+        )
+        labels = {
+            "main": "main",
+            "homeTimeline": "home",
+            "localTimeline": "local",
+            "hybridTimeline": "hybrid",
+            "globalTimeline": "global",
+            "antenna": "antenna",
+            "chatUser": "chat",
+        }
+        timelines = []
+        dynamic = []
+        for name, label in labels.items():
+            count = counts.get(name, 0)
+            if not count:
+                continue
+            if name in {"antenna", "chatUser"}:
+                dynamic.append(f"{label} x{count}")
+            else:
+                timelines.append(label)
+        groups = [" · ".join(group) for group in (timelines, dynamic) if group]
+        return "频道  " + ("\n\u3000\u3000  ".join(groups) if groups else "无")
+
     def _get_status_text(self) -> str:
         bot = self.bot
-        status = "运行中" if bot.runtime.running else "未运行"
+        status = _status_light(healthy=bot.runtime.running)
+        status_text = "运行中" if bot.runtime.running else "未运行"
+        connection = _status_light(
+            healthy=bot.streaming.state == "connected",
+            waiting=bot.streaming.state in {"initializing", "reconnecting"}
+            or not bot.runtime.running,
+        )
+        events = bot.streaming.get_event_status()
         parts = [
-            f"机器人状态: {status}",
-            f"运行时长: {self._get_uptime_text(bot)}",
+            f"版本  {package_version('twipsybot')}",
+            f"状态  {status} {status_text} · {self._get_uptime_text(bot)}",
+            f"连接  {connection} {bot.streaming.state}",
+            self._get_task_status_text(),
+            f"事件  worker {events['workers_alive']}/{events['workers_total']}"
+            f" · busy {events['busy_workers']}"
+            f" · queue {events['queue_size']}/{events['queue_capacity']}",
+            "",
         ]
         if bot.bot_username:
             suffix = f" ({bot.bot_user_id})" if bot.bot_user_id else ""
-            parts.append(f"Bot: @{bot.bot_username}{suffix}")
+            parts.append(f"账号  @{bot.bot_username}{suffix}")
+        if hostname := urlsplit(bot.misskey.instance_url).hostname:
+            parts.append(f"实例  {hostname}")
         if bot.openai.model:
-            parts.append(f"模型: {bot.openai.model}")
+            parts.append(f"模型  {bot.openai.model}")
+        parts.append("")
         parts.append(self._get_feature_toggle_text())
+        parts.append(self._get_auto_post_status_text())
+        parts.append(self._get_channel_status_text())
         if plugin_status := self._get_plugin_status_text():
-            parts.append(plugin_status)
-        parts.append(f"授权用户数: {len(self.allowed_users)}")
+            parts.extend(("", plugin_status))
+        parts.append(f"授权  {len(self.allowed_users)}")
         return "\n".join(parts)
 
     def _handle_set_bool(self, label: str, key: str, args: str) -> str:

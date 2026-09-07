@@ -40,6 +40,48 @@ from twipsybot.shared.exceptions import (
 )
 
 
+@pytest.mark.parametrize("outcome", ("success", "error", "cancel"))
+async def test_streaming_event_status_tracks_busy_workers(
+    monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def dispatch(channel: str, event: dict[str, Any]) -> None:
+        started.set()
+        await release.wait()
+        if outcome == "error":
+            raise ValueError("dispatch failed")
+
+    monkeypatch.setattr(client, "_dispatch_event", dispatch)
+    worker = asyncio.create_task(client._worker_loop())
+    client._workers.append(worker)
+    try:
+        await client._event_queue.put(("main", {"type": "mention"}))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        status = client.get_event_status()
+        assert status["queue_size"] == 0
+        assert status["busy_workers"] == 1
+        assert status["workers_alive"] == 1
+        assert status["workers_total"] == client._worker_count
+        assert status["queue_capacity"] == client._event_queue.maxsize
+        if outcome == "cancel":
+            worker.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await worker
+        else:
+            await client._event_queue.put(None)
+            release.set()
+            await asyncio.wait_for(worker, timeout=1)
+        assert client.get_event_status()["busy_workers"] == 0
+        assert client.get_event_status()["workers_alive"] == 0
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+        await client.close()
+
+
 class _BadRequest:
     def __init__(
         self,

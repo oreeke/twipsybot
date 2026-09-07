@@ -155,12 +155,15 @@ class _StreamingEventsMixin:
             if item is None:
                 return
             channel_name, event_data = item
+            self._busy_workers += 1
             try:
                 await self._dispatch_event(channel_name, event_data)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 logger.exception(f"Failed to process event: {e}")
+            finally:
+                self._busy_workers -= 1
 
     async def _dispatch_event(
         self, channel_name: str, event_data: dict[str, Any]

@@ -52,6 +52,7 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         self._worker_count = STREAM_WORKERS
         self._queue_put_timeout = STREAM_QUEUE_PUT_TIMEOUT
         self._workers: list[asyncio.Task[None]] = []
+        self._busy_workers = 0
         self.running = False
         self._first_connection = True
         self._chat_channel_tasks: dict[str, asyncio.Task[None]] = {}
@@ -64,6 +65,15 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         self._send_lock = asyncio.Lock()
         self._lifecycle_lock = asyncio.Lock()
         self._connect_task: asyncio.Task[None] | None = None
+
+    def get_event_status(self) -> dict[str, int]:
+        return {
+            "queue_size": self._event_queue.qsize(),
+            "queue_capacity": self._event_queue.maxsize,
+            "busy_workers": self._busy_workers,
+            "workers_alive": sum(not worker.done() for worker in self._workers),
+            "workers_total": self._worker_count,
+        }
 
     async def close(self) -> None:
         await self.disconnect()

@@ -2,7 +2,7 @@
 
 <h1>TwipsyBot</h1>
 
-<br>**一只 Python 实现的 Misskey 机器人**<br><br>
+<br>**一只轻量、可扩展的 Misskey AI 机器人**<br><br>
 正运行在：[oreeke.com/@ai](https://oreeke.com/@ai)
 
 <a href="https://www.python.org/downloads">

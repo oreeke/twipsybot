@@ -24,6 +24,10 @@ class AutoPostService:
     def _today() -> str:
         return datetime.now().astimezone().date().isoformat()
 
+    @property
+    def daily_post_count(self) -> int:
+        return self.posts_today if self._post_date == self._today() else 0
+
     async def start(self) -> None:
         today = self._today()
         state = await self.bot.db.get_auto_post_state()

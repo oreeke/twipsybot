@@ -1,6 +1,7 @@
+import asyncio
 import json
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib.metadata import version as package_version
 from typing import Any
 from urllib.parse import urlsplit
@@ -8,7 +9,14 @@ from urllib.parse import urlsplit
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 
 from ..shared.config_keys import ConfigKeys
+from ..shared.exceptions import (
+    APIBadRequestError,
+    APIConnectionError,
+    APIRateLimitError,
+)
 from ..shared.utils import normalize_tokens
+
+CLEAN_POST_DELETE_LIMIT = 300
 
 
 def _format_duration(seconds: float) -> str:
@@ -158,6 +166,199 @@ class CmdHandlersMixin:
             parts.extend(("", plugin_status))
         parts.append(f"授权  {len(self.allowed_users)}")
         return "\n".join(parts)
+
+    @staticmethod
+    def _note_created_at(note: dict[str, Any]) -> datetime | None:
+        value = note.get("createdAt")
+        if not isinstance(value, str):
+            return None
+        try:
+            created_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return (
+            created_at.replace(tzinfo=UTC) if created_at.tzinfo is None else created_at
+        )
+
+    @classmethod
+    def _is_clean_post_candidate(
+        cls,
+        note: dict[str, Any],
+        cutoff: datetime,
+        pinned_note_ids: set[str],
+    ) -> bool:
+        created_at = cls._note_created_at(note)
+        note_id = note.get("id")
+        return (
+            isinstance(note_id, str)
+            and note_id not in pinned_note_ids
+            and created_at is not None
+            and created_at < cutoff
+            and note.get("replyId") is None
+            and note.get("renoteId") is None
+            and note.get("channelId") is None
+            and not note.get("mentions")
+            and note.get("repliesCount") == 0
+            and note.get("renoteCount") == 0
+            and note.get("reactionCount") == 0
+            and not note.get("reactions")
+            and note.get("clippedCount") == 0
+            and note.get("poll") is None
+        )
+
+    async def _get_pinned_note_ids(self) -> set[str]:
+        user = await self.bot.misskey.get_current_user()
+        ids = {
+            note_id
+            for note_id in user.get("pinnedNoteIds", []) or []
+            if isinstance(note_id, str)
+        }
+        ids.update(
+            note["id"]
+            for note in user.get("pinnedNotes", []) or []
+            if isinstance(note, dict) and isinstance(note.get("id"), str)
+        )
+        return ids
+
+    @classmethod
+    def _append_clean_post_candidates(
+        cls,
+        page: list[dict[str, Any]],
+        notes: list[dict[str, Any]],
+        seen_ids: set[str],
+        cutoff: datetime,
+        pinned_note_ids: set[str],
+    ) -> None:
+        for note in page:
+            note_id = note.get("id")
+            if not isinstance(note_id, str) or note_id in seen_ids:
+                continue
+            seen_ids.add(note_id)
+            if cls._is_clean_post_candidate(note, cutoff, pinned_note_ids):
+                notes.append(note)
+
+    @staticmethod
+    def _next_clean_posts_cursor(
+        page: list[dict[str, Any]], current: str | None
+    ) -> str | None:
+        if len(page) < 100:
+            return None
+        next_id = page[-1].get("id")
+        if not isinstance(next_id, str) or next_id == current:
+            return None
+        return next_id
+
+    async def _collect_clean_posts(
+        self, days: int
+    ) -> tuple[list[dict[str, Any]], datetime, set[str]]:
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        pinned_note_ids = await self._get_pinned_note_ids()
+        notes: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        until_id: str | None = None
+        while True:
+            page = await self.bot.misskey.get_user_notes(
+                self.bot.bot_user_id,
+                until_date=int(cutoff.timestamp() * 1000),
+                until_id=until_id,
+            )
+            if not page:
+                break
+            self._append_clean_post_candidates(
+                page, notes, seen_ids, cutoff, pinned_note_ids
+            )
+            until_id = self._next_clean_posts_cursor(page, until_id)
+            if until_id is None:
+                break
+        notes.sort(key=lambda note: self._note_created_at(note) or cutoff)
+        return notes, cutoff, pinned_note_ids
+
+    @classmethod
+    def _format_clean_preview(cls, notes: list[dict[str, Any]], days: int) -> str:
+        if not notes:
+            return f"未发现超过 {days} 天未被互动的帖子"
+        oldest = cls._note_created_at(notes[0])
+        newest = cls._note_created_at(notes[-1])
+        return "\n".join(
+            (
+                f"发现 {len(notes)} 条超过 {days} 天未被互动的帖子",
+                f"最旧：{oldest:%Y-%m-%d} · {notes[0]['id']}",
+                f"最新：{newest:%Y-%m-%d} · {notes[-1]['id']}",
+                f"使用 ^clean posts {days} -y 确认删除",
+                "危险：删除后无法恢复",
+            )
+        )
+
+    @staticmethod
+    def _parse_clean_args(args: str) -> tuple[int, bool] | str:
+        parts = args.split()
+        confirmed = len(parts) == 3 and parts[2] == "-y"
+        if (
+            len(parts) not in {2, 3}
+            or parts[0] != "posts"
+            or (len(parts) == 3 and not confirmed)
+        ):
+            return "用法: ^clean posts <天数> [-y]"
+        try:
+            days = int(parts[1])
+        except ValueError:
+            return "用法: ^clean posts <天数> [-y]"
+        if days < 1:
+            return "天数必须大于 0"
+        return days, confirmed
+
+    async def _delete_clean_posts(
+        self,
+        notes: list[dict[str, Any]],
+        cutoff: datetime,
+        pinned_note_ids: set[str],
+    ) -> tuple[int, int, int]:
+        deleted = 0
+        skipped = 0
+        batch = notes[:CLEAN_POST_DELETE_LIMIT]
+        unprocessed = len(notes) - len(batch)
+        for index, note in enumerate(batch):
+            try:
+                current = await self.bot.misskey.get_note(note["id"])
+            except APIBadRequestError:
+                skipped += 1
+                continue
+            except APIRateLimitError:
+                unprocessed += len(batch) - index
+                break
+            try:
+                if not self._is_clean_post_candidate(current, cutoff, pinned_note_ids):
+                    skipped += 1
+                    continue
+                await self.bot.misskey.delete_note(note["id"])
+            except APIBadRequestError:
+                skipped += 1
+                continue
+            except (APIConnectionError, APIRateLimitError):
+                unprocessed += len(batch) - index
+                break
+            deleted += 1
+            if index < len(batch) - 1:
+                await asyncio.sleep(1.05)
+        return deleted, skipped, unprocessed
+
+    async def _handle_clean(self, args: str) -> str:
+        parsed = self._parse_clean_args(args)
+        if isinstance(parsed, str):
+            return parsed
+        days, confirmed = parsed
+        if not self.bot.bot_user_id:
+            return "机器人账号尚未初始化"
+        notes, cutoff, pinned_note_ids = await self._collect_clean_posts(days)
+        if not confirmed or not notes:
+            return self._format_clean_preview(notes, days)
+        deleted, skipped, unprocessed = await self._delete_clean_posts(
+            notes, cutoff, pinned_note_ids
+        )
+        return (
+            f"已删除 {deleted} 条超过 {days} 天未被互动的帖子 · "
+            f"跳过 {skipped} 条 · 未处理 {unprocessed} 条"
+        )
 
     def _handle_set_bool(self, label: str, key: str, args: str) -> str:
         action = args.strip().lower()

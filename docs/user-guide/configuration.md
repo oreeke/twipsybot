@@ -44,7 +44,7 @@ TwipsyBot 使用 OpenAI Python SDK 连接兼容接口：
 
 通常先使用 `api_mode: auto`。只有兼容服务明确要求 Chat Completions 或 Responses API 时，再固定为 `chat` 或 `responses`。
 
-更换模型服务时，修改 `api_key`、`model` 和 `api_base`；如果新服务只支持特定接口模式，还需要调整 `api_mode`。同一 `api_base` 下切换模型，可以通过聊天管理命令 `^model <模型名>` 实时完成，无需重启。
+更换模型服务时，修改 `api_key`、`model` 和 `api_base`；如果新服务只支持特定接口模式，还需要调整 `api_mode`。同一 `api_base` 下切换模型，可以通过管理命令 `^model <模型名>` 实时完成，无需重启。
 
 不同能力可以由不同配置决定：
 
@@ -95,6 +95,7 @@ bot:
     mention: true
     chat: true
     chat_memory: 10
+    chat_context_tokens: 2000
     rate_limit: 30s
     max_turns: 20
     max_turns_release: 1d
@@ -103,7 +104,8 @@ bot:
 ```
 
 - `mention` 和 `chat` 分别控制提及与聊天响应。
-- `chat_memory` 是读取的历史消息条数，`0` 表示不带历史上下文。
+- `chat_memory` 是读取的历史消息条数，范围为 `0` 到 `100`，`0` 表示不带历史上下文。
+- `chat_context_tokens` 是历史消息的 token 预算，`0` 表示不带历史上下文；未知模型使用兼容编码近似计算。tiktoken 官方分词表首次使用时下载并缓存在 `data/tiktoken`。
 - `rate_limit` 是同一用户两次机器人回复之间的最短间隔。
 - `max_turns` 是同一用户可获得的机器人回复次数。
 - 达到轮数上限后，`max_turns_release` 决定等待多久恢复；设为 `-1` 会将该用户加入黑名单。

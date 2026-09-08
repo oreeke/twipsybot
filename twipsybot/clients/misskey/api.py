@@ -28,6 +28,9 @@ from .transport import TCPClient
 
 __all__ = ("MisskeyAPI",)
 
+NOTE_TEXT_MAX_LENGTH = 3000
+CHAT_TEXT_MAX_LENGTH = 2000
+
 
 class MisskeyAPI:
     def __init__(
@@ -170,6 +173,15 @@ class MisskeyAPI:
             return original_visibility
         return visibility
 
+    @staticmethod
+    def _limit_text(text: str, max_length: int, target: str) -> str:
+        if len(text) <= max_length:
+            return text
+        logger.warning(
+            f"Truncated {target} text to Misskey's {max_length}-character limit"
+        )
+        return text[:max_length]
+
     async def create_note(
         self,
         text: str,
@@ -186,7 +198,10 @@ class MisskeyAPI:
             )
         if visibility is None:
             visibility = "public"
-        data: dict[str, Any] = {"text": text, "visibility": visibility}
+        data: dict[str, Any] = {
+            "text": self._limit_text(text, NOTE_TEXT_MAX_LENGTH, "note"),
+            "visibility": visibility,
+        }
         if file_ids:
             data["fileIds"] = file_ids
         if resolved_reply_id:
@@ -233,7 +248,9 @@ class MisskeyAPI:
                 original_visibility, visibility
             )
         except APIBadRequestError:
-            return self._reply_visibility_missing(reply_id, visibility, validate_reply)
+            if validate_reply:
+                raise
+            return self._reply_visibility_missing(reply_id, visibility)
         except (APIConnectionError, APIRateLimitError) as e:
             if not is_last:
                 return None
@@ -251,14 +268,10 @@ class MisskeyAPI:
 
     @staticmethod
     def _reply_visibility_missing(
-        reply_id: str, visibility: str | None, validate_reply: bool
+        reply_id: str, visibility: str | None
     ) -> tuple[str | None, str | None]:
-        msg = "Target note not found"
-        if validate_reply:
-            logger.warning(f"{msg}; creating a new note instead of a reply: {reply_id}")
-            return None, visibility
         logger.warning(
-            f"{msg}; keeping replyId without visibility adjustment: {reply_id}"
+            f"Target note not found; keeping replyId without visibility adjustment: {reply_id}"
         )
         return reply_id, visibility
 
@@ -275,10 +288,7 @@ class MisskeyAPI:
         if retried:
             msg += " after retries"
         if validate_reply:
-            logger.warning(
-                f"{msg}; creating a new note instead of a reply: {reply_id} - {error}"
-            )
-            return None, visibility
+            raise error
         logger.warning(
             f"{msg}; keeping replyId without visibility adjustment: {reply_id} - {error}"
         )
@@ -286,6 +296,32 @@ class MisskeyAPI:
 
     async def get_note(self, note_id: str) -> dict[str, Any]:
         return await self.make_read_request("notes/show", {"noteId": note_id})
+
+    async def get_user_notes(
+        self,
+        user_id: str,
+        *,
+        until_date: int,
+        until_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        data: dict[str, Any] = {
+            "userId": user_id,
+            "withReplies": False,
+            "withRenotes": False,
+            "withChannelNotes": False,
+            "untilDate": until_date,
+            "limit": limit,
+            "allowPartial": False,
+            "withFiles": False,
+        }
+        if until_id:
+            data["untilId"] = until_id
+        result = await self.make_read_request("users/notes", data)
+        return result if isinstance(result, list) else []
+
+    async def delete_note(self, note_id: str) -> dict[str, Any]:
+        return await self.make_request("notes/delete", {"noteId": note_id})
 
     async def get_current_user(self) -> dict[str, Any]:
         return await self.make_read_request("i", {})
@@ -307,7 +343,10 @@ class MisskeyAPI:
     async def send_message(
         self, user_id: str, text: str, file_id: str | None = None
     ) -> dict[str, Any]:
-        data: dict[str, Any] = {"toUserId": user_id, "text": text}
+        data: dict[str, Any] = {
+            "toUserId": user_id,
+            "text": self._limit_text(text, CHAT_TEXT_MAX_LENGTH, "chat message"),
+        }
         if file_id:
             data["fileId"] = file_id
         result = await self.make_request("chat/messages/create-to-user", data)
@@ -319,7 +358,10 @@ class MisskeyAPI:
     async def send_room_message(
         self, room_id: str, text: str, file_id: str | None = None
     ) -> dict[str, Any]:
-        data: dict[str, Any] = {"toRoomId": room_id, "text": text}
+        data: dict[str, Any] = {
+            "toRoomId": room_id,
+            "text": self._limit_text(text, CHAT_TEXT_MAX_LENGTH, "chat message"),
+        }
         if file_id:
             data["fileId"] = file_id
         result = await self.make_request("chat/messages/create-to-room", data)
@@ -350,7 +392,7 @@ class MisskeyAPI:
         if visibility:
             data["visibility"] = visibility
         if text:
-            data["text"] = text
+            data["text"] = self._limit_text(text, NOTE_TEXT_MAX_LENGTH, "note")
         if local_only is not None:
             data["localOnly"] = bool(local_only)
         result = await self.make_request("notes/create", data)

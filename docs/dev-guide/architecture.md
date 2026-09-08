@@ -42,7 +42,7 @@ flowchart TB
 ```text
 twipsybot/
 ├── twipsybot/
-│   ├── admin/              聊天管理命令
+│   ├── admin/              管理命令
 │   ├── app/                CLI 与应用入口
 │   ├── bot/
 │   │   ├── engine/         核心编排、连接、限流与运行状态

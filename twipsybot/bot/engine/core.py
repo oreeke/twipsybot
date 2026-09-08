@@ -140,7 +140,7 @@ class MisskeyBot:
     def _trim_chat_history(
         history: list[dict[str, str]], limit_value: int
     ) -> list[dict[str, str]]:
-        return history[-limit_value * 2 :] if limit_value > 0 else []
+        return history[-limit_value:] if limit_value > 0 else []
 
     def append_chat_turn(
         self,

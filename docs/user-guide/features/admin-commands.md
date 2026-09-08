@@ -1,9 +1,9 @@
 ---
-title: 聊天管理命令
-description: 查询 TwipsyBot 的状态、模型、功能开关、用户访问名单和手动发布命令。
+title: 管理命令
+description: 查询 TwipsyBot 的状态、模型、功能开关、用户访问名单，以及清理和手动发布帖子。
 ---
 
-# 聊天管理命令
+# 管理命令
 
 管理命令在与机器人的聊天页面中使用。只有 `bot.admin.allowed_users` 中的用户 ID 或账号可以执行。
 
@@ -20,6 +20,8 @@ description: 查询 TwipsyBot 的状态、模型、功能开关、用户访问�
 | `^model reset` | 恢复默认模型 |
 | `^autopost on\|off` | 自动发帖开关 |
 | `^autopost reset` | 重置当天发帖计数 |
+| `^clean posts <天数>` | 预览超过指定时间未被互动的帖子 |
+| `^clean posts <天数> -y` | 确认删除预览范围内符合条件的帖子 |
 | `^mention on\|off` | 响应提及开关 |
 | `^chat on\|off` | 响应聊天开关 |
 | `^whitelist ...` | 查看/修改白名单 |
@@ -37,6 +39,8 @@ description: 查询 TwipsyBot 的状态、模型、功能开关、用户访问�
 ```
 
 `blacklist` 使用相同语法。`set` 会替换整个名单，`clear` 保存空名单，`reset` 删除运行时覆盖并恢复启动配置。
+
+`clean posts` 只处理机器人的独立普通帖子，排除回复、转帖、提及、频道、投票、置顶、Clip 及已有回复、转帖或反应的帖子。确认删除前会重新检查互动状态，并按从旧到新的顺序删除。Misskey API 每小时最多接受 300 次删除请求，且请求间隔至少 1 秒；命令每次最多处理 300 条。只有 `-y` 参数会执行删除，删除后无法恢复。
 
 模型和名单修改保存在 SQLite 中。功能开关只在当前进程中有效，重启后恢复 YAML 或环境变量配置。
 

@@ -9,7 +9,9 @@ description: 配置 TwipsyBot 的 Misskey 提及、聊天上下文、回复限�
 
 `bot.response.mention` 控制公开或半公开帖子中的 `@提及`，`bot.response.chat` 控制 Misskey 私聊和群聊。两项可以独立关闭。
 
-聊天支持有限的历史上下文，长度由 `chat_memory` 控制。较大的值能保留更多上下文，也会增加模型输入和调用成本。机器人重启不会删除 Misskey 中的聊天记录，但每次只读取配置数量以内的历史消息。
+处理提及时，机器人会在生成前和发送回复前确认原帖仍可读取。原帖已删除或无法确认时，跳过本次回复。
+
+聊天支持有限的历史上下文，`chat_memory` 控制最多读取的历史消息条数，取值范围为 `0` 到 `100`；`chat_context_tokens` 控制其中实际提交给模型的 token 数。两项限制同时生效，较大的值能保留更多上下文，也会增加模型输入和调用成本。机器人重启不会删除 Misskey 中的聊天记录。
 
 ## 回复限制
 
@@ -49,6 +51,7 @@ bot:
     mention: true
     chat: true
     chat_memory: 10
+    chat_context_tokens: 2000
     rate_limit: 30s
     max_turns: 30
     max_turns_release: 1d

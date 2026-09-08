@@ -21,6 +21,7 @@ class ConfigKeys:
     BOT_RESPONSE_MENTION = "bot.response.mention"
     BOT_RESPONSE_CHAT = "bot.response.chat"
     BOT_RESPONSE_CHAT_MEMORY = "bot.response.chat_memory"
+    BOT_RESPONSE_CHAT_CONTEXT_TOKENS = "bot.response.chat_context_tokens"
     BOT_RESPONSE_RATE_LIMIT = "bot.response.rate_limit"
     BOT_RESPONSE_RATE_LIMIT_REPLY = "bot.response.rate_limit_reply"
     BOT_RESPONSE_MAX_TURNS = "bot.response.max_turns"

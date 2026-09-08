@@ -35,11 +35,27 @@ def test_unknown_config_fields_fail_fast(
         config.load()
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("chat_memory", -1, "chat memory must be between 0 and 100"),
+        ("chat_memory", 101, "chat memory must be between 0 and 100"),
+        ("chat_context_tokens", -1, "chat context tokens must be >= 0"),
+    ],
+)
+def test_chat_context_limits_reject_out_of_range_values(
+    write_config: WriteConfig, field: str, value: int, message: str
+) -> None:
+    with pytest.raises(ConfigurationError, match=message):
+        write_config(bot={"response": {field: value}})
+
+
 def test_environment_overrides_yaml_config(
     monkeypatch: pytest.MonkeyPatch,
     write_config: WriteConfig,
 ) -> None:
     monkeypatch.setenv("OPENAI_MODEL", "model-from-env")
+    monkeypatch.setenv("BOT_RESPONSE_CHAT_CONTEXT_TOKENS", "2000")
     monkeypatch.setenv("BOT_RESPONSE_RATE_LIMIT", "3")
     monkeypatch.setenv("BOT_TIMELINE_GLOBAL", "true")
     monkeypatch.setenv("DB_CLEAR", "30")
@@ -50,11 +66,23 @@ def test_environment_overrides_yaml_config(
     )
 
     assert config.get(ConfigKeys.OPENAI_MODEL) == "model-from-env"
+    assert config.get(ConfigKeys.BOT_RESPONSE_CHAT_CONTEXT_TOKENS) == 2000
     assert config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT) == 3
     assert config.get(ConfigKeys.BOT_TIMELINE_GLOBAL) is True
     assert config.data["bot"]["timeline"]["global"] is True
     assert "global_" not in config.data["bot"]["timeline"]
     assert config.get(ConfigKeys.DB_CLEAR) == 30
+
+
+def test_environment_chat_memory_rejects_values_above_misskey_limit(
+    monkeypatch: pytest.MonkeyPatch, write_config: WriteConfig
+) -> None:
+    monkeypatch.setenv("BOT_RESPONSE_CHAT_MEMORY", "101")
+
+    with pytest.raises(
+        ConfigurationError, match="chat memory must be between 0 and 100"
+    ):
+        write_config()
 
 
 def test_timeline_channels_are_independently_enabled(write_config: WriteConfig) -> None:

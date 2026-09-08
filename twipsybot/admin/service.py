@@ -99,6 +99,7 @@ class AdminCommandService(CmdHandlersMixin):
             "status": lambda args: self._get_status_text(),
             "model": self._handle_model,
             "autopost": self._handle_autopost,
+            "clean": self._handle_clean,
             "mention": lambda args: self._handle_set_bool(
                 "mention", ConfigKeys.BOT_RESPONSE_MENTION, args
             ),
@@ -130,6 +131,10 @@ class AdminCommandService(CmdHandlersMixin):
                 },
                 "autopost": {
                     "description": "自动发帖 (用法: ^autopost on|off|reset)",
+                    "aliases": [],
+                },
+                "clean": {
+                    "description": "清理帖子 (用法: ^clean posts <天数> [-y])",
                     "aliases": [],
                 },
                 "mention": {

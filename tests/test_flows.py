@@ -16,6 +16,7 @@ from conftest import (
 )
 
 from twipsybot.bot.flows.post import AutoPostService
+from twipsybot.shared.exceptions import APIBadRequestError
 
 _MENTION_NOTE = {
     "id": "note-mention-1",
@@ -46,6 +47,24 @@ async def test_mention_triggers_ai_reply(
     assert len(notes) == 1
     assert notes[0]["text"] == f"@alice\n{DEFAULT_AI_REPLY}"
     assert notes[0]["replyId"] == "note-mention-1"
+
+
+async def test_mention_skips_generation_when_source_note_is_missing(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot = await make_bot(write_config())
+    get_note = AsyncMock(side_effect=APIBadRequestError("NO_SUCH_NOTE: No such note."))
+    monkeypatch.setattr(bot.misskey, "get_note", get_note)
+
+    await bot.mention.handle(dict(_MENTION_NOTE))
+
+    get_note.assert_awaited_once_with("note-mention-1")
+    assert openai_server.calls == []
+    assert "notes/create" not in misskey_server.calls
 
 
 async def test_remote_mention_uses_federated_handle(
@@ -426,6 +445,66 @@ async def test_chat_uses_history_and_replies_to_user(
     ]
     reply = misskey_server.calls["chat/messages/create-to-user"][0]
     assert reply == {"i": "test-token", "toUserId": "user-2", "text": DEFAULT_AI_REPLY}
+
+
+async def test_chat_history_uses_same_message_limit_after_cache_warms(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+) -> None:
+    bot = await make_bot(write_config(bot={"response": {"chat_memory": 2}}))
+    bot._chat_histories["user-2"] = [
+        {"role": "user", "content": "旧问题"},
+        {"role": "assistant", "content": "旧回答"},
+    ]
+
+    bot.append_chat_turn("user-2", "新问题", "新回答", 2)
+
+    assert bot._chat_histories["user-2"] == [
+        {"role": "user", "content": "新问题"},
+        {"role": "assistant", "content": "新回答"},
+    ]
+
+
+async def test_chat_trims_oldest_history_to_token_budget(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    misskey_server.set_response(
+        "chat/messages/user-timeline",
+        lambda payload: [
+            {
+                "text": "最近消息 <|endoftext|>",
+                "fromUser": {"id": payload["userId"], "username": "bob"},
+            },
+            {
+                "text": "很久以前的消息" * 20,
+                "fromUser": {"id": payload["userId"], "username": "bob"},
+            },
+        ],
+    )
+    bot = await make_bot(write_config(bot={"response": {"chat_context_tokens": 20}}))
+
+    await bot.chat.handle(dict(_CHAT_MESSAGE))
+
+    assert [message["content"] for message in openai_server.calls[0]["messages"]] == [
+        "你是测试机器人",
+        "最近消息 <|endoftext|>",
+        "你好，机器人",
+    ]
+
+
+async def test_chat_with_disabled_history_skips_misskey_timeline(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    bot = await make_bot(write_config(bot={"response": {"chat_context_tokens": 0}}))
+
+    await bot.chat.handle(dict(_CHAT_MESSAGE))
+
+    assert misskey_server.calls.get("chat/messages/user-timeline", []) == []
 
 
 async def test_chat_generates_and_attaches_image(

@@ -120,6 +120,16 @@ class MentionHandler:
             return
         try:
             display = mention.username or "unknown"
+            try:
+                await self.bot.misskey.get_note(mention.mention_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(
+                    f"Skipping mention because source note is unavailable: "
+                    f"{mention.mention_id} - {e}"
+                )
+                return
 
             async def send_reply(text: str, file_id: str | None) -> None:
                 await self._send_mention_reply(mention, text, file_id)

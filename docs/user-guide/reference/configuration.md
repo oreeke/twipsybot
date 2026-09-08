@@ -66,7 +66,8 @@ BOT_ADMIN_ALLOWED_USERS=admin@example.com,9abcdef012345678
 | --- | --- | --- | --- |
 | `bot.response.mention` | `BOT_RESPONSE_MENTION` | `true` | 响应帖子提及 |
 | `bot.response.chat` | `BOT_RESPONSE_CHAT` | `true` | 响应私聊和群聊 |
-| `bot.response.chat_memory` | `BOT_RESPONSE_CHAT_MEMORY` | `10` | 每个聊天保留的上下文条数，0 禁用 |
+| `bot.response.chat_memory` | `BOT_RESPONSE_CHAT_MEMORY` | `10` | 每个聊天保留的上下文条数，范围 0-100，0 禁用 |
+| `bot.response.chat_context_tokens` | `BOT_RESPONSE_CHAT_CONTEXT_TOKENS` | `2000` | 历史消息 token 预算，0 禁用 |
 | `bot.response.rate_limit` | `BOT_RESPONSE_RATE_LIMIT` | `-1` | 同一用户最小回复间隔 |
 | `bot.response.rate_limit_reply` | `BOT_RESPONSE_RATE_LIMIT_REPLY` | `我需要休息一下...` | 间隔限制提示 |
 | `bot.response.max_turns` | `BOT_RESPONSE_MAX_TURNS` | `-1` | 每个用户最多机器人回复次数 |

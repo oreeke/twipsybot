@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, call
@@ -222,6 +223,103 @@ async def test_misskey_api_does_not_retry_writes() -> None:
         await api.make_request("notes/create")
 
     request.assert_awaited_once_with("notes/create", None)
+
+
+async def test_create_note_does_not_fallback_when_reply_target_is_missing() -> None:
+    request = AsyncMock(side_effect=APIBadRequestError("NO_SUCH_NOTE: No such note."))
+    api = object.__new__(MisskeyAPI)
+    api._make_request_once = request
+
+    with pytest.raises(APIBadRequestError):
+        await api.create_note("reply", reply_id="missing-note")
+
+    request.assert_awaited_once_with("notes/show", {"noteId": "missing-note"})
+
+
+async def test_create_note_keeps_unvalidated_missing_reply_target() -> None:
+    request = AsyncMock(
+        side_effect=[APIBadRequestError("NO_SUCH_NOTE: No such note."), {}]
+    )
+    api = object.__new__(MisskeyAPI)
+    api._make_request_once = request
+
+    await api.create_note("reply", reply_id="missing-note", validate_reply=False)
+
+    assert request.await_args_list == [
+        call("notes/show", {"noteId": "missing-note"}),
+        call(
+            "notes/create",
+            {"text": "reply", "visibility": "public", "replyId": "missing-note"},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("method", "identifier_key"),
+    [("send_message", "toUserId"), ("send_room_message", "toRoomId")],
+)
+async def test_chat_messages_respect_misskey_text_limit(
+    method: str, identifier_key: str
+) -> None:
+    request = AsyncMock(return_value={})
+    api = object.__new__(MisskeyAPI)
+    api.make_request = request
+
+    await getattr(api, method)("target", "x" * 2001)
+
+    endpoint = (
+        "chat/messages/create-to-user"
+        if method == "send_message"
+        else "chat/messages/create-to-room"
+    )
+    request.assert_awaited_once_with(
+        endpoint, {identifier_key: "target", "text": "x" * 2000}
+    )
+
+
+@pytest.mark.parametrize("method", ("create_note", "create_renote"))
+async def test_notes_respect_misskey_text_limit(method: str) -> None:
+    request = AsyncMock(return_value={})
+    api = object.__new__(MisskeyAPI)
+    api.make_request = request
+
+    if method == "create_note":
+        await api.create_note("x" * 3001)
+        expected = {"text": "x" * 3000, "visibility": "public"}
+    else:
+        await api.create_renote("note", text="x" * 3001)
+        expected = {"renoteId": "note", "text": "x" * 3000}
+
+    request.assert_awaited_once_with("notes/create", expected)
+
+
+async def test_user_note_cleanup_requests_use_safe_scope() -> None:
+    read = AsyncMock(return_value=[{"id": "note-1"}])
+    write = AsyncMock(return_value={})
+    api = object.__new__(MisskeyAPI)
+    api.make_read_request = read
+    api.make_request = write
+
+    assert await api.get_user_notes(
+        "bot-id", until_date=123456789, until_id="note-2"
+    ) == [{"id": "note-1"}]
+    await api.delete_note("note-1")
+
+    read.assert_awaited_once_with(
+        "users/notes",
+        {
+            "userId": "bot-id",
+            "withReplies": False,
+            "withRenotes": False,
+            "withChannelNotes": False,
+            "untilDate": 123456789,
+            "limit": 100,
+            "allowPartial": False,
+            "withFiles": False,
+            "untilId": "note-2",
+        },
+    )
+    write.assert_awaited_once_with("notes/delete", {"noteId": "note-1"})
 
 
 async def test_streaming_reconnect_backoff_caps_and_resets(
@@ -597,6 +695,45 @@ async def test_openai_forwards_explicit_image_options() -> None:
         size="2048x2048",
         quality="medium",
     )
+
+
+def test_openai_loads_token_encoding_lazily_into_data_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    encoding = SimpleNamespace(encode_ordinary=lambda text: list(text))
+    load_encoding = Mock(return_value=encoding)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TIKTOKEN_CACHE_DIR", raising=False)
+    monkeypatch.setattr(
+        "twipsybot.clients.openai.api.tiktoken.encoding_for_model", load_encoding
+    )
+
+    api = OpenAIAPI("test")
+
+    load_encoding.assert_not_called()
+    assert api.trim_chat_history([{"role": "user", "content": "hello"}], 9)
+    load_encoding.assert_called_once_with("gpt-5-mini")
+    assert os.environ["TIKTOKEN_CACHE_DIR"] == str(
+        (tmp_path / "data" / "tiktoken").resolve()
+    )
+
+
+def test_openai_token_encoding_failure_uses_character_estimate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    load_encoding = Mock(side_effect=OSError("offline"))
+    monkeypatch.setattr(
+        "twipsybot.clients.openai.api.tiktoken.encoding_for_model", load_encoding
+    )
+    api = OpenAIAPI("test")
+    history = [
+        {"role": "user", "content": "123456"},
+        {"role": "assistant", "content": "ok"},
+    ]
+
+    assert api.trim_chat_history(history, 10) == [history[-1]]
+    assert api.trim_chat_history(history, 10) == [history[-1]]
+    load_encoding.assert_called_once_with("gpt-5-mini")
 
 
 async def test_streaming_startup_failure_closes_initialized_services(

@@ -80,7 +80,7 @@ export default withMermaid(
                 link: "/user-guide/features/timelines",
               },
               {
-                text: "聊天管理命令",
+                text: "管理命令",
                 link: "/user-guide/features/admin-commands",
               },
             ],

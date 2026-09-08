@@ -301,20 +301,30 @@ class ChatHandler:
         room_id: str | None,
         limit: int | None,
     ) -> str | AIResponse | None:
-        history = await self.bot.get_or_load_chat_history(
-            conversation_id, limit=limit, user_id=user_id, room_id=room_id
+        limit_value = _resolve_history_limit(
+            self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
         )
-        messages: list[dict[str, str]] = []
-        if self.bot.system_prompt:
-            messages.append({"role": "system", "content": self.bot.system_prompt})
-        messages.extend(history)
+        token_budget = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_CONTEXT_TOKENS)
+        history = (
+            await self.bot.get_or_load_chat_history(
+                conversation_id, limit=limit_value, user_id=user_id, room_id=room_id
+            )
+            if limit_value > 0 and isinstance(token_budget, int) and token_budget > 0
+            else []
+        )
         last = next(reversed(history), None)
-        if not (
+        if (
             isinstance(last, dict)
             and last.get("role") == "user"
             and last.get("content") == user_content
         ):
-            messages.append({"role": "user", "content": user_content})
+            history.pop()
+        history = self.bot.openai.trim_chat_history(history, token_budget)
+        messages: list[dict[str, str]] = []
+        if self.bot.system_prompt:
+            messages.append({"role": "system", "content": self.bot.system_prompt})
+        messages.extend(history)
+        messages.append({"role": "user", "content": user_content})
         return await self.bot.openai.generate_chat(messages, **self.bot.ai_config)
 
     async def get_chat_history(

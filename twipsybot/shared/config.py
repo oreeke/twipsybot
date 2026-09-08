@@ -49,6 +49,7 @@ _ENV_TO_KEY = {
     "BOT_RESPONSE_MENTION": ConfigKeys.BOT_RESPONSE_MENTION,
     "BOT_RESPONSE_CHAT": ConfigKeys.BOT_RESPONSE_CHAT,
     "BOT_RESPONSE_CHAT_MEMORY": ConfigKeys.BOT_RESPONSE_CHAT_MEMORY,
+    "BOT_RESPONSE_CHAT_CONTEXT_TOKENS": ConfigKeys.BOT_RESPONSE_CHAT_CONTEXT_TOKENS,
     "BOT_RESPONSE_RATE_LIMIT": ConfigKeys.BOT_RESPONSE_RATE_LIMIT,
     "BOT_RESPONSE_RATE_LIMIT_REPLY": ConfigKeys.BOT_RESPONSE_RATE_LIMIT_REPLY,
     "BOT_RESPONSE_MAX_TURNS": ConfigKeys.BOT_RESPONSE_MAX_TURNS,
@@ -228,6 +229,7 @@ class ResponseConfig(_ConfigModel):
     mention: bool = True
     chat: bool = True
     chat_memory: int = 10
+    chat_context_tokens: int = 2000
     rate_limit: int = -1
     rate_limit_reply: str = "我需要休息一下..."
     max_turns: int = -1
@@ -262,8 +264,15 @@ class ResponseConfig(_ConfigModel):
     @field_validator("chat_memory")
     @classmethod
     def _validate_chat_memory(cls, v: int) -> int:
+        if not 0 <= v <= 100:
+            raise ValueError("chat memory must be between 0 and 100")
+        return v
+
+    @field_validator("chat_context_tokens")
+    @classmethod
+    def _validate_chat_context_tokens(cls, v: int) -> int:
         if v < 0:
-            raise ValueError("chat context memory length must be >= 0")
+            raise ValueError("chat context tokens must be >= 0")
         return v
 
     @field_validator("max_turns")

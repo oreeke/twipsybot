@@ -1,8 +1,11 @@
 import asyncio
 import base64
+import os
+from pathlib import Path
 from typing import Any
 
 import openai
+import tiktoken
 from loguru import logger
 from openai import (
     APIStatusError,
@@ -61,6 +64,8 @@ class OpenAIAPI:
         self.image_quality = image_quality
         self._responses_disabled = False
         self._semaphore = asyncio.Semaphore(OPENAI_MAX_CONCURRENCY)
+        self._token_encoding: tiktoken.Encoding | None = None
+        self._token_encoding_unavailable = False
         try:
             self.client = openai.AsyncOpenAI(
                 api_key=self.api_key,
@@ -134,6 +139,45 @@ class OpenAIAPI:
                     parts.append(part)
             converted.append({**message, "content": parts})
         return converted
+
+    def trim_chat_history(
+        self, history: list[dict[str, str]], token_budget: int | None
+    ) -> list[dict[str, str]]:
+        if not isinstance(token_budget, int) or token_budget <= 0:
+            return []
+        encoding = self._get_token_encoding()
+        selected: list[dict[str, str]] = []
+        used_tokens = 0
+        for message in reversed(history):
+            content = message.get("content", "")
+            message_tokens = (
+                len(encoding.encode_ordinary(content)) if encoding else len(content)
+            ) + 4
+            if used_tokens + message_tokens > token_budget:
+                break
+            selected.append(message)
+            used_tokens += message_tokens
+        selected.reverse()
+        return selected
+
+    def _get_token_encoding(self) -> tiktoken.Encoding | None:
+        if self._token_encoding is not None or self._token_encoding_unavailable:
+            return self._token_encoding
+        os.environ.setdefault(
+            "TIKTOKEN_CACHE_DIR", str(Path("data/tiktoken").resolve())
+        )
+        try:
+            try:
+                self._token_encoding = tiktoken.encoding_for_model(self.model)
+            except KeyError:
+                self._token_encoding = tiktoken.get_encoding("o200k_base")
+        except Exception as e:
+            self._token_encoding_unavailable = True
+            logger.warning(
+                f"Failed to load tiktoken encoding; using character estimate: "
+                f"{self._safe_error_message(e)}"
+            )
+        return self._token_encoding
 
     @staticmethod
     def _is_responses_unavailable(error: Any) -> bool:

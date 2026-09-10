@@ -121,7 +121,7 @@ uv run twipsybot config-check
 uv run twipsybot run
 ```
 
-## 使用 systemd 托管
+## 使用 systemd 托管（可选）
 
 本地部署需要作为后台服务时，可创建 `/etc/systemd/system/twipsybot.service`：
 

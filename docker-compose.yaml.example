@@ -30,7 +30,7 @@ services:
       - BOT_AUTO_POST_MAX_PER_DAY=8                                # 每日最大发帖数量（凌晨 0 点重置计数器）
       - BOT_AUTO_POST_VISIBILITY=public                            # 发帖可见性（public/home/followers）
       - BOT_AUTO_POST_LOCAL_ONLY=false                             # 是否禁用联合（仅本地可见）
-      - BOT_AUTO_POST_PROMPT=生成一篇有趣、有见解的社交媒体帖子。      # 发帖提示词
+      - BOT_AUTO_POST_PROMPT=生成一篇有趣、有见解的社交媒体帖子。      # 发帖提示词（支持文件导入："prompts/*.txt"）
       - BOT_RESPONSE_MENTION=true                                  # 是否响应提及（@）
       - BOT_RESPONSE_CHAT=true                                     # 是否响应聊天
       - BOT_RESPONSE_CHAT_MEMORY=10                                # 聊天上下文记忆长度（0-100 条）

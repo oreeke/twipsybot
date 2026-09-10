@@ -38,7 +38,7 @@ bot:
     max_posts_per_day: 8                            # 每日最大发帖数量（凌晨 0 点重置计数器）
     visibility: "public"                            # 发帖可见性（public/home/followers）
     local_only: false                               # 是否禁用联合（仅本地可见）
-    prompt: |-                                      # 发帖提示词
+    prompt: |-                                      # 发帖提示词（支持文件导入："prompts/*.txt"）
       生成一篇有趣、有见解的社交媒体帖子。
 
   response:

@@ -60,7 +60,7 @@ environment:
   - OPENAI_API_KEY=your_api_key_here
   - OPENAI_MODEL=deepseek-chat
   - OPENAI_API_BASE=https://api.deepseek.com/v1
-  - BOT_SYSTEM_PROMPT=你是一个可爱的AI助手...
+  - BOT_SYSTEM_PROMPT=你是一个可爱的AI助手...    # 或使用 prompts/*.txt
   - BOT_ADMIN_ALLOWED_USERS=your_username@example.com
 ```
 

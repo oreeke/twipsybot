@@ -16,8 +16,8 @@ description: 了解 TwipsyBot 架构、插件 API、测试流程和项目维护�
 - [Misskey](misskey.md)：了解 REST API、Streaming Channel、权限和客户端约束。
 - [OpenAI](openai.md)：了解兼容 API、接口模式、多模态能力和客户端约束。
 - [插件开发](plugins.md)：创建插件并使用事件、服务和存储 API。
-- [测试与质量](testing.md)：运行测试、Ruff、Pyright 和 pre-commit。
-- [发布与维护](maintenance.md)：管理依赖、版本、镜像和兼容性。
+- [测试](testing.md)：运行测试、Ruff、Pyright 和 pre-commit。
+- [维护](maintenance.md)：管理依赖、版本、镜像和兼容性。
 
 ## 从哪里开始
 

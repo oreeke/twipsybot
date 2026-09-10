@@ -1,9 +1,9 @@
 ---
-title: 测试与质量
+title: 测试
 description: 运行 TwipsyBot 的 pytest、Ruff、Pyright、锁文件和 pre-commit 检查。
 ---
 
-# 测试与质量
+# 测试
 
 提交前应在 Python 3.11+ 环境安装开发依赖：
 

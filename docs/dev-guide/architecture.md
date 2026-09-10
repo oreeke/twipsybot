@@ -9,7 +9,7 @@ TwipsyBot 是单进程异步应用。
 
 核心负责连接、事件分发和状态管理，插件通过稳定上下文使用受限服务，不直接依赖内部实现。
 
-## 架构图
+## 系统概览
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear", "nodeSpacing": 32, "rankSpacing": 44}}}%%

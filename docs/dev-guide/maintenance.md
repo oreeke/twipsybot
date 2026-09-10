@@ -1,9 +1,9 @@
 ---
-title: 发布与维护
+title: 维护
 description: 维护 TwipsyBot 依赖、版本、变更记录、Docker 镜像和插件兼容性。
 ---
 
-# 发布与维护
+# 维护
 
 项目版本以 `pyproject.toml` 的 `project.version` 为准。
 

@@ -384,7 +384,10 @@ async def test_permanent_turn_limit_uses_manageable_blacklist(
         write_config(
             bot={
                 "admin": {"allowed_users": ["admin-id"]},
-                "response": {"max_turns": 1, "max_turns_release": -1},
+                "response": {
+                    "max_turns": 1,
+                    "max_turns_release": -1,
+                },
             }
         )
     )
@@ -413,7 +416,6 @@ async def test_permanent_turn_limit_uses_manageable_blacklist(
     replies = misskey_server.calls["chat/messages/create-to-user"]
     assert [reply["text"] for reply in replies] == [
         DEFAULT_AI_REPLY,
-        "我要回家了...",
         "查看/修改黑名单:\n```\n已更新 blacklist\n\n(空)\n```",
         DEFAULT_AI_REPLY,
     ]
@@ -1044,6 +1046,22 @@ async def test_rate_limit_returns_configured_reply_without_second_ai_call(
     assert len(openai_server.calls) == 1
     replies = misskey_server.calls["chat/messages/create-to-user"]
     assert [reply["text"] for reply in replies] == [DEFAULT_AI_REPLY, "请稍后再试"]
+
+
+async def test_rate_limit_silently_blocks_when_reply_is_empty(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    bot = await make_bot(write_config(bot={"response": {"rate_limit": "1h"}}))
+
+    await bot.chat.handle(dict(_CHAT_MESSAGE))
+    await bot.chat.handle({**_CHAT_MESSAGE, "id": "msg-2"})
+
+    assert len(openai_server.calls) == 1
+    replies = misskey_server.calls["chat/messages/create-to-user"]
+    assert [reply["text"] for reply in replies] == [DEFAULT_AI_REPLY]
 
 
 async def test_plugin_can_take_over_mention(

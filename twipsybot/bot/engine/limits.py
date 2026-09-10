@@ -125,9 +125,9 @@ class ResponseLimiter:
 
     async def get_response_block_reply(
         self, *, user_id: str, handle: str | None
-    ) -> str | None:
+    ) -> tuple[bool, str]:
         if self._is_response_whitelisted_user(user_id=user_id, handle=handle):
-            return None
+            return False, ""
         now = time.time()
         state = await self._get_response_limit_state(user_id)
         if state.blocked_until_ts is not None and now >= state.blocked_until_ts:
@@ -135,14 +135,14 @@ class ResponseLimiter:
             state.blocked_until_ts = None
             await self._save_response_limit_state(user_id, state)
         if state.blocked_until_ts is not None and now < state.blocked_until_ts:
-            return self._config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY)
+            return True, self._config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY)
         interval = self._duration_config_seconds(ConfigKeys.BOT_RESPONSE_RATE_LIMIT)
         if (
             interval > 0
             and state.last_reply_ts is not None
             and now - state.last_reply_ts < interval
         ):
-            return self._config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT_REPLY)
+            return True, self._config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT_REPLY)
         max_turns = self._config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS)
         if isinstance(max_turns, int) and max_turns >= 0 and state.turns >= max_turns:
             release = self._duration_config_seconds(
@@ -155,8 +155,8 @@ class ResponseLimiter:
             else:
                 state.blocked_until_ts = now + release
             await self._save_response_limit_state(user_id, state)
-            return self._config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY)
-        return None
+            return True, self._config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY)
+        return False, ""
 
     async def maybe_send_blocked_reply(
         self,
@@ -165,11 +165,14 @@ class ResponseLimiter:
         handle: str | None,
         send_reply: Callable[[str, str | None], Awaitable[None]],
     ) -> bool:
-        blocked = await self.get_response_block_reply(user_id=user_id, handle=handle)
+        blocked, reply = await self.get_response_block_reply(
+            user_id=user_id, handle=handle
+        )
         if not blocked:
             return False
-        await send_reply(blocked, None)
-        await self.record_response(user_id, count_turn=False)
+        if reply:
+            await send_reply(reply, None)
+            await self.record_response(user_id, count_turn=False)
         return True
 
     async def record_response(self, user_id: str, *, count_turn: bool) -> None:

@@ -1,7 +1,7 @@
 from typing import Any, Literal
 
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from twipsybot.plugin import (
     PluginBase,
@@ -15,17 +15,35 @@ class _Config(PluginConfig):
     reply_enabled: bool = Field(False, validation_alias="reply")
     reply_text: str | None = None
     reply_ai: bool = False
-    reply_ai_prompt: str | None = None
+    reply_ai_prompt: str = ""
     reply_local_only: bool = False
     quote_enabled: bool = Field(False, validation_alias="quote")
     quote_text: str | None = None
     quote_ai: bool = False
-    quote_ai_prompt: str | None = None
+    quote_ai_prompt: str = ""
     quote_visibility: Literal["public", "home", "followers"] | None = None
     quote_local_only: bool = False
     renote_enabled: bool = Field(False, validation_alias="renote")
     renote_visibility: Literal["public", "home", "followers"] | None = None
     renote_local_only: bool = False
+
+    @model_validator(mode="after")
+    def _validate_ai_prompts(self) -> "_Config":
+        if (
+            self.reply_enabled
+            and self.reply_ai
+            and not (self.reply_text or "").strip()
+            and not self.reply_ai_prompt.strip()
+        ):
+            raise ValueError("reply_ai_prompt must not be empty")
+        if (
+            self.quote_enabled
+            and self.quote_ai
+            and not (self.quote_text or "").strip()
+            and not self.quote_ai_prompt.strip()
+        ):
+            raise ValueError("quote_ai_prompt must not be empty")
+        return self
 
 
 class RadarPlugin(PluginBase):
@@ -33,13 +51,6 @@ class RadarPlugin(PluginBase):
     config_class = _Config
     settings: _Config
     description = "主动与天线发现的帖子互动（反应、回复、转发、引用）"
-
-    DEFAULT_REPLY_AI_PROMPT = (
-        "根据帖子内容写一句自然回复，不要复述原文，不要加引号，不超过30字：\n{content}"
-    )
-    DEFAULT_QUOTE_AI_PROMPT = (
-        "根据帖子内容写一句简短感想，不要复述原文，不要加引号，不超过30字：\n{content}"
-    )
 
     async def initialize(self) -> bool:
         selectors = self.context.bot.load_antenna_selectors()
@@ -124,18 +135,17 @@ class RadarPlugin(PluginBase):
         *,
         text: str | None,
         ai_enabled: bool,
-        ai_prompt: str | None,
-        default_prompt: str,
+        ai_prompt: str,
         action: str,
     ) -> str | None:
         if text:
             text = self._format_reply_text(text, note_data).strip()
             if text:
                 return text
-        if not ai_enabled:
+        if not ai_enabled or not ai_prompt.strip():
             return None
         try:
-            return await self._generate_ai(note_data, ai_prompt or default_prompt)
+            return await self._generate_ai(note_data, ai_prompt)
         except Exception as e:
             logger.error(f"Radar AI {action} failed: {e!r}")
             return None
@@ -150,7 +160,6 @@ class RadarPlugin(PluginBase):
             text=self.settings.reply_text,
             ai_enabled=self.settings.reply_ai,
             ai_prompt=self.settings.reply_ai_prompt,
-            default_prompt=self.DEFAULT_REPLY_AI_PROMPT,
             action="reply",
         )
         if not text:
@@ -173,7 +182,6 @@ class RadarPlugin(PluginBase):
             text=self.settings.quote_text,
             ai_enabled=self.settings.quote_ai,
             ai_prompt=self.settings.quote_ai_prompt,
-            default_prompt=self.DEFAULT_QUOTE_AI_PROMPT,
             action="quote",
         )
         if not text:

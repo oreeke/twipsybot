@@ -8,7 +8,11 @@ reaction: ""                     # 反应（例如 "heart"/":emoji:"）；留空
 reply: false                     # 是否回复
 reply_text: ""                   # 自定义回复内容（可用 {username}）；留空可配合 reply_ai
 reply_ai: false                  # AI 自动回复（基于帖子内容生成；reply_text 为空时才生效）
-reply_ai_prompt: ""              # AI 回复提示词（可用 {content}）；留空使用内置默认提示词
+reply_ai_prompt: |-              # AI 回复提示词，可用 {content}
+  根据帖子内容写一句自然回复。
+  不要复述原文，不要加引号。
+  不超过30字：
+  {content}
 reply_local_only: false          # 回复是否禁用联合（仅本地可见）
 
 renote: false                    # 是否转发
@@ -18,6 +22,10 @@ renote_local_only: false         # 转发是否禁用联合（仅本地可见）
 quote: false                     # 是否引用
 quote_text: ""                   # 自定义引用内容（可用 {username}）；留空可配合 quote_ai
 quote_ai: false                  # AI 自动写一句引用感想（quote_text 为空时才生效）
-quote_ai_prompt: ""              # AI 引用提示词（可用 {content}）；留空使用内置默认提示词
+quote_ai_prompt: |-              # AI 引用提示词，可用 {content}
+  根据帖子内容写一句简短感想。
+  不要复述原文，不要加引号。
+  不超过30字：
+  {content}
 quote_visibility: "home"         # 引用可见性：public/home/followers
 quote_local_only: false          # 引用是否禁用联合（仅本地可见）

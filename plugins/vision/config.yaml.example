@@ -7,4 +7,5 @@ max_images: 1                       # 单次最多处理图片数量
 max_bytes: 6MB                      # 单张图片下载大小上限（B/KB/MB）
 use_thumbnail: false                # 是否使用缩略图（更快但细节更少）
 
-default_prompt: "请描述图片内容。"    # 用户只发图片不带文字时使用
+default_prompt: |-                  # 用户只发图片不带文字时使用
+  请描述图片内容。

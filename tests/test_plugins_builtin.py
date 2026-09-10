@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -14,6 +15,7 @@ from plugins.radar.plugin import RadarPlugin
 from plugins.topics.plugin import TopicsPlugin
 from plugins.vision.plugin import VisionPlugin
 from twipsybot.plugin import (
+    AutoPostEvent,
     FileRef,
     MentionEvent,
     MessageEvent,
@@ -57,14 +59,76 @@ def test_builtin_plugins_parse_boolean_strings() -> None:
     radar = RadarPlugin(
         _context({"enabled": "true", "reply": "false", "quote": "true"})
     )
-    topics = TopicsPlugin(_context({"enabled": "true", "rss_ai": "false"}))
-    vision = VisionPlugin(_context({"enabled": "true", "use_thumbnail": "false"}))
+    topics = TopicsPlugin(
+        _context({"enabled": "true", "rss_ai": "false", "txt_ai_prefix": "{topic}"})
+    )
+    vision = VisionPlugin(
+        _context(
+            {
+                "enabled": "true",
+                "use_thumbnail": "false",
+                "default_prompt": "describe",
+            }
+        )
+    )
 
     assert radar._enabled is True
     assert radar.settings.reply_enabled is False
     assert radar.settings.quote_enabled is True
     assert topics.settings.rss_ai is False
     assert vision.settings.use_thumbnail is False
+
+
+def test_builtin_plugin_prompt_defaults_are_empty() -> None:
+    assert IinchoPlugin.config_class.model_fields["prompt"].default == ""
+    assert IinchoPlugin.config_class.model_fields["system_prompt"].default == ""
+    assert RadarPlugin.config_class.model_fields["reply_ai_prompt"].default == ""
+    assert RadarPlugin.config_class.model_fields["quote_ai_prompt"].default == ""
+    assert TopicsPlugin.config_class.model_fields["txt_ai_prefix"].default == ""
+    assert TopicsPlugin.config_class.model_fields["rss_ai_prefix"].default == ""
+    assert VisionPlugin.config_class.model_fields["default_prompt"].default == ""
+
+
+@pytest.mark.parametrize("field", ("prompt", "system_prompt"))
+def test_iincho_requires_prompts(field: str) -> None:
+    config = {
+        "interval": "5m",
+        "prompt": "summarize",
+        "system_prompt": "analyst",
+        field: " ",
+    }
+    context = _context(config)
+
+    with pytest.raises(ValueError, match=rf"{field} must not be empty"):
+        IinchoPlugin(context)
+
+
+@pytest.mark.parametrize(
+    ("config", "field"),
+    [
+        ({"reply": True, "reply_ai": True}, "reply_ai_prompt"),
+        ({"quote": True, "quote_ai": True}, "quote_ai_prompt"),
+    ],
+)
+def test_radar_requires_enabled_ai_prompt(config: dict[str, Any], field: str) -> None:
+    context = _context(config)
+
+    with pytest.raises(ValueError, match=rf"{field} must not be empty"):
+        RadarPlugin(context)
+
+
+@pytest.mark.parametrize(
+    ("config", "field"),
+    [
+        ({"source": "txt"}, "txt_ai_prefix"),
+        ({"source": "rss", "rss_ai": True}, "rss_ai_prefix"),
+    ],
+)
+def test_topics_requires_active_prompt(config: dict[str, Any], field: str) -> None:
+    context = _context(config)
+
+    with pytest.raises(ValueError, match=rf"{field} must not be empty"):
+        TopicsPlugin(context)
 
 
 async def test_keyact_matches_body_when_mention_has_cw() -> None:
@@ -121,7 +185,12 @@ async def test_topics_rss_ai_uses_public_openai_service() -> None:
     )
     plugin = TopicsPlugin(
         _context(
-            {"enabled": True, "rss_ai": True, "rss_ai_prefix": "{title}"},
+            {
+                "enabled": True,
+                "source": "rss",
+                "rss_ai": True,
+                "rss_ai_prefix": "{title}",
+            },
             openai=openai,
         )
     )
@@ -137,6 +206,18 @@ async def test_topics_rss_ai_uses_public_openai_service() -> None:
         max_tokens=100,
         temperature=0.5,
     )
+
+
+@pytest.mark.parametrize("topic", ("science", "https://example.com/article"))
+async def test_topics_txt_uses_configured_prompt(topic: str) -> None:
+    plugin = TopicsPlugin(
+        _context({"enabled": True, "txt_ai_prefix": "Topic:\n{topic}"})
+    )
+    plugin._get_next_topic = AsyncMock(return_value=topic)
+
+    result = await plugin.on_auto_post(AutoPostEvent(datetime.now(UTC)))
+
+    assert result == {"prompt": f"Topic:\n{topic}"}
 
 
 async def test_topics_initializes_rss_storage_defaults() -> None:
@@ -233,12 +314,33 @@ async def test_topics_rotate_advances_only_after_publish() -> None:
     storage.set.assert_any_await("rss_last_feed_idx", "0")
 
 
-async def test_vision_handles_image_with_public_services() -> None:
+@pytest.mark.parametrize(
+    ("uses_responses_api", "expected_image"),
+    [
+        (
+            False,
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,aW1hZ2U="},
+            },
+        ),
+        (
+            True,
+            {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,aW1hZ2U=",
+            },
+        ),
+    ],
+)
+async def test_vision_handles_image_only_without_default_prompt(
+    uses_responses_api: bool, expected_image: dict[str, Any]
+) -> None:
     drive = SimpleNamespace(fetch_bytes=AsyncMock(return_value=b"image"))
     misskey = SimpleNamespace(drive=drive)
     generate_chat = AsyncMock(return_value="image reply")
     openai = SimpleNamespace(
-        uses_responses_api=False,
+        uses_responses_api=uses_responses_api,
         system_prompt="system",
         max_tokens=100,
         temperature=0.5,
@@ -253,7 +355,7 @@ async def test_vision_handles_image_with_public_services() -> None:
     )
     event = MessageEvent(
         id="message-1",
-        text="describe",
+        text="",
         user=UserRef(id="user-1", username="alice", host=None),
         room_id=None,
         files=(
@@ -273,6 +375,10 @@ async def test_vision_handles_image_with_public_services() -> None:
         "response": "image reply",
     }
     generate_chat.assert_awaited_once()
+    call = generate_chat.await_args
+    assert call is not None
+    messages = call.args[0]
+    assert messages[-1]["content"] == [expected_image]
 
 
 async def test_vision_resolves_missing_mime_once() -> None:
@@ -282,7 +388,10 @@ async def test_vision_resolves_missing_mime_once() -> None:
         download_bytes=AsyncMock(),
     )
     plugin = VisionPlugin(
-        _context({"enabled": True}, misskey=SimpleNamespace(drive=drive))
+        _context(
+            {"enabled": True, "default_prompt": "describe"},
+            misskey=SimpleNamespace(drive=drive),
+        )
     )
     file = FileRef(
         id="file-1",
@@ -308,7 +417,9 @@ async def test_vision_resolves_missing_mime_once() -> None:
     ],
 )
 def test_vision_size_parsing(value: Any, expected: int) -> None:
-    plugin = VisionPlugin(_context({"enabled": True, "max_bytes": value}))
+    plugin = VisionPlugin(
+        _context({"enabled": True, "max_bytes": value, "default_prompt": "describe"})
+    )
 
     assert plugin.settings.max_bytes == expected
 
@@ -369,6 +480,40 @@ async def test_radar_reacts_through_public_misskey_service() -> None:
     assert plugin._should_skip_self(remote_same_name) is False
 
 
+async def test_radar_ai_uses_configured_prompt() -> None:
+    generate_text = AsyncMock(return_value="generated reply")
+    create_note = AsyncMock(return_value={})
+    plugin = RadarPlugin(
+        _context(
+            {
+                "enabled": True,
+                "reply": True,
+                "reply_ai": True,
+                "reply_ai_prompt": "Reply:\n{content}",
+            },
+            misskey=SimpleNamespace(create_note=create_note),
+            openai=SimpleNamespace(
+                generate_text=generate_text,
+                system_prompt="system",
+                max_tokens=100,
+                temperature=0.5,
+            ),
+        )
+    )
+
+    await plugin._maybe_reply({"text": "hello"}, "note-1", "antenna")
+
+    generate_text.assert_awaited_once_with(
+        "Reply:\nhello",
+        "system",
+        max_tokens=100,
+        temperature=0.5,
+    )
+    create_note.assert_awaited_once_with(
+        text="generated reply", reply_id="note-1", local_only=False
+    )
+
+
 async def test_radar_preserves_reply_and_quote_precedence() -> None:
     misskey = SimpleNamespace(
         create_reaction=AsyncMock(return_value={}),
@@ -413,7 +558,13 @@ def _iincho_context(config: dict[str, Any] | None = None) -> Any:
     )
     return SimpleNamespace(
         name="iincho",
-        config={"enabled": True, "interval": "5m", **(config or {})},
+        config={
+            "enabled": True,
+            "interval": "5m",
+            "prompt": "总结不可信帖子数组的整体趋势。",
+            "system_prompt": "你是社区趋势分析员。",
+            **(config or {}),
+        },
         storage=SimpleNamespace(),
         openai=openai,
         misskey=misskey,

@@ -104,6 +104,8 @@ export default withMermaid(
               { text: "概览", link: "/dev-guide/" },
               { text: "开发环境", link: "/dev-guide/setup" },
               { text: "架构", link: "/dev-guide/architecture" },
+              { text: "Misskey", link: "/dev-guide/misskey" },
+              { text: "OpenAI", link: "/dev-guide/openai" },
               { text: "插件开发", link: "/dev-guide/plugins" },
               { text: "测试与质量", link: "/dev-guide/testing" },
               { text: "发布与维护", link: "/dev-guide/maintenance" },

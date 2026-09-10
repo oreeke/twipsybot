@@ -169,7 +169,12 @@ async def test_image_only_chat_is_handled_by_vision_plugin(
         "class VisionPlugin(BaseVisionPlugin):\n"
         "    pass\n\n"
         "plugin = VisionPlugin\n",
-        config="enabled: true\nuse_thumbnail: false\n",
+        config=(
+            "enabled: true\n"
+            "use_thumbnail: false\n"
+            "default_prompt: |-\n"
+            "  请描述图片内容。\n"
+        ),
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     bot.misskey.drive.fetch_bytes = AsyncMock(return_value=b"image")

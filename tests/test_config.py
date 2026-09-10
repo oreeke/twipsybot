@@ -85,6 +85,13 @@ def test_environment_chat_memory_rejects_values_above_misskey_limit(
         write_config()
 
 
+def test_response_reply_defaults_are_empty(write_config: WriteConfig) -> None:
+    config = write_config()
+
+    assert config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT_REPLY) == ""
+    assert config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY) == ""
+
+
 def test_timeline_channels_are_independently_enabled(write_config: WriteConfig) -> None:
     config = write_config(bot={"timeline": {"home": True, "local": False}})
     bot = MisskeyBot(config)

@@ -4,13 +4,12 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 import aiohttp
 import feedparser
 from bs4 import BeautifulSoup
 from loguru import logger
-from pydantic import Field, field_validator
+from pydantic import Field, model_validator
 
 from twipsybot.plugin import (
     AutoPostEvent,
@@ -23,10 +22,6 @@ from twipsybot.plugin import (
 _RSS_TIMEOUT = aiohttp.ClientTimeout(total=60)
 _RSS_HEADERS = {"User-Agent": "Twipsy-RSS"}
 _RSS_RECENT_KEYS_LIMIT = 2000
-_DEFAULT_RSS_AI_PREFIX = (
-    "发表一段感想和相关知识（不超过150字），"
-    "不加链接，不加引号：\n\n{summary}\n\n{title}\n{link}"
-)
 
 
 class _Config(PluginConfig):
@@ -36,12 +31,15 @@ class _Config(PluginConfig):
     rss_list: tuple[str, ...] = ()
     rss_ai: bool = False
     rss_post_mode: Literal["batch", "rotate"] = "batch"
-    rss_ai_prefix: str = _DEFAULT_RSS_AI_PREFIX
+    rss_ai_prefix: str = ""
 
-    @field_validator("rss_ai_prefix", mode="before")
-    @classmethod
-    def _normalize_rss_ai_prefix(cls, value: Any) -> str:
-        return str(value or _DEFAULT_RSS_AI_PREFIX)
+    @model_validator(mode="after")
+    def _validate_prompts(self) -> "_Config":
+        if self.source == "txt" and not self.txt_ai_prefix.strip():
+            raise ValueError("txt_ai_prefix must not be empty")
+        if self.source == "rss" and self.rss_ai and not self.rss_ai_prefix.strip():
+            raise ValueError("rss_ai_prefix must not be empty")
+        return self
 
 
 class TopicsPlugin(PluginBase):
@@ -87,9 +85,6 @@ class TopicsPlugin(PluginBase):
                     return {"contents": contents}
                 return None
             topic = await self._get_next_topic()
-            if self._is_pure_url(topic):
-                self._log_plugin_action("direct post", topic)
-                return {"contents": [topic]}
             return {
                 "prompt": self.settings.txt_ai_prefix.format(topic=topic),
             }
@@ -98,16 +93,6 @@ class TopicsPlugin(PluginBase):
         except Exception as e:
             logger.error(f"Topics plugin auto-post hook failed: {e}")
             return None
-
-    @staticmethod
-    def _is_pure_url(text: str) -> bool:
-        s = text.strip()
-        if not s or s != text:
-            return False
-        parsed = urlparse(s)
-        if parsed.scheme not in {"http", "https"}:
-            return False
-        return bool(parsed.netloc)
 
     async def _initialize_storage(self, defaults: dict[str, str]) -> None:
         try:
@@ -375,6 +360,8 @@ class TopicsPlugin(PluginBase):
     async def _rewrite_rss_title_with_ai(
         self, title: str, link: str, *, summary: str
     ) -> str:
+        if not self.settings.rss_ai_prefix.strip():
+            return title
         try:
             prompt = self.settings.rss_ai_prefix.format(
                 title=title, link=link, summary=summary

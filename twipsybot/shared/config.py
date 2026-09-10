@@ -231,9 +231,9 @@ class ResponseConfig(_ConfigModel):
     chat_memory: int = 10
     chat_context_tokens: int = 2000
     rate_limit: int = -1
-    rate_limit_reply: str = "我需要休息一下..."
+    rate_limit_reply: str = ""
     max_turns: int = -1
-    max_turns_reply: str = "我要回家了..."
+    max_turns_reply: str = ""
     max_turns_release: int = -1
     whitelist: list[str] | str = []
     blacklist: list[str] | str = []

@@ -18,7 +18,7 @@ class _Config(PluginConfig):
     max_images: int = Field(3, ge=1)
     max_bytes: ByteSize = ByteSize(6 * 1024 * 1024)
     use_thumbnail: bool = True
-    default_prompt: str = "请描述图片内容。"
+    default_prompt: str = ""
 
     @field_validator("max_bytes", mode="before")
     @classmethod
@@ -131,8 +131,10 @@ class VisionPlugin(PluginBase):
             images.append(item)
         if not images:
             return []
-        prompt = text or self.settings.default_prompt
-        return [self._make_text_part(prompt, use_responses=use_responses), *images]
+        prompt = text.strip() or self.settings.default_prompt.strip()
+        if prompt:
+            return [self._make_text_part(prompt, use_responses=use_responses), *images]
+        return images
 
     async def _to_image_part(
         self, file: FileRef, *, use_responses: bool

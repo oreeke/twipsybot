@@ -17,7 +17,7 @@ openai:
   temperature: 0.8                                  # 温度参数
 
 bot:
-  system_prompt: |                                  # 系统提示词（支持文件导入："prompts/*.txt"）
+  system_prompt: |-                                 # 系统提示词（支持文件导入："prompts/*.txt"）
     你是一个可爱的AI助手，运行在Misskey平台上。
     请用简短、友好的方式发帖和回答问题。
 
@@ -38,7 +38,7 @@ bot:
     max_posts_per_day: 8                            # 每日最大发帖数量（凌晨 0 点重置计数器）
     visibility: "public"                            # 发帖可见性（public/home/followers）
     local_only: false                               # 是否禁用联合（仅本地可见）
-    prompt: |                                       # 发帖提示词
+    prompt: |-                                      # 发帖提示词
       生成一篇有趣、有见解的社交媒体帖子。
 
   response:

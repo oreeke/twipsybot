@@ -406,7 +406,7 @@ async def test_legacy_permanent_turn_block_migrates_to_blacklist(
         user_id="legacy-user", handle=None
     )
 
-    assert blocked is None
+    assert blocked == (False, "")
     assert bot.config.get(ConfigKeys.BOT_RESPONSE_BLACKLIST) == ["legacy-user"]
     assert (
         await bot.db.get_plugin_data("Admin", ConfigKeys.BOT_RESPONSE_BLACKLIST)

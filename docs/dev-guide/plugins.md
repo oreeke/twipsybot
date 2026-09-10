@@ -84,7 +84,7 @@ class ExamplePlugin(PluginBase):
 plugin = ExamplePlugin
 ```
 
-入口名称是插件 ID，也是 `plugins/config.yaml` 中的配置键。安装第三方包不会自动启用代码；必须集中配置后才会加载：
+入口名称是插件 ID，也是 `plugins/config.yaml` 中的配置键。安装第三方包不会自动启用代码，必须集中配置后才会加载：
 
 ```yaml
 example:
@@ -111,7 +111,7 @@ class ExampleConfig(PluginConfig):
 
 | 方法 | 时机 |
 | --- | --- |
-| `initialize()` | 加载后初始化资源；只有返回 `True` 才继续启用 |
+| `initialize()` | 加载后初始化资源，只有返回 `True` 才继续启用 |
 | `on_startup()` | 所有核心服务准备完成后 |
 | `on_shutdown()` | 停止接收新 Hook 后 |
 | `cleanup()` | 释放资源，初始化失败时也可能调用 |
@@ -167,7 +167,7 @@ return {"prompt": "围绕开源维护写一篇短文。"}
 
 `self.context` 提供：
 
-- `name`：稳定插件 ID；本地插件为目录名，第三方插件为 Entry Point 名称。
+- `name`：稳定插件 ID，本地插件为目录名，第三方插件为 Entry Point 名称。
 - `config`：原始插件配置的只读映射。
 - `storage`：以插件 ID 隔离的命名空间，提供 `get`、`set`、`delete`。
 - `misskey`：发帖、转帖、反应、聊天、天线和 Drive 服务。

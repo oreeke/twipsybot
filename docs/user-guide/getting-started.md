@@ -5,7 +5,11 @@ description: 使用 Docker Compose 快速部署 TwipsyBot，并连接 Misskey �
 
 # 快速开始
 
-推荐使用 Docker Compose 启动 TwipsyBot。完成后，机器人可以响应 Misskey 提及和聊天，并按配置自动发帖。
+推荐使用 Docker Compose 启动 TwipsyBot。
+
+完成后，机器人可以响应 Misskey 提及和聊天，并按配置自动发帖。
+
+解锁更多玩法，请查看[功能](features/)和[插件](plugins/)。
 
 ## 准备账号和密钥
 
@@ -56,7 +60,7 @@ environment:
   - OPENAI_API_KEY=your_api_key_here
   - OPENAI_MODEL=deepseek-chat
   - OPENAI_API_BASE=https://api.deepseek.com/v1
-  - BOT_SYSTEM_PROMPT=你是运行在 Misskey 上的友好助手，请简洁自然地回复。
+  - BOT_SYSTEM_PROMPT=你是一个可爱的AI助手，运行在Misskey平台上。请用简短、友好的方式发帖和回答问题。
   - BOT_ADMIN_ALLOWED_USERS=your_username@example.com
 ```
 
@@ -71,6 +75,8 @@ environment:
 内置插件默认关闭，快速开始阶段无需修改 `plugins/config.yaml`。
 
 ## 启动机器人
+
+拉取镜像并启动容器：
 
 ```bash
 docker compose pull
@@ -93,38 +99,31 @@ docker compose logs -f twipsybot
 - `BOT_RESPONSE_MENTION` 或 `BOT_RESPONSE_CHAT` 是否开启。
 - 日志中是否出现鉴权、模型或 Streaming API 错误。
 
-## 使用本地 Python
+## 使用本地 Python（可选）
 
-本地运行需要 Python 3.11 或更高版本。克隆仓库后进入项目目录，推荐使用虚拟环境，比如 [Conda](https://docs.conda.io/projects/conda/en/latest/user-guide/getting-started.html)：
+如果喜欢自己配环境或修改源码，适合这种部署方法。
+
+本地运行需要 Python 3.11 或更高版本，使用 [uv](https://docs.astral.sh/uv/) 管理 Python 环境和依赖：
 
 ```bash
 git clone https://github.com/oreeke/twipsybot.git
 cd twipsybot
-conda create -n twipsybot python=3.11
-conda activate twipsybot
+uv python install 3.11
+uv sync --python 3.11
 ```
 
-安装项目并准备配置：
+准备配置并启动：
 
 ```bash
-pip install -e .
 cp config.yaml.example config.yaml
 cp plugins/config.yaml.example plugins/config.yaml
-twipsybot config-check
-twipsybot run
-```
-
-也可以使用 [uv](https://docs.astral.sh/uv/) 管理环境：
-
-```bash
-uv sync
 uv run twipsybot config-check
 uv run twipsybot run
 ```
 
 ## 使用 systemd 托管
 
-本地安装确认可以正常启动后，可创建 `/etc/systemd/system/twipsybot.service`：
+本地部署需要作为后台服务时，可创建 `/etc/systemd/system/twipsybot.service`：
 
 ```ini
 [Unit]
@@ -134,7 +133,7 @@ After=network.target
 [Service]
 Type=exec
 WorkingDirectory=/path/to/twipsybot
-ExecStart=/path/to/<venv>/bin/twipsybot run
+ExecStart=/path/to/twipsybot/.venv/bin/twipsybot run
 KillMode=control-group
 TimeoutStopSec=5
 Environment=PYTHONUNBUFFERED=1 \
@@ -144,7 +143,7 @@ Environment=PYTHONUNBUFFERED=1 \
 WantedBy=multi-user.target
 ```
 
-将路径替换为实际项目目录和虚拟环境目录，然后重新加载配置并启动服务：
+将 `/path/to/twipsybot` 替换为实际路径，然后重新加载配置并启动服务：
 
 ```bash
 sudo systemctl daemon-reload

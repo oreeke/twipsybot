@@ -5,7 +5,7 @@ description: 配置 TwipsyBot 的关键词回复、天线互动、RSS 发帖、�
 
 # 插件
 
-TwipsyBot 自带五个可选插件。插件默认关闭，可以在 `plugins/config.yaml` 中集中管理。
+TwipsyBot 自带几个可选插件。插件默认关闭，可以在 `plugins/config.yaml` 中集中管理。
 
 | 插件 | 用途 | 依赖 |
 | --- | --- | --- |

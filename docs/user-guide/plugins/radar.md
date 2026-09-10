@@ -24,7 +24,11 @@ radar:
   reply: false
   reply_text: "谢谢分享，{username}"
   reply_ai: false
-  reply_ai_prompt: ""
+  reply_ai_prompt: |-
+    根据帖子内容写一句自然回复。
+    不要复述原文，不要加引号。
+    不超过30字：
+    {content}
   reply_local_only: false
   renote: false
   renote_visibility: "home"
@@ -32,7 +36,11 @@ radar:
   quote: false
   quote_text: ""
   quote_ai: false
-  quote_ai_prompt: ""
+  quote_ai_prompt: |-
+    根据帖子内容写一句简短感想。
+    不要复述原文，不要加引号。
+    不超过30字：
+    {content}
   quote_visibility: "home"
   quote_local_only: false
 ```
@@ -40,8 +48,8 @@ radar:
 ## 动作规则
 
 - `reaction` 留空表示不添加反应，可使用实例支持的名称或自定义表情格式。
-- `reply_text` 支持 `{username}`；有固定文本时优先于 `reply_ai`。
-- `reply_ai` 只在开启回复且固定文本为空时调用模型。
+- `reply_text` 支持 `{username}`。有固定文本时优先于 `reply_ai`。
+- `reply_ai` 只在开启回复且 `reply_text` 为空时调用模型，此时 `reply_ai_prompt` 不能为空。
 - `quote_text` 与 `quote_ai` 的关系相同。
 - `reply_ai_prompt` 和 `quote_ai_prompt` 支持 `{content}`。
 - 引用成功后不会再执行普通转帖；引用没有生成有效文本时，仍可继续转帖。

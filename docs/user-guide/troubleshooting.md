@@ -30,7 +30,7 @@ Docker 镜像会在启动配置错误时保持容器存活，方便查看日志�
 
 - 使用了不支持的额外字段。
 - 布尔值写成无法识别的文本。
-- 自动发帖间隔使用了秒；该字段只支持分钟、小时或天。
+- 自动发帖间隔使用了秒。该字段只支持分钟、小时或天。
 - `max_tokens` 小于等于 0，或 `temperature` 不在 0 到 2 之间。
 - 可见性不是 `public`、`home`、`followers`。
 - Iincho 的间隔低于 5 分钟，或 `sample_size < min_notes`。
@@ -46,7 +46,7 @@ Docker 镜像会在启动配置错误时保持容器存活，方便查看日志�
 
 - API Base 通常需要兼容服务提供的 `/v1` 地址。
 - 模型名称必须与服务端实际 ID 完全一致。
-- 先使用 `api_mode: auto`；出现端点不兼容时再尝试 `chat` 或 `responses`。
+- 先使用 `api_mode: auto`，出现端点不兼容时再尝试 `chat` 或 `responses`。
 - 推理模型输出中断时适当增加 `max_tokens`。
 - `^model` 只能在同一个 API Base 下切换模型，不能同时切换服务商和密钥。
 
@@ -56,7 +56,7 @@ Docker 镜像会在启动配置错误时保持容器存活，方便查看日志�
 - 确认用户不在黑名单，且没有达到回复间隔或轮数限制。
 - 使用管理员账号发送 `^status` 和 `^blacklist list`。
 - 检查 KeyAct 或 Vision 是否已接管事件但执行失败。
-- 确认 Streaming API 已连接；必要时临时提高日志级别。
+- 确认 Streaming API 已连接，必要时临时提高日志级别。
 
 ## `/post` 或 `/img` 没有执行
 
@@ -72,7 +72,7 @@ Docker 镜像会在启动配置错误时保持容器存活，方便查看日志�
 - 检查 `bot.timeline.antenna_ids` 的 ID 或名称。
 - Radar 只处理 `antenna` 通道，不处理普通时间线。
 - 确认至少启用了反应、回复、引用或转帖中的一项。
-- 固定回复为空且 `reply_ai` 关闭时，不会产生回复；引用同理。
+- 固定回复为空且 `reply_ai` 关闭时，不会产生回复。引用同理。
 
 ## Topics 没有发帖
 

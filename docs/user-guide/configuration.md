@@ -5,7 +5,7 @@ description: 配置 Misskey API、OpenAI 兼容模型、自动发帖、访问限
 
 # 配置
 
-TwipsyBot 可以通过 YAML 或环境变量配置。手动安装通常使用 `config.yaml`，Docker Compose 通常使用环境变量。环境变量会覆盖 YAML 中的对应值。
+TwipsyBot 可以通过 YAML 或环境变量配置。手动安装使用 `config.yaml`，Docker Compose 使用环境变量。环境变量会覆盖 YAML 中的对应值。
 
 完整字段列表见 [配置参考](reference/configuration.md)。
 
@@ -22,8 +22,9 @@ openai:
   api_base: "https://api.deepseek.com/v1"
 
 bot:
-  system_prompt: |
-    你是运行在 Misskey 上的友好助手，请简洁自然地回复。
+  system_prompt: |-
+    你是一个可爱的AI助手，运行在Misskey平台上。
+    请用简短、友好的方式发帖和回答问题。
   admin:
     allowed_users:
       - "admin@example.com"
@@ -44,7 +45,7 @@ TwipsyBot 使用 OpenAI Python SDK 连接兼容接口：
 
 通常先使用 `api_mode: auto`。只有兼容服务明确要求 Chat Completions 或 Responses API 时，再固定为 `chat` 或 `responses`。
 
-更换模型服务时，修改 `api_key`、`model` 和 `api_base`；如果新服务只支持特定接口模式，还需要调整 `api_mode`。同一 `api_base` 下切换模型，可以通过管理命令 `^model <模型名>` 实时完成，无需重启。
+更换模型服务时，修改 `api_key`、`model` 和 `api_base`。如果新服务只支持特定接口模式，还需要调整 `api_mode`。同一 `api_base` 下切换模型，可以通过管理命令 `^model <模型名>` 实时完成，无需重启。
 
 不同能力可以由不同配置决定：
 
@@ -78,10 +79,11 @@ bot:
     max_posts_per_day: 8
     visibility: "public"
     local_only: false
-    prompt: "生成一篇简短、有信息量的社交帖子。"
+    prompt: |-
+      生成一篇有趣、有见解的社交媒体帖子。
 ```
 
-- `interval` 支持分钟、小时和天，例如 `30m`、`2h`、`1d`；纯数字按分钟处理。
+- `interval` 支持分钟、小时和天，例如 `30m`、`2h`、`1d`。纯数字按分钟处理。
 - `max_posts_per_day` 按运行主机的本地日期重置，`0` 表示不自动发布。
 - `visibility` 支持 `public`、`home`、`followers`。
 - `local_only: true` 表示不向联邦发送。
@@ -105,10 +107,10 @@ bot:
 
 - `mention` 和 `chat` 分别控制提及与聊天响应。
 - `chat_memory` 是读取的历史消息条数，范围为 `0` 到 `100`，`0` 表示不带历史上下文。
-- `chat_context_tokens` 是历史消息的 token 预算，`0` 表示不带历史上下文；未知模型使用兼容编码近似计算。tiktoken 官方分词表首次使用时下载并缓存在 `data/tiktoken`。
+- `chat_context_tokens` 是历史消息的 token 预算，`0` 表示不带历史上下文。未知模型使用兼容编码近似计算。tiktoken 官方分词表首次使用时下载并缓存在 `data/tiktoken`。
 - `rate_limit` 是同一用户两次机器人回复之间的最短间隔。
 - `max_turns` 是同一用户可获得的机器人回复次数。
-- 达到轮数上限后，`max_turns_release` 决定等待多久恢复；设为 `-1` 会将该用户加入黑名单。
+- 达到轮数上限后，`max_turns_release` 决定等待多久恢复。设为 `-1` 会将该用户加入黑名单。
 - 白名单用户不受回复间隔和轮数限制；黑名单用户不能使用普通回复。
 
 时长支持整数秒或 `30s`、`5m`、`1h`、`1d` 等组合。`-1`、`off`、`none` 和 `unlimited` 可用于关闭时长限制。
@@ -130,7 +132,7 @@ bot:
 
 时间线开关决定机器人接收哪些实时帖子。仅在插件需要时启用：Radar 使用天线事件，Iincho 使用本地时间线。订阅范围越大，事件和日志越多。
 
-`antenna_ids` 可填写天线 ID 或名称。环境变量中使用逗号或空格分隔；名称包含空格时建议直接填写 ID，或在 YAML 中使用列表。
+`antenna_ids` 可填写天线 ID 或名称。环境变量中使用逗号或空格分隔。名称包含空格时建议直接填写 ID，或在 YAML 中使用列表。
 
 ## 数据库和日志
 

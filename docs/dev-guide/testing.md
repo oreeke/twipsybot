@@ -22,8 +22,8 @@ uv run --locked pytest -q
 按文件或测试名称运行窄范围测试：
 
 ```bash
-uv run pytest tests/test_plugin.py -q
-uv run pytest -k auto_post -q
+uv run --locked pytest tests/test_plugin.py -q
+uv run --locked pytest -k auto_post -q
 ```
 
 `tests/conftest.py` 提供配置工厂、临时插件目录、机器人构造器和模拟 Misskey 服务。网络行为应通过模拟服务验证，不要让自动化测试依赖真实实例或模型 API。
@@ -39,7 +39,7 @@ uv run pytest -k auto_post -q
 ## 类型与锁文件检查
 
 ```bash
-uv run pyright
+uv run --locked pyright
 uv lock --check
 ```
 
@@ -52,6 +52,15 @@ uvx pre-commit install
 uvx pre-commit run --all-files
 ```
 
-钩子会检查锁文件，自动修复 Ruff lint 和格式问题，并使用 `pyupgrade --py311-plus` 更新语法。Ruff 目标版本为 Python 3.11，行宽为 88。运行后应重新检查 diff，再执行测试和 Pyright。
+钩子会检查锁文件，自动修复 Ruff lint 和格式问题，并使用 `pyupgrade --py311-plus` 更新语法。
+
+## 检查单
+
+```bash
+uvx pre-commit run --all-files
+uv run --locked pytest -q
+uv run --locked pyright
+uv lock --check
+```
 
 GitHub Actions 会在 push 和 pull request 上分别执行测试、锁文件检查和 pre-commit。不要依赖 CI 代替本地的行为范围测试。

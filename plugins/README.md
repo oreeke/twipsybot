@@ -132,7 +132,7 @@ deleted = await self.context.storage.delete("key")
 | `bot.load_antenna_selectors()` | 读取天线选择器 |
 | `bot.resolve_antenna_ids(selectors)` | 将选择器解析为天线 ID |
 
-`moderate_texts` 使用 `omni-moderation-latest`；自定义 OpenAI 兼容端点需要支持
+`moderate_texts` 使用 `omni-moderation-latest`。自定义 OpenAI 兼容端点需要支持
 `/moderations`。
 
 事件字段：
@@ -150,7 +150,7 @@ deleted = await self.context.storage.delete("key")
 `NotificationEvent.id`、`UserRef.id`、`cw`、`host`、文件 URL 等字段可能为空；消息、提及和时间线事件的 `id` 始终是非空字符串。`UserRef.handle` 会自动组合为
 `username@host`；本地用户仅为 `username`。时间线 `channel` 通常为
 `homeTimeline`、`localTimeline`、`hybridTimeline`、`globalTimeline` 或 `antenna`。
-`files` 可配合 Drive 接口读取。每个插件收到独立的 `raw` 副本，但嵌套值并非深度只读；应将其视为只读后备数据，且不依赖其长期兼容性。
+`files` 可配合 Drive 接口读取。每个插件收到独立的 `raw` 副本，但嵌套值并非深度只读。应将其视为只读后备数据，且不依赖其长期兼容性。
 
 ### Hook
 
@@ -187,7 +187,7 @@ return {"prompt": "以天气为主题，"}
 __init__ -> initialize -> on_startup -> hooks -> on_shutdown -> cleanup
 ```
 
-生命周期方法和 Hook 均可不覆盖；覆盖时必须使用 `async def`。生命周期方法不得要求额外参数，事件 Hook 必须能接收事件参数，发布成功回调必须能接收内容字符串。`initialize` 只有返回 `True` 才算成功。生命周期超时 30 秒，Hook 超时 180 秒。
+生命周期方法和 Hook 均可不覆盖，覆盖时必须使用 `async def`。生命周期方法不得要求额外参数，事件 Hook 必须能接收事件参数，发布成功回调必须能接收内容字符串。`initialize` 只有返回 `True` 才算成功。生命周期超时 30 秒，Hook 超时 180 秒。
 
 - 初始化或启动失败：调用 `cleanup` 并禁用。
 - Bot 停止：先调用 `on_shutdown`，再调用 `cleanup`。

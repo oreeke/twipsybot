@@ -5,7 +5,9 @@ description: 配置 TwipsyBot 订阅 Misskey Home、Local、Hybrid、Global 时�
 
 # 时间线与天线
 
-TwipsyBot 通过 Misskey Streaming API 接收实时帖子。默认不订阅公共时间线，只有启用相关配置后才会接收。
+TwipsyBot 通过 Misskey Streaming API 接收实时帖子。
+
+默认不订阅公共时间线，只有启用相关配置后才会接收。
 
 ## 时间线类型
 

@@ -5,7 +5,7 @@ description: 查询 TwipsyBot 主配置、环境变量、默认值和有效取�
 
 # 配置参考
 
-TwipsyBot 读取项目根目录的 `config.yaml`。环境变量会覆盖 YAML 中的同名配置；未列入本页的未知字段会导致配置检查失败。
+未列入本页的未知字段会导致配置检查失败。
 
 插件使用独立的 `plugins/config.yaml`，请查看[插件](/user-guide/plugins/)。
 
@@ -24,7 +24,7 @@ TwipsyBot 读取项目根目录的 `config.yaml`。环境变量会覆盖 YAML �
 | `openai.model` | `OPENAI_MODEL` | `deepseek-chat` | 文本模型 ID |
 | `openai.api_base` | `OPENAI_API_BASE` | `api.deepseek.com/v1` | OpenAI 兼容 API Base |
 | `openai.api_mode` | `OPENAI_API_MODE` | `auto` | `auto`、`chat`、`responses` |
-| `openai.image_model` | `OPENAI_IMAGE_MODEL` | `null` | 图片生成模型；空值禁用 `/img` |
+| `openai.image_model` | `OPENAI_IMAGE_MODEL` | `null` | 图片生成模型，空值禁用 `/img` |
 | `openai.image_size` | `OPENAI_IMAGE_SIZE` | `null` | 发送给图片 API 的尺寸参数 |
 | `openai.image_quality` | `OPENAI_IMAGE_QUALITY` | `null` | 发送给图片 API 的质量参数 |
 | `openai.max_tokens` | `OPENAI_MAX_TOKENS` | `1000` | 最大输出 token，必须大于 0 |
@@ -36,7 +36,7 @@ TwipsyBot 读取项目根目录的 `config.yaml`。环境变量会覆盖 YAML �
 
 | YAML 字段 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `bot.system_prompt` | `BOT_SYSTEM_PROMPT` | 空 | 对话系统提示词 |
+| `bot.system_prompt` | `BOT_SYSTEM_PROMPT` |  | 对话系统提示词 |
 | `bot.admin.allowed_users` | `BOT_ADMIN_ALLOWED_USERS` | `[]` | 管理员用户 ID 或 `username@host` |
 
 系统提示词和自动发帖提示词可以填写 `prompts/*.txt` 相对路径。路径必须位于项目的 `prompts` 目录，且不能使用绝对路径或 `..`。
@@ -56,7 +56,7 @@ BOT_ADMIN_ALLOWED_USERS=admin@example.com,9abcdef012345678
 | `bot.auto_post.max_posts_per_day` | `BOT_AUTO_POST_MAX_PER_DAY` | `8` | 每日上限，0 表示不发帖 |
 | `bot.auto_post.visibility` | `BOT_AUTO_POST_VISIBILITY` | `public` | `public`、`home`、`followers` |
 | `bot.auto_post.local_only` | `BOT_AUTO_POST_LOCAL_ONLY` | `false` | 禁用联合，仅本地发布 |
-| `bot.auto_post.prompt` | `BOT_AUTO_POST_PROMPT` | 空 | 自动发帖提示词 |
+| `bot.auto_post.prompt` | `BOT_AUTO_POST_PROMPT` |  | 自动发帖提示词 |
 
 纯数字间隔按分钟解释，也可使用 `30m`、`2h`、`1d` 或组合格式。秒单位不适用于自动发帖间隔。
 
@@ -69,10 +69,10 @@ BOT_ADMIN_ALLOWED_USERS=admin@example.com,9abcdef012345678
 | `bot.response.chat_memory` | `BOT_RESPONSE_CHAT_MEMORY` | `10` | 每个聊天保留的上下文条数，范围 0-100，0 禁用 |
 | `bot.response.chat_context_tokens` | `BOT_RESPONSE_CHAT_CONTEXT_TOKENS` | `2000` | 历史消息 token 预算，0 禁用 |
 | `bot.response.rate_limit` | `BOT_RESPONSE_RATE_LIMIT` | `-1` | 同一用户最小回复间隔 |
-| `bot.response.rate_limit_reply` | `BOT_RESPONSE_RATE_LIMIT_REPLY` | `我需要休息一下...` | 间隔限制提示 |
+| `bot.response.rate_limit_reply` | `BOT_RESPONSE_RATE_LIMIT_REPLY` |  | 间隔限制提示 |
 | `bot.response.max_turns` | `BOT_RESPONSE_MAX_TURNS` | `-1` | 每个用户最多机器人回复次数 |
-| `bot.response.max_turns_reply` | `BOT_RESPONSE_MAX_TURNS_REPLY` | `我要回家了...` | 次数用尽提示 |
-| `bot.response.max_turns_release` | `BOT_RESPONSE_MAX_TURNS_RELEASE` | `-1` | 次数限制解除时间；`-1` 转入黑名单 |
+| `bot.response.max_turns_reply` | `BOT_RESPONSE_MAX_TURNS_REPLY` |  | 次数用尽提示 |
+| `bot.response.max_turns_release` | `BOT_RESPONSE_MAX_TURNS_RELEASE` | `-1` | 次数限制解除时间，`-1` 转入黑名单 |
 | `bot.response.whitelist` | `BOT_RESPONSE_WHITELIST` | `[]` | 不受间隔和次数限制的用户 |
 | `bot.response.blacklist` | `BOT_RESPONSE_BLACKLIST` | `[]` | 禁止使用回复的用户 |
 
@@ -95,7 +95,7 @@ BOT_ADMIN_ALLOWED_USERS=admin@example.com,9abcdef012345678
 | YAML 字段 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `db.path` | `DB_PATH` | `data/twipsybot.db` | SQLite 文件路径 |
-| `db.clear` | `DB_CLEAR` | `-1` | 回复限制状态保留天数；`-1` 不清理 |
+| `db.clear` | `DB_CLEAR` | `-1` | 回复限制状态保留天数，`-1` 不清理 |
 | `log.path` | `LOG_PATH` | `data/logs/twipsybot.log` | 日志文件路径 |
 | `log.level` | `LOG_LEVEL` | `INFO` | `DEBUG`、`INFO`、`WARNING`、`ERROR` |
 | `log.dump_events` | `LOG_DUMP_EVENTS` | `false` | 记录原始 Streaming 事件 |

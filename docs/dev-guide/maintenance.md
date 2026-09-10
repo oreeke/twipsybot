@@ -5,7 +5,9 @@ description: 维护 TwipsyBot 依赖、版本、变更记录、Docker 镜像和�
 
 # 发布与维护
 
-项目版本以 `pyproject.toml` 的 `project.version` 为准。面向用户的行为、配置、命令或兼容性发生变化时，应更新对应文档。
+项目版本以 `pyproject.toml` 的 `project.version` 为准。
+
+面向用户的行为、配置、命令或兼容性发生变化时，应更新对应文档。
 
 ## 依赖变更
 
@@ -13,7 +15,7 @@ description: 维护 TwipsyBot 依赖、版本、变更记录、Docker 镜像和�
 
 ```bash
 uv add <package>
-uv add --dev <package>
+uv add --optional dev <package>
 uv lock --check
 ```
 

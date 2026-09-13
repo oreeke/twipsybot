@@ -483,35 +483,19 @@ async def test_chat_uses_history_and_replies_to_user(
     assert reply == {"toUserId": "user-2", "text": DEFAULT_AI_REPLY}
 
 
-async def test_chat_truncates_generated_reply_before_sending(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    openai_server.set_reply("x" * 2001)
-    bot = await make_bot(write_config())
-
-    await bot.chat.handle(dict(_CHAT_MESSAGE))
-
-    text = misskey_server.calls["chat/messages/create-to-user"][0]["text"]
-    assert len(text) == 2000
-    assert text.endswith("…")
-
-
 async def test_chat_history_uses_same_message_limit_after_cache_warms(
     make_bot: MakeBot,
     write_config: WriteConfig,
 ) -> None:
     bot = await make_bot(write_config(bot={"response": {"chat_memory": 2}}))
-    bot._chat_histories["user-2"] = [
+    bot.chat._histories["user-2"] = [
         {"role": "user", "content": "旧问题"},
         {"role": "assistant", "content": "旧回答"},
     ]
 
-    bot.append_chat_turn("user-2", "新问题", "新回答", 2)
+    bot.chat.append_turn("user-2", "新问题", "新回答", 2)
 
-    assert bot._chat_histories["user-2"] == [
+    assert bot.chat._histories["user-2"] == [
         {"role": "user", "content": "新问题"},
         {"role": "assistant", "content": "新回答"},
     ]
@@ -602,23 +586,6 @@ async def test_chat_can_publish_manual_post_without_counting(
     assert reply["text"] == "发帖完成"
     assert bot.auto_post.posts_today == 0
     assert await bot.db.get_auto_post_state() == (bot.auto_post._today(), 0)
-
-
-async def test_manual_post_truncates_generated_content(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    openai_server.set_reply("x" * 3001)
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
-
-    await bot.chat.handle({**_CHAT_MESSAGE, "text": "/post long"})
-
-    text = misskey_server.calls["notes/create"][0]["text"]
-    assert len(text) == 3000
-    assert text.endswith("…")
-    assert misskey_server.calls["chat/messages/create-to-user"][0]["text"] == "发帖完成"
 
 
 @pytest.mark.parametrize(

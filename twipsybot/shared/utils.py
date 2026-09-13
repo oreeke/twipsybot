@@ -4,9 +4,17 @@ from typing import Any
 from loguru import logger
 
 __all__ = (
+    "format_log_text",
     "maybe_log_event_dump",
     "normalize_tokens",
 )
+
+
+def format_log_text(text: str, max_length: int = 50) -> str:
+    if not text:
+        return "None"
+    suffix = "..." if len(text) > max_length else ""
+    return f"{text[:max_length]}{suffix}"
 
 
 def normalize_tokens(value: Any, *, lower: bool = False) -> list[str]:

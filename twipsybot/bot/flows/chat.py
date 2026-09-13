@@ -1,8 +1,10 @@
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from cachetools import TTLCache
 from loguru import logger
 
 from ...clients.misskey.payloads import (
@@ -13,7 +15,8 @@ from ...clients.misskey.payloads import (
     extract_username,
 )
 from ...shared.config_keys import ConfigKeys
-from ...shared.utils import maybe_log_event_dump
+from ...shared.constants import CHAT_CACHE_MAX_USERS, CHAT_CACHE_TTL
+from ...shared.utils import format_log_text, maybe_log_event_dump
 from ..engine.pipeline import AIResponse
 
 if TYPE_CHECKING:
@@ -44,6 +47,66 @@ class _ChatContext:
 class ChatHandler:
     def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
+        self._histories: TTLCache[str, list[dict[str, str]]] = TTLCache(
+            maxsize=CHAT_CACHE_MAX_USERS,
+            ttl=CHAT_CACHE_TTL,
+            timer=time.monotonic,
+        )
+
+    async def get_or_load_history(
+        self,
+        conversation_id: str,
+        *,
+        limit: int | None,
+        user_id: str | None = None,
+        room_id: str | None = None,
+    ) -> list[dict[str, str]]:
+        limit_value = _resolve_history_limit(
+            self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
+        )
+        if (cached := self._histories.get(conversation_id)) is not None:
+            return self._trim_history(list(cached), limit_value)
+        if conversation_id.startswith("room:"):
+            room_id = room_id or conversation_id.removeprefix("room:")
+        history = await self.get_chat_history(
+            user_id=user_id, room_id=room_id, limit=limit_value
+        )
+        trimmed = self._trim_history(history, limit_value)
+        self._histories[conversation_id] = trimmed
+        return list(trimmed)
+
+    @staticmethod
+    def _trim_history(
+        history: list[dict[str, str]], limit_value: int
+    ) -> list[dict[str, str]]:
+        return history[-limit_value:] if limit_value > 0 else []
+
+    def append_turn(
+        self,
+        conversation_id: str,
+        user_text: str,
+        assistant_text: str,
+        limit: int | None,
+    ) -> None:
+        limit_value = _resolve_history_limit(
+            self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
+        )
+        history = list(self._histories.get(conversation_id) or [])
+        last = next(reversed(history), None)
+        if user_text and not (
+            isinstance(last, dict)
+            and last.get("role") == "user"
+            and last.get("content") == user_text
+        ):
+            history.append({"role": "user", "content": user_text})
+        last = next(reversed(history), None)
+        if assistant_text and not (
+            isinstance(last, dict)
+            and last.get("role") == "assistant"
+            and last.get("content") == assistant_text
+        ):
+            history.append({"role": "assistant", "content": assistant_text})
+        self._histories[conversation_id] = self._trim_history(history, limit_value)
 
     async def _handle_admin_message(
         self,
@@ -113,7 +176,7 @@ class ChatHandler:
         prefix = f"Room {room_label} " if room_label else ""
         if text:
             logger.info(
-                f"Chat received from {prefix}@{username}: {self.bot.format_log_text(text)}"
+                f"Chat received from {prefix}@{username}: {format_log_text(text)}"
             )
             return
         if has_media:
@@ -148,7 +211,7 @@ class ChatHandler:
                 room_id=ctx.room_id, mention_to=ctx.mention_to, text=text
             )
             logger.info(
-                f"Plugin replied to @{ctx.username}: {self.bot.format_log_text(formatted)}"
+                f"Plugin replied to @{ctx.username}: {format_log_text(formatted)}"
             )
 
         def log_admin_sent(text: str) -> None:
@@ -156,7 +219,7 @@ class ChatHandler:
                 room_id=ctx.room_id, mention_to=ctx.mention_to, text=text
             )
             logger.info(
-                f"Admin replied to @{ctx.username}: {self.bot.format_log_text(formatted)}"
+                f"Admin replied to @{ctx.username}: {format_log_text(formatted)}"
             )
 
         def plugin_after_sent(text: str) -> None:
@@ -164,7 +227,7 @@ class ChatHandler:
             if not user_text:
                 return
             user_content = f"{ctx.username}: {user_text}" if ctx.room_id else user_text
-            self.bot.append_chat_turn(ctx.conversation_id, user_content, text, limit)
+            self.append_turn(ctx.conversation_id, user_content, text, limit)
 
         async def ai_generate() -> str | AIResponse | None:
             if not ctx.text:
@@ -181,12 +244,10 @@ class ChatHandler:
             formatted = self._format_chat_reply_text(
                 room_id=ctx.room_id, mention_to=ctx.mention_to, text=text
             )
-            logger.info(
-                f"Replied to @{ctx.username}: {self.bot.format_log_text(formatted)}"
-            )
+            logger.info(f"Replied to @{ctx.username}: {format_log_text(formatted)}")
 
         def ai_after_sent(text: str) -> None:
-            self.bot.append_chat_turn(ctx.conversation_id, user_content_ai, text, limit)
+            self.append_turn(ctx.conversation_id, user_content_ai, text, limit)
 
         log_incoming()
         if await self._handle_admin_message(message, ctx, send_reply, log_admin_sent):
@@ -306,7 +367,7 @@ class ChatHandler:
         )
         token_budget = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_CONTEXT_TOKENS)
         history = (
-            await self.bot.get_or_load_chat_history(
+            await self.get_or_load_history(
                 conversation_id, limit=limit_value, user_id=user_id, room_id=room_id
             )
             if limit_value > 0 and isinstance(token_budget, int) and token_budget > 0

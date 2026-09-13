@@ -12,7 +12,7 @@ from ...clients.misskey.payloads import (
     normalize_payload,
 )
 from ...shared.config_keys import ConfigKeys
-from ...shared.utils import maybe_log_event_dump
+from ...shared.utils import format_log_text, maybe_log_event_dump
 from ..engine.pipeline import AIResponse
 
 if TYPE_CHECKING:
@@ -139,18 +139,16 @@ class MentionHandler:
             def log_plugin_sent(text: str) -> None:
                 formatted = self._format_mention_reply(mention, text)
                 logger.info(
-                    f"Plugin replied to @{display}: {self.bot.format_log_text(formatted)}"
+                    f"Plugin replied to @{display}: {format_log_text(formatted)}"
                 )
 
             def log_ai_sent(text: str) -> None:
                 formatted = self._format_mention_reply(mention, text)
-                logger.info(
-                    f"Replied to @{display}: {self.bot.format_log_text(formatted)}"
-                )
+                logger.info(f"Replied to @{display}: {format_log_text(formatted)}")
 
             def log_incoming() -> None:
                 logger.info(
-                    f"Mention received from @{display}: {self.bot.format_log_text(mention.text)}"
+                    f"Mention received from @{display}: {format_log_text(mention.text)}"
                 )
 
             log_incoming()

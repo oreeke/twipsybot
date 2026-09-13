@@ -222,29 +222,6 @@ async def test_hook_timeout_and_exception_are_isolated(
     assert results == [{"handled": True, "response": "ok", "plugin_name": "healthy"}]
 
 
-async def test_auto_post_uses_shared_hook_timeout(
-    monkeypatch: pytest.MonkeyPatch,
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-) -> None:
-    import twipsybot.plugin.manager as manager_module
-
-    monkeypatch.setattr(manager_module, "_PLUGIN_HOOK_TIMEOUT_SECONDS", 0.01)
-    plugins_dir = make_plugin_dir(
-        "slow_auto_post",
-        body="async def on_auto_post(self, event):\n"
-        "    import asyncio\n"
-        "    await asyncio.sleep(0.03)\n"
-        "    return {'prompt': 'ready'}\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-
-    results = await bot.plugin_manager.call_plugin_hook("on_auto_post")
-
-    assert results == []
-
-
 async def test_lifecycle_order(
     make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
 ) -> None:

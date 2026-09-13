@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from ...shared.config_keys import ConfigKeys
+from ...shared.utils import format_log_text
 from ..engine.pipeline import AIResponse
 
 if TYPE_CHECKING:
@@ -84,7 +85,7 @@ class AutoPostService:
         except Exception:
             logger.exception("Manual post failed")
             return AIResponse("发帖失败，请稍后再试。")
-        logger.info(f"Manual post succeeded: {self.bot.format_log_text(content)}")
+        logger.info(f"Manual post succeeded: {format_log_text(content)}")
         return AIResponse("发帖完成")
 
     @staticmethod
@@ -184,7 +185,7 @@ class AutoPostService:
             await self.bot.plugin_manager.confirm_auto_post_published(result, content)
             await self.post_count()
             posted_any = True
-            logger.info(f"Auto-post succeeded: {self.bot.format_log_text(content)}")
+            logger.info(f"Auto-post succeeded: {format_log_text(content)}")
             logger.info(f"Daily post count: {self.posts_today}/{max_posts}")
             if i < len(contents) - 1:
                 await asyncio.sleep(self._PLUGIN_POST_INTERVAL_SECONDS)
@@ -210,7 +211,7 @@ class AutoPostService:
             logger.warning(f"Auto-post failed; skipping this run: {e}")
             return
         await self.post_count()
-        logger.info(f"Auto-post succeeded: {self.bot.format_log_text(content)}")
+        logger.info(f"Auto-post succeeded: {format_log_text(content)}")
         logger.info(f"Daily post count: {self.posts_today}/{max_posts}")
 
     async def _create_ai_post(

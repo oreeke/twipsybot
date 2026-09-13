@@ -1,12 +1,10 @@
 import asyncio
 import re
-import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from cachetools import TTLCache
 from loguru import logger
 
 from ...admin import AdminCommandService
@@ -18,9 +16,8 @@ from ...db.sqlite import DBManager
 from ...plugin.manager import PluginManager
 from ...shared.config import Config
 from ...shared.config_keys import ConfigKeys
-from ...shared.constants import CHAT_CACHE_MAX_USERS, CHAT_CACHE_TTL
 from ...shared.exceptions import ConfigurationError
-from ..flows.chat import ChatHandler, _resolve_history_limit
+from ..flows.chat import ChatHandler
 from ..flows.image import ImageGenerationService
 from ..flows.mention import MentionHandler
 from ..flows.notification import NotificationHandler
@@ -83,11 +80,6 @@ class MisskeyBot:
         self.system_prompt = config.get(ConfigKeys.BOT_SYSTEM_PROMPT, "")
         self.bot_user_id = None
         self.bot_username = None
-        self._chat_histories: TTLCache[str, list[dict[str, str]]] = TTLCache(
-            maxsize=CHAT_CACHE_MAX_USERS,
-            ttl=CHAT_CACHE_TTL,
-            timer=time.monotonic,
-        )
         self.chat = ChatHandler(self)
         self.mention = MentionHandler(self)
         self.image = ImageGenerationService(self)
@@ -113,63 +105,6 @@ class MisskeyBot:
 
     def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
         return self.limits.is_response_blacklisted_user(user_id=user_id, handle=handle)
-
-    async def get_or_load_chat_history(
-        self,
-        conversation_id: str,
-        *,
-        limit: int | None,
-        user_id: str | None = None,
-        room_id: str | None = None,
-    ) -> list[dict[str, str]]:
-        limit_value = _resolve_history_limit(
-            self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
-        )
-        if (cached := self._chat_histories.get(conversation_id)) is not None:
-            return self._trim_chat_history(list(cached), limit_value)
-        if conversation_id.startswith("room:"):
-            room_id = room_id or conversation_id.removeprefix("room:")
-        history = await self.chat.get_chat_history(
-            user_id=user_id, room_id=room_id, limit=limit_value
-        )
-        trimmed = self._trim_chat_history(history, limit_value)
-        self._chat_histories[conversation_id] = trimmed
-        return list(trimmed)
-
-    @staticmethod
-    def _trim_chat_history(
-        history: list[dict[str, str]], limit_value: int
-    ) -> list[dict[str, str]]:
-        return history[-limit_value:] if limit_value > 0 else []
-
-    def append_chat_turn(
-        self,
-        conversation_id: str,
-        user_text: str,
-        assistant_text: str,
-        limit: int | None,
-    ) -> None:
-        limit_value = _resolve_history_limit(
-            self.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
-        )
-        history = list(self._chat_histories.get(conversation_id) or [])
-        last = next(reversed(history), None)
-        if user_text and not (
-            isinstance(last, dict)
-            and last.get("role") == "user"
-            and last.get("content") == user_text
-        ):
-            history.append({"role": "user", "content": user_text})
-        last = next(reversed(history), None)
-        if assistant_text and not (
-            isinstance(last, dict)
-            and last.get("role") == "assistant"
-            and last.get("content") == assistant_text
-        ):
-            history.append({"role": "assistant", "content": assistant_text})
-        self._chat_histories[conversation_id] = self._trim_chat_history(
-            history, limit_value
-        )
 
     async def start(self) -> None:
         if self.runtime.running:
@@ -281,13 +216,6 @@ class MisskeyBot:
             or bool(current_host and host.rstrip(".").lower() == current_host.lower())
             for match in pattern.finditer(text)
         )
-
-    @staticmethod
-    def format_log_text(text: str, max_length: int = 50) -> str:
-        if not text:
-            return "None"
-        suffix = "..." if len(text) > max_length else ""
-        return f"{text[:max_length]}{suffix}"
 
     @property
     def ai_config(self) -> dict[str, Any]:

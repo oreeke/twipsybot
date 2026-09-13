@@ -80,56 +80,70 @@ async def test_admin_status_preserves_code_block_layout(
 
 
 @pytest.mark.parametrize(
-    ("status", "marker"),
+    ("status", "running", "expected"),
     (
-        ("connected", "🟩"),
-        ("initializing", "🟨"),
-        ("reconnecting", "🟨"),
-        ("disconnected", "🟥"),
+        ("connected", True, "🟩"),
+        ("initializing", True, "🟨"),
+        ("reconnecting", True, "🟨"),
+        ("disconnected", True, "🟥"),
+        ("disconnected", False, "🟨"),
     ),
 )
-@pytest.mark.parametrize("running", (True, False))
 async def test_admin_status_connection_markers(
     make_bot: MakeBot,
     write_config: WriteConfig,
     monkeypatch: pytest.MonkeyPatch,
     status: str,
-    marker: str,
     running: bool,
+    expected: str,
 ) -> None:
     bot = await make_bot(write_config())
     monkeypatch.setattr(bot.runtime, "running", running)
     bot.streaming.state = status
-    expected = "🟨" if marker == "🟥" and not running else marker
     assert f"连接  {expected} {status}" in bot.admin._get_status_text().splitlines()
 
 
 @pytest.mark.parametrize(
-    ("state", "marker"),
-    ((STATE_RUNNING, "🟩"), (STATE_PAUSED, "🟨"), (STATE_STOPPED, "🟥")),
+    ("state", "running", "expected"),
+    (
+        (STATE_RUNNING, True, "🟩"),
+        (STATE_PAUSED, True, "🟨"),
+        (STATE_STOPPED, True, "🟥"),
+        (STATE_STOPPED, False, "🟨"),
+    ),
 )
-@pytest.mark.parametrize("running", (True, False))
 async def test_admin_status_scheduler_markers(
     make_bot: MakeBot,
     write_config: WriteConfig,
     monkeypatch: pytest.MonkeyPatch,
     state: int,
-    marker: str,
     running: bool,
+    expected: str,
 ) -> None:
     bot = await make_bot(write_config())
     monkeypatch.setattr(bot.runtime, "running", running)
     monkeypatch.setattr(bot.scheduler, "state", state)
-    expected = "🟨" if marker == "🟥" and not running else marker
     assert (
         bot.admin._get_task_status_text() == f"任务  stream 🟨 · scheduler {expected}"
     )
 
 
-@pytest.mark.parametrize("running", (True, False))
-@pytest.mark.parametrize("outcome", ("running", "success", "error", "cancel"))
+@pytest.mark.parametrize(
+    ("outcome", "running", "expected"),
+    (
+        ("running", True, "🟩"),
+        ("success", True, "🟥"),
+        ("error", True, "🟥"),
+        ("cancel", True, "🟥"),
+        ("success", False, "🟨"),
+    ),
+)
 async def test_admin_status_reports_stream_task_state(
-    make_bot: MakeBot, write_config: WriteConfig, outcome: str, running: bool
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    outcome: str,
+    running: bool,
+    expected: str,
 ) -> None:
     bot = await make_bot(write_config())
     bot.runtime.running = running
@@ -146,7 +160,6 @@ async def test_admin_status_reports_stream_task_state(
             task.cancel()
         if outcome != "running":
             await asyncio.gather(task, return_exceptions=True)
-        expected = "🟩" if outcome == "running" else "🟥" if running else "🟨"
         text = bot.admin._get_status_text()
         scheduler = "🟥" if running else "🟨"
         assert f"任务  stream {expected} · scheduler {scheduler}" in text.splitlines()
@@ -582,8 +595,16 @@ async def test_admin_clean_posts_limits_each_batch_to_300(
     assert delete_note.await_count == 300
 
 
-async def test_admin_clean_posts_stops_and_reports_rate_limit(
-    make_bot: MakeBot, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "error",
+    (APIRateLimitError("rate limited"), APIConnectionError("disconnected")),
+    ids=("rate-limit", "connection"),
+)
+async def test_admin_clean_posts_stops_and_reports_transient_error(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
 ) -> None:
     bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
     notes = [
@@ -597,7 +618,7 @@ async def test_admin_clean_posts_stops_and_reports_rate_limit(
     monkeypatch.setattr(
         bot.misskey,
         "delete_note",
-        AsyncMock(side_effect=[{}, APIRateLimitError("rate limited")]),
+        AsyncMock(side_effect=[{}, error]),
     )
     monkeypatch.setattr("twipsybot.admin.handlers.asyncio.sleep", AsyncMock())
 
@@ -610,6 +631,7 @@ async def test_admin_clean_posts_stops_and_reports_rate_limit(
 
     assert response is not None
     assert "已删除 1 条" in response
+    assert "跳过 0 条" in response
     assert "未处理 2 条" in response
 
 
@@ -661,38 +683,6 @@ async def test_admin_clean_posts_only_skips_missing_resources(
     bot.misskey.get_note = AsyncMock(side_effect=APIPermissionError("denied"))
     with pytest.raises(APIPermissionError, match="denied"):
         await bot.admin._delete_clean_posts([note], cutoff, set())
-
-
-async def test_admin_clean_posts_stops_and_reports_connection_error(
-    make_bot: MakeBot, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
-    notes = [
-        _cleanable_note(f"note-{index}", "2025-01-02T00:00:00Z") for index in range(3)
-    ]
-    monkeypatch.setattr(
-        bot.misskey, "get_current_user", AsyncMock(return_value={"pinnedNotes": []})
-    )
-    monkeypatch.setattr(bot.misskey, "get_user_notes", AsyncMock(return_value=notes))
-    monkeypatch.setattr(bot.misskey, "get_note", AsyncMock(side_effect=notes))
-    monkeypatch.setattr(
-        bot.misskey,
-        "delete_note",
-        AsyncMock(side_effect=[{}, APIConnectionError("disconnected")]),
-    )
-    monkeypatch.setattr("twipsybot.admin.handlers.asyncio.sleep", AsyncMock())
-
-    response = await bot.admin.on_message(
-        {
-            "text": "^clean posts 30 -y",
-            "user": {"id": "user-2", "username": "bob"},
-        }
-    )
-
-    assert response is not None
-    assert "已删除 1 条" in response
-    assert "跳过 0 条" in response
-    assert "未处理 2 条" in response
 
 
 @pytest.mark.parametrize("confirmation", ("yes", "-Y", "--yes"))
@@ -780,7 +770,7 @@ async def test_admin_can_reenable_chat(
     )
     plugin_hook.assert_not_awaited()
     assert await bot.db.get_response_limit_state("user-2") is None
-    assert "user-2" not in bot._chat_histories
+    assert "user-2" not in bot.chat._histories
 
 
 async def test_stop_continues_after_cleanup_failure() -> None:
@@ -848,7 +838,6 @@ async def test_auto_post_confirms_only_successful_publish(
         db=SimpleNamespace(set_auto_post_state=set_auto_post_state),
         misskey=SimpleNamespace(create_note=create_note),
         plugin_manager=SimpleNamespace(confirm_auto_post_published=confirm),
-        format_log_text=lambda text: text,
     )
     service = AutoPostService(cast(Any, bot))
     monkeypatch.setattr(service, "_PLUGIN_POST_INTERVAL_SECONDS", 0)

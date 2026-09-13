@@ -112,7 +112,7 @@ class ExampleConfig(PluginConfig):
 | 方法 | 时机 |
 | --- | --- |
 | `initialize()` | 加载后初始化资源，只有返回 `True` 才继续启用 |
-| `on_startup()` | 所有核心服务准备完成后 |
+| `on_startup()` | 插件初始化完成、开始接收 Hook 前 |
 | `on_shutdown()` | 停止接收新 Hook 后 |
 | `cleanup()` | 释放资源，初始化失败时也可能调用 |
 
@@ -161,7 +161,7 @@ return {"contents": ["第一篇", "第二篇"], "visibility": "home"}
 return {"prompt": "围绕开源维护写一篇短文。"}
 ```
 
-`contents`、其中的文本和 `prompt` 必须非空。`contents` 会直接发布而不调用 AI；`prompt` 会放在全局自动发帖提示词之前。两种结果仍受每日上限控制。`PromptModificationResult` 还可提供分钟级整数 `timestamp`。
+`contents`、其中的文本和 `prompt` 必须非空。多个插件返回结果时，`contents` 优先于 `prompt`，同类结果按插件优先级取第一个；多篇内容间隔 10 秒发布。两种结果仍受每日上限控制。`PromptModificationResult` 还可提供分钟级整数 `timestamp`。
 
 ## PluginContext
 

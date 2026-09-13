@@ -67,7 +67,7 @@ bot:
     prompt: "prompts/auto-post.txt"
 ```
 
-只允许读取 `prompts/*.txt` 范围内的相对路径。Docker 使用提示词文件时，需要挂载 `./prompts:/app/prompts:ro`。
+只允许读取配置文件同级 `prompts` 目录中的 `.txt` 文件。Docker 使用时只需将保存这些文件的宿主机目录挂载到 `/app/prompts`；Compose 示例使用 `./prompts`。
 
 ## 自动发帖
 

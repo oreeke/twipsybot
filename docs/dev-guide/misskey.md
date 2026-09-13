@@ -24,8 +24,9 @@ TwipsyBot 通过 REST API 执行查询和写入，通过 Streaming API 接收实
 | `chat/messages/create-to-room` | 向房间发送聊天消息 | `send_room_message()` |
 | `chat/messages/user-timeline` | 获取与用户的聊天记录 | `get_messages()` |
 | `chat/messages/room-timeline` | 获取房间聊天记录 | `get_room_messages()` |
-| `drive/files/show` | 获取 Drive 文件信息 | `drive.show_file()` |
+| `drive/files/show` | 获取文件信息 | `drive.show_file()` |
 | `drive/files/create` | 上传文件 | `drive.upload_bytes()` |
+| 文件 URL (`GET`) | 下载文件 | `drive.fetch_bytes()`、`drive.download_bytes()` |
 
 所有 REST 请求共享最多 32 个并发槽位，单次请求超时为 60 秒。读取类请求会对连接错误和限流执行最多 2 次带随机抖动的指数退避重试。写入类请求默认不重试，避免发帖、聊天或反应被重复提交。新增调用时应继续通过 `MisskeyAPI` 或 `MisskeyDrive` 复用这些约束和 HTTP 会话。
 
@@ -68,7 +69,7 @@ Streaming 客户端负责断线重连和 Channel 恢复，使用 `pong` 回执�
 
 ## 错误与测试
 
-REST 客户端将错误区分为参数错误、认证错误、限流和连接错误。上层业务代码应保留这些错误语义，不要统一吞掉异常或无条件重试。Streaming 断线由客户端恢复，事件处理失败不应终止其余 worker。
+REST 客户端区分参数、认证、权限、未找到、文件过大、限流和连接错误。响应错误保留 `status`、`code`、`error_id`、`kind`、`info` 和 `retry_after`。上层业务代码应保留这些语义，不要统一吞掉异常或无条件重试。Streaming 断线由客户端恢复，事件处理失败不应终止其余 worker。
 
 自动化测试不得依赖真实 Misskey 实例。REST 行为通过模拟 HTTP 响应验证，Streaming 行为通过构造事件和连接替身验证。新增 endpoint 或 Channel 时，至少覆盖成功响应、认证或参数失败、连接失败，以及会产生重复副作用的重试边界。
 

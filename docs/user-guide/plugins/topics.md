@@ -21,7 +21,7 @@ topics:
     以{topic}为主题，
 ```
 
-将主题逐行写入 `plugins/topics/topics.txt`：
+将自定义主题逐行写入 `prompts/topics.txt`：
 
 ```text
 开源软件的长期维护
@@ -30,7 +30,7 @@ topics:
 
 插件按顺序循环读取非空行，并通过 `{topic}` 将主题加入自动发帖提示词。
 
-使用 TXT 来源时，`txt_ai_prefix` 不能为空。
+Docker 可与提示词文件共用 `/app/prompts` 挂载。
 
 `txt_start_line` 只在插件尚无保存状态时决定起始行。之后的读取位置保存在 SQLite 中，修改该值不会重置现有进度。
 

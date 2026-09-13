@@ -23,6 +23,8 @@ from twipsybot.shared.config_keys import ConfigKeys
 from twipsybot.shared.exceptions import (
     APIBadRequestError,
     APIConnectionError,
+    APINotFoundError,
+    APIPermissionError,
     APIRateLimitError,
     ConfigurationError,
 )
@@ -641,6 +643,24 @@ async def test_admin_clean_posts_skips_note_deleted_during_recheck(
     assert "已删除 1 条" in response
     assert "跳过 1 条" in response
     assert "未处理 0 条" in response
+
+
+async def test_admin_clean_posts_only_skips_missing_resources(
+    make_bot: MakeBot, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    note = _cleanable_note("note-1", "2025-01-02T00:00:00Z")
+    cutoff = datetime.now(UTC)
+
+    monkeypatch.setattr(
+        bot.misskey, "get_note", AsyncMock(side_effect=APINotFoundError("missing"))
+    )
+
+    assert await bot.admin._delete_clean_posts([note], cutoff, set()) == (0, 1, 0)
+
+    bot.misskey.get_note = AsyncMock(side_effect=APIPermissionError("denied"))
+    with pytest.raises(APIPermissionError, match="denied"):
+        await bot.admin._delete_clean_posts([note], cutoff, set())
 
 
 async def test_admin_clean_posts_stops_and_reports_connection_error(

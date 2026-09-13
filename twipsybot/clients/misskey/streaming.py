@@ -17,13 +17,16 @@ from ...shared.constants import (
     STREAM_SEND_BUFFER_MAX,
     STREAM_WORKERS,
 )
-from ...shared.exceptions import WebSocketConnectionError
+from ...shared.exceptions import WebSocketConnectionError, WebSocketReconnectError
 from .channels import ChannelSpec, ChannelType
 from .events import _StreamingEventsMixin
 from .socket import _StreamingSocketMixin
 from .transport import TCPClient
 
 __all__ = ("StreamingClient",)
+
+MAX_CHANNELS_PER_CONNECTION = 32
+CHANNEL_CONNECT_TIMEOUT = 5.0
 
 
 class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
@@ -42,6 +45,8 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         self.log_dump_events = log_dump_events
         self.state = "initializing"
         self.channels: dict[str, dict[str, Any]] = {}
+        self._confirmed_channel_ids: set[str] = set()
+        self._channel_confirmation_events: dict[str, asyncio.Event] = {}
         self.event_handlers: dict[str, list[Callable]] = {}
         self.processed_events = TTLCache(
             maxsize=STREAM_DEDUP_CACHE_MAX, ttl=STREAM_DEDUP_CACHE_TTL
@@ -58,6 +63,8 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         self._chat_channel_tasks: dict[str, asyncio.Task[None]] = {}
         self._chat_user_channel_ids: dict[str, str] = {}
         self._chat_channel_other_ids: dict[str, str] = {}
+        self._chat_room_channel_ids: dict[str, str] = {}
+        self._chat_channel_room_ids: dict[str, str] = {}
         self._chat_user_cache: dict[str, dict[str, Any]] = {}
         self._send_buffer: deque[dict[str, Any]] = deque(maxlen=STREAM_SEND_BUFFER_MAX)
         self._send_buffer_overflow_warned = False
@@ -165,10 +172,18 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
             logger.debug(
                 f"Channel {channel_name} already connected: {existing_channels}"
             )
-            return existing_channels[0]
+            channel_id = existing_channels[0]
+            if self._ws_available and channel_id not in self._confirmed_channel_ids:
+                await self._wait_for_channel_confirmation(channel_id, channel_name)
+            return channel_id
+        if len(self.channels) >= MAX_CHANNELS_PER_CONNECTION:
+            raise WebSocketConnectionError(
+                f"Misskey allows at most {MAX_CHANNELS_PER_CONNECTION} channels per connection"
+            )
         channel_id = str(uuid.uuid4())
         self.channels[channel_id] = {"name": channel_name, "params": effective_params}
         if self._ws_available:
+            self._channel_confirmation_events[channel_id] = asyncio.Event()
             await self._send_control(
                 {
                     "type": "connect",
@@ -176,11 +191,47 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
                         "channel": channel_name,
                         "id": channel_id,
                         "params": effective_params,
+                        "pong": True,
                     },
                 }
             )
+            try:
+                await self._wait_for_channel_confirmation(channel_id, channel_name)
+            except BaseException:
+                self.channels.pop(channel_id, None)
+                self._channel_confirmation_events.pop(channel_id, None)
+                raise
         logger.debug(f"Connected channel: {channel_name} (ID: {channel_id})")
         return channel_id
+
+    async def _wait_for_channel_confirmation(
+        self, channel_id: str, channel_name: str
+    ) -> None:
+        event = self._channel_confirmation_events.setdefault(
+            channel_id, asyncio.Event()
+        )
+        try:
+            await asyncio.wait_for(event.wait(), timeout=CHANNEL_CONNECT_TIMEOUT)
+        except TimeoutError:
+            raise WebSocketConnectionError(
+                f"Misskey did not confirm channel: {channel_name}"
+            ) from None
+        if channel_id not in self._confirmed_channel_ids:
+            raise WebSocketReconnectError()
+
+    def _confirm_channel(self, channel_id: str) -> None:
+        if channel_id not in self.channels:
+            return
+        self._confirmed_channel_ids.add(channel_id)
+        if event := self._channel_confirmation_events.pop(channel_id, None):
+            event.set()
+
+    def _reset_channel_confirmations(self) -> None:
+        self._confirmed_channel_ids.clear()
+        events = tuple(self._channel_confirmation_events.values())
+        self._channel_confirmation_events.clear()
+        for event in events:
+            event.set()
 
     async def disconnect_channel(self, channel: ChannelType | str) -> None:
         channel_name = (
@@ -196,6 +247,9 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         for channel_id in channels_to_remove:
             await self._try_send_disconnect(channel_id)
             self.channels.pop(channel_id, None)
+            self._confirmed_channel_ids.discard(channel_id)
+            if event := self._channel_confirmation_events.pop(channel_id, None):
+                event.set()
         logger.debug(f"Disconnected channel: {channel_name}")
 
     async def disconnect_channel_id(self, channel_id: str) -> None:
@@ -204,6 +258,9 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         if channel_id in self.channels:
             await self._try_send_disconnect(channel_id)
         self.channels.pop(channel_id, None)
+        self._confirmed_channel_ids.discard(channel_id)
+        if event := self._channel_confirmation_events.pop(channel_id, None):
+            event.set()
 
     async def _try_send_disconnect(self, channel_id: str) -> None:
         if not self._ws_available:
@@ -240,7 +297,11 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
 
     def _find_channel_id(self, channel_name: str, params: dict[str, Any]) -> str | None:
         for ch_id, ch_info in self.channels.items():
-            if ch_info.get("name") == channel_name and ch_info.get("params") == params:
+            if (
+                ch_id in self._confirmed_channel_ids
+                and ch_info.get("name") == channel_name
+                and ch_info.get("params") == params
+            ):
                 return ch_id
         return None
 
@@ -283,6 +344,7 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
 
     async def _connect_and_resubscribe(self) -> None:
         await self._connect_websocket()
+        self._reset_channel_confirmations()
         await self._resubscribe_channels()
         await self._flush_send_buffer()
         self.state = "connected"
@@ -300,6 +362,7 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
                         "channel": channel_name,
                         "id": channel_id,
                         "params": params,
+                        "pong": True,
                     },
                 }
             )
@@ -314,6 +377,7 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
                 except Exception as e:
                     logger.warning(f"Error disconnecting channel {channel_id}: {e}")
         self.channels.clear()
+        self._reset_channel_confirmations()
 
     async def _process_message(
         self, data: dict[str, Any], raw_message: str | None = None
@@ -325,5 +389,9 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         body = data.get("body", {})
         if message_type == "channel":
             await self._handle_channel_message(body)
+        elif message_type == "connected" and isinstance(body, dict):
+            channel_id = body.get("id")
+            if isinstance(channel_id, str):
+                self._confirm_channel(channel_id)
         else:
             logger.debug(f"Unknown message type received: {message_type}")

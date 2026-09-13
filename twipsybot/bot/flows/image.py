@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 class ImageGenerationService:
-    _MAX_IMAGE_BYTES = 32 * 1024 * 1024
+    _MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024
 
     def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
@@ -19,9 +19,9 @@ class ImageGenerationService:
         image = await self.bot.openai.generate_image(prompt)
         if isinstance(image, str):
             image = await self.bot.misskey.drive.fetch_bytes(
-                image, max_bytes=self._MAX_IMAGE_BYTES
+                image, max_bytes=self._MAX_DOWNLOAD_BYTES
             )
-        if len(image) > self._MAX_IMAGE_BYTES:
+        if len(image) > self._MAX_DOWNLOAD_BYTES:
             raise ValueError("generated image exceeds 32 MiB")
         name, content_type = self._detect_image_type(image)
         uploaded = await self.bot.misskey.drive.upload_bytes(

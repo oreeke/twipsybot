@@ -2,7 +2,6 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
-from ...shared.constants import HTTP_OK
 from ...shared.exceptions import APIConnectionError
 
 if TYPE_CHECKING:
@@ -24,7 +23,6 @@ class MisskeyDrive:
         self, data: bytes, *, name: str, content_type: str = "image/png"
     ) -> dict[str, Any]:
         form = aiohttp.FormData()
-        form.add_field("i", self._api.access_token)
         form.add_field("name", name)
         form.add_field("file", data, filename=name, content_type=content_type)
         try:
@@ -44,7 +42,7 @@ class MisskeyDrive:
         try:
             session: aiohttp.ClientSession = self._api.session
             async with self._api.semaphore, session.get(url) as response:
-                if response.status != HTTP_OK:
+                if response.status != 200:
                     await self._api._process_response(response, "drive/files/download")
                     raise APIConnectionError()
                 if max_bytes is None:

@@ -95,7 +95,7 @@ class _Config(PluginConfig):
 
 
 class IinchoPlugin(PluginBase):
-    api_version = 2
+    api_version = 3
     config_class = _Config
     settings: _Config
     description = "定时汇总本地时间线趋势并审查疑似违规内容"
@@ -184,7 +184,6 @@ class IinchoPlugin(PluginBase):
             text=text,
             visibility="public",
             local_only=self.settings.local_only,
-            validate_reply=False,
         )
         self._log_plugin_action(
             "published", f"eligible={window.eligible} sampled={len(window.samples)}"

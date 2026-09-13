@@ -46,7 +46,6 @@ class MisskeyService(Protocol):
         visibility: str | None = None,
         reply_id: str | None = None,
         local_only: bool | None = None,
-        validate_reply: bool = True,
     ) -> dict[str, Any]: ...
 
     async def create_renote(

@@ -27,6 +27,7 @@ class MentionContext:
     user_id: str | None
     username: str | None
     explicit_mention: bool
+    reply_visibility: str | None
 
 
 class MentionHandler:
@@ -51,6 +52,7 @@ class MentionHandler:
     ) -> None:
         await self.bot.misskey.create_note(
             text=self._format_mention_reply(mention, text),
+            visibility=mention.reply_visibility,
             reply_id=mention.reply_target_id,
             file_ids=[file_id] if file_id else None,
         )
@@ -197,7 +199,7 @@ class MentionHandler:
             )
             note_data = normalize_payload(note, kind="mention")
             if not note_data:
-                return MentionContext(None, None, "", None, None, False)
+                return MentionContext(None, None, "", None, None, False, None)
             note_type = note.get("type")
             is_reply_event = note_type == "reply"
             note_id = (
@@ -231,10 +233,11 @@ class MentionHandler:
                 user_id,
                 username,
                 not is_reply_event,
+                "specified" if note_data.get("visibility") == "specified" else None,
             )
         except Exception:
             logger.exception("Failed to parse message data")
-            return MentionContext(None, None, "", None, None, False)
+            return MentionContext(None, None, "", None, None, False, None)
 
     def _mentions_bot(self, note_data: dict[str, Any]) -> bool:
         mentions = note_data.get("mentions")

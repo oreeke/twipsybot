@@ -381,7 +381,7 @@ async def test_vision_handles_image_only_without_default_prompt(
     assert messages[-1]["content"] == [expected_image]
 
 
-async def test_vision_resolves_missing_mime_once() -> None:
+async def test_vision_skips_attachment_without_official_metadata() -> None:
     drive = SimpleNamespace(
         fetch_bytes=AsyncMock(return_value=b"image"),
         show_file=AsyncMock(return_value={"type": "image/png"}),
@@ -403,9 +403,9 @@ async def test_vision_resolves_missing_mime_once() -> None:
 
     result = await plugin._to_image_part(file, use_responses=False)
 
-    assert result is not None
-    assert result["type"] == "image_url"
-    drive.show_file.assert_awaited_once_with("file-1")
+    assert result is None
+    drive.show_file.assert_not_awaited()
+    drive.fetch_bytes.assert_not_awaited()
     drive.download_bytes.assert_not_awaited()
 
 
@@ -511,6 +511,27 @@ async def test_radar_ai_uses_configured_prompt() -> None:
     )
     create_note.assert_awaited_once_with(
         text="generated reply", reply_id="note-1", local_only=False
+    )
+
+
+async def test_radar_preserves_specified_reply_visibility() -> None:
+    create_note = AsyncMock(return_value={})
+    plugin = RadarPlugin(
+        _context(
+            {"enabled": True, "reply": True, "reply_text": "reply"},
+            misskey=SimpleNamespace(create_note=create_note),
+        )
+    )
+
+    await plugin._maybe_reply(
+        {"text": "hello", "visibility": "specified"}, "note-1", "antenna"
+    )
+
+    create_note.assert_awaited_once_with(
+        text="reply",
+        visibility="specified",
+        reply_id="note-1",
+        local_only=False,
     )
 
 
@@ -695,7 +716,7 @@ async def test_iincho_publishes_formatted_summary() -> None:
     created = context.misskey.create_note.await_args.kwargs
     assert created["visibility"] == "public"
     assert created["local_only"] is True
-    assert created["validate_reply"] is False
+    assert "validate_reply" not in created
     assert created["text"].startswith("📊 Iincho 时间线观察\n\n🕒")
     assert "本地时间线观察" not in created["text"]
     assert "概览" not in created["text"]

@@ -29,7 +29,7 @@ class _Config(PluginConfig):
 
 
 class VisionPlugin(PluginBase):
-    api_version = 2
+    api_version = 3
     config_class = _Config
     settings: _Config
     description = "理解 @提及或聊天中的图片并生成回复"
@@ -58,27 +58,6 @@ class VisionPlugin(PluginBase):
         try:
             return await self.context.misskey.drive.fetch_bytes(
                 direct_url, max_bytes=self.settings.max_bytes
-            )
-        except Exception as e:
-            logger.error(f"Vision failed to download image: {e!r}")
-            return None
-
-    async def _ensure_image_mime(self, fid: str, mime: str | None) -> str | None:
-        if mime:
-            return mime
-        try:
-            info = await self.context.misskey.drive.show_file(fid)
-        except Exception as e:
-            logger.error(f"Vision failed to read file info: {e!r}")
-            return None
-        return self._normalize_image_mime(info.get("type"))
-
-    async def _try_download_bytes_by_id(self, fid: str) -> bytes | None:
-        try:
-            return await self.context.misskey.drive.download_bytes(
-                fid,
-                thumbnail=self.settings.use_thumbnail,
-                max_bytes=self.settings.max_bytes,
             )
         except Exception as e:
             logger.error(f"Vision failed to download image: {e!r}")
@@ -139,17 +118,12 @@ class VisionPlugin(PluginBase):
     async def _to_image_part(
         self, file: FileRef, *, use_responses: bool
     ) -> dict[str, Any] | None:
-        fid = file.id
         mime = self._normalize_image_mime(file.mime_type)
-        data = await self._try_fetch_bytes_by_url(self._select_direct_url(file))
-        if not mime:
-            mime = await self._ensure_image_mime(fid, mime)
         if not mime:
             return None
+        data = await self._try_fetch_bytes_by_url(self._select_direct_url(file))
         if data is None:
-            data = await self._try_download_bytes_by_id(fid)
-            if data is None:
-                return None
+            return None
         return self._make_image_part(mime, data, use_responses=use_responses)
 
     async def _call_vision(

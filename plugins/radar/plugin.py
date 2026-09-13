@@ -47,7 +47,7 @@ class _Config(PluginConfig):
 
 
 class RadarPlugin(PluginBase):
-    api_version = 2
+    api_version = 3
     config_class = _Config
     settings: _Config
     description = "主动与天线发现的帖子互动（反应、回复、转发、引用）"
@@ -165,9 +165,14 @@ class RadarPlugin(PluginBase):
         if not text:
             return
         try:
-            await self.context.misskey.create_note(
-                text=text, reply_id=note_id, local_only=self.settings.reply_local_only
-            )
+            kwargs = {
+                "text": text,
+                "reply_id": note_id,
+                "local_only": self.settings.reply_local_only,
+            }
+            if note_data.get("visibility") == "specified":
+                kwargs["visibility"] = "specified"
+            await self.context.misskey.create_note(**kwargs)
             self._log_plugin_action("replied", f"{note_id} [{channel}]")
         except Exception as e:
             logger.error(f"Radar reply failed: {e!r}")

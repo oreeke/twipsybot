@@ -12,6 +12,7 @@ from ..shared.config_keys import ConfigKeys
 from ..shared.exceptions import (
     APIBadRequestError,
     APIConnectionError,
+    APINotFoundError,
     APIRateLimitError,
 )
 from ..shared.utils import normalize_tokens
@@ -320,7 +321,7 @@ class CmdHandlersMixin:
         for index, note in enumerate(batch):
             try:
                 current = await self.bot.misskey.get_note(note["id"])
-            except APIBadRequestError:
+            except (APIBadRequestError, APINotFoundError):
                 skipped += 1
                 continue
             except APIRateLimitError:
@@ -331,7 +332,7 @@ class CmdHandlersMixin:
                     skipped += 1
                     continue
                 await self.bot.misskey.delete_note(note["id"])
-            except APIBadRequestError:
+            except (APIBadRequestError, APINotFoundError):
                 skipped += 1
                 continue
             except (APIConnectionError, APIRateLimitError):

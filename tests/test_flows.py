@@ -49,6 +49,23 @@ async def test_mention_triggers_ai_reply(
     assert notes[0]["replyId"] == "note-mention-1"
 
 
+async def test_mention_truncates_generated_reply_after_adding_mention(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    openai_server.set_reply("x" * 3000)
+    bot = await make_bot(write_config())
+
+    await bot.mention.handle(dict(_MENTION_NOTE))
+
+    text = misskey_server.calls["notes/create"][0]["text"]
+    assert len(text) == 3000
+    assert text.startswith("@alice\n")
+    assert text.endswith("…")
+
+
 async def test_mention_skips_generation_when_source_note_is_missing(
     make_bot: MakeBot,
     write_config: WriteConfig,
@@ -83,6 +100,18 @@ async def test_remote_mention_uses_federated_handle(
 
     note = misskey_server.calls["notes/create"][0]
     assert note["text"] == f"@alice@remote.example\n{DEFAULT_AI_REPLY}"
+
+
+async def test_specified_mention_replies_with_specified_visibility(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    bot = await make_bot(write_config())
+
+    await bot.mention.handle({**_MENTION_NOTE, "visibility": "specified"})
+
+    assert misskey_server.calls["notes/create"][0]["visibility"] == "specified"
 
 
 async def test_mention_generates_and_attaches_image(
@@ -451,7 +480,23 @@ async def test_chat_uses_history_and_replies_to_user(
         "你好，机器人",
     ]
     reply = misskey_server.calls["chat/messages/create-to-user"][0]
-    assert reply == {"i": "test-token", "toUserId": "user-2", "text": DEFAULT_AI_REPLY}
+    assert reply == {"toUserId": "user-2", "text": DEFAULT_AI_REPLY}
+
+
+async def test_chat_truncates_generated_reply_before_sending(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    openai_server.set_reply("x" * 2001)
+    bot = await make_bot(write_config())
+
+    await bot.chat.handle(dict(_CHAT_MESSAGE))
+
+    text = misskey_server.calls["chat/messages/create-to-user"][0]["text"]
+    assert len(text) == 2000
+    assert text.endswith("…")
 
 
 async def test_chat_history_uses_same_message_limit_after_cache_warms(
@@ -557,6 +602,23 @@ async def test_chat_can_publish_manual_post_without_counting(
     assert reply["text"] == "发帖完成"
     assert bot.auto_post.posts_today == 0
     assert await bot.db.get_auto_post_state() == (bot.auto_post._today(), 0)
+
+
+async def test_manual_post_truncates_generated_content(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    openai_server.set_reply("x" * 3001)
+    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+
+    await bot.chat.handle({**_CHAT_MESSAGE, "text": "/post long"})
+
+    text = misskey_server.calls["notes/create"][0]["text"]
+    assert len(text) == 3000
+    assert text.endswith("…")
+    assert misskey_server.calls["chat/messages/create-to-user"][0]["text"] == "发帖完成"
 
 
 @pytest.mark.parametrize(

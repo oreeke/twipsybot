@@ -12,6 +12,7 @@ class ChannelType(str, Enum):
     GLOBAL_TIMELINE = "globalTimeline"
     ANTENNA = "antenna"
     CHAT_USER = "chatUser"
+    CHAT_ROOM = "chatRoom"
 
 
 TIMELINE_CHANNELS = frozenset(
@@ -23,7 +24,7 @@ TIMELINE_CHANNELS = frozenset(
     }
 )
 NOTE_CHANNELS = frozenset({*TIMELINE_CHANNELS, ChannelType.ANTENNA.value})
-CHAT_CHANNELS = frozenset({ChannelType.CHAT_USER.value})
+CHAT_CHANNELS = frozenset({ChannelType.CHAT_USER.value, ChannelType.CHAT_ROOM.value})
 
 
 __all__ = (

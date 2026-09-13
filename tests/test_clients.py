@@ -37,6 +37,8 @@ from twipsybot.shared.constants import API_MAX_RETRIES
 from twipsybot.shared.exceptions import (
     APIBadRequestError,
     APIConnectionError,
+    APIPermissionError,
+    APIRateLimitError,
     WebSocketConnectionError,
 )
 
@@ -137,7 +139,7 @@ async def test_room_timeline_uses_room_id_without_fallback() -> None:
     )
 
 
-async def test_misskey_requests_prefer_bearer_and_keep_legacy_token() -> None:
+async def test_misskey_requests_use_bearer_without_duplicate_token() -> None:
     requests: list[tuple[str, str | None, dict[str, Any]]] = []
 
     async def api_handler(request: web.Request) -> web.Response:
@@ -174,11 +176,11 @@ async def test_misskey_requests_prefer_bearer_and_keep_legacy_token() -> None:
         await server.close()
 
     assert requests == [
-        ("i", "Bearer token", {"i": "token", "probe": True}),
+        ("i", "Bearer token", {"i": "override", "probe": True}),
         (
             "drive/files/create",
             "Bearer token",
-            {"i": "token", "name": "image.png", "file": b"image"},
+            {"name": "image.png", "file": b"image"},
         ),
         ("external", None, {}),
     ]
@@ -196,6 +198,41 @@ async def test_misskey_api_retries_connection_errors(
     assert await api.make_read_request("notes/show") == {"ok": True}
     assert request.await_count == 2
     sleep.assert_awaited_once()
+
+
+async def test_misskey_api_respects_retry_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = AsyncMock(side_effect=[APIRateLimitError(retry_after=12.0), {"ok": True}])
+    sleep = AsyncMock()
+    api = object.__new__(MisskeyAPI)
+    api._make_request_once = request
+    monkeypatch.setattr("twipsybot.clients.misskey.api.asyncio.sleep", sleep)
+
+    assert await api.make_read_request("notes/show") == {"ok": True}
+    sleep.assert_awaited_once_with(12.0)
+
+
+async def test_misskey_preserves_permission_error_details() -> None:
+    response = SimpleNamespace(
+        status=403,
+        headers={},
+        text=AsyncMock(
+            return_value=(
+                '{"error":{"code":"PERMISSION_DENIED","message":"Denied",'
+                '"id":"error-id","kind":"permission"}}'
+            )
+        ),
+    )
+    api = object.__new__(MisskeyAPI)
+
+    with pytest.raises(APIPermissionError) as exc_info:
+        await api._process_response(response, "notes/create")
+
+    assert exc_info.value.status == 403
+    assert exc_info.value.code == "PERMISSION_DENIED"
+    assert exc_info.value.error_id == "error-id"
+    assert exc_info.value.kind == "permission"
 
 
 async def test_misskey_api_stops_after_max_retries(
@@ -225,46 +262,47 @@ async def test_misskey_api_does_not_retry_writes() -> None:
     request.assert_awaited_once_with("notes/create", None)
 
 
-async def test_create_note_does_not_fallback_when_reply_target_is_missing() -> None:
-    request = AsyncMock(side_effect=APIBadRequestError("NO_SUCH_NOTE: No such note."))
+async def test_create_note_leaves_reply_validation_to_misskey() -> None:
+    request = AsyncMock(side_effect=APIBadRequestError("NO_SUCH_REPLY_TARGET"))
     api = object.__new__(MisskeyAPI)
-    api._make_request_once = request
+    api.make_request = request
 
     with pytest.raises(APIBadRequestError):
         await api.create_note("reply", reply_id="missing-note")
 
-    request.assert_awaited_once_with("notes/show", {"noteId": "missing-note"})
-
-
-async def test_create_note_keeps_unvalidated_missing_reply_target() -> None:
-    request = AsyncMock(
-        side_effect=[APIBadRequestError("NO_SUCH_NOTE: No such note."), {}]
+    request.assert_awaited_once_with(
+        "notes/create",
+        {"text": "reply", "visibility": "public", "replyId": "missing-note"},
     )
+
+
+async def test_create_note_preserves_known_specified_reply_visibility() -> None:
+    request = AsyncMock(return_value={})
     api = object.__new__(MisskeyAPI)
-    api._make_request_once = request
+    api.make_request = request
 
-    await api.create_note("reply", reply_id="missing-note", validate_reply=False)
+    await api.create_note("reply", visibility="specified", reply_id="specified-note")
 
-    assert request.await_args_list == [
-        call("notes/show", {"noteId": "missing-note"}),
-        call(
-            "notes/create",
-            {"text": "reply", "visibility": "public", "replyId": "missing-note"},
-        ),
-    ]
+    request.assert_awaited_once_with(
+        "notes/create",
+        {
+            "text": "reply",
+            "visibility": "specified",
+            "replyId": "specified-note",
+        },
+    )
 
 
 @pytest.mark.parametrize(
     ("method", "identifier_key"),
     [("send_message", "toUserId"), ("send_room_message", "toRoomId")],
 )
-async def test_chat_messages_respect_misskey_text_limit(
+async def test_chat_messages_truncate_text_over_misskey_limit(
     method: str, identifier_key: str
 ) -> None:
     request = AsyncMock(return_value={})
     api = object.__new__(MisskeyAPI)
     api.make_request = request
-
     await getattr(api, method)("target", "x" * 2001)
 
     endpoint = (
@@ -273,22 +311,21 @@ async def test_chat_messages_respect_misskey_text_limit(
         else "chat/messages/create-to-room"
     )
     request.assert_awaited_once_with(
-        endpoint, {identifier_key: "target", "text": "x" * 2000}
+        endpoint, {identifier_key: "target", "text": "x" * 1999 + "…"}
     )
 
 
 @pytest.mark.parametrize("method", ("create_note", "create_renote"))
-async def test_notes_respect_misskey_text_limit(method: str) -> None:
+async def test_notes_truncate_text_over_misskey_limit(method: str) -> None:
     request = AsyncMock(return_value={})
     api = object.__new__(MisskeyAPI)
     api.make_request = request
-
     if method == "create_note":
         await api.create_note("x" * 3001)
-        expected = {"text": "x" * 3000, "visibility": "public"}
+        expected = {"text": "x" * 2999 + "…", "visibility": "public"}
     else:
         await api.create_renote("note", text="x" * 3001)
-        expected = {"renoteId": "note", "text": "x" * 3000}
+        expected = {"renoteId": "note", "text": "x" * 2999 + "…"}
 
     request.assert_awaited_once_with("notes/create", expected)
 
@@ -515,6 +552,29 @@ async def test_streaming_event_deduplication_respects_channel_type(
     ][:expected_count]
 
 
+async def test_streaming_does_not_dedupe_event_dropped_before_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    enqueue = AsyncMock(side_effect=[False, True])
+    monkeypatch.setattr(client, "_enqueue_event", enqueue)
+    client.channels = {
+        "local-id": {"name": "localTimeline", "params": {}},
+        "antenna-id": {"name": "antenna", "params": {"antennaId": "a-1"}},
+    }
+
+    for channel_id in client.channels:
+        await client._handle_channel_message(
+            {
+                "id": channel_id,
+                "type": "note",
+                "body": {"id": "same-note", "text": "hello"},
+            }
+        )
+
+    assert enqueue.await_count == 2
+
+
 async def test_streaming_reconnect_runs_resubscribe_flow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -550,7 +610,12 @@ async def test_streaming_resubscribes_existing_channels(
         call(
             {
                 "type": "connect",
-                "body": {"channel": "main", "id": "main-id", "params": {}},
+                "body": {
+                    "channel": "main",
+                    "id": "main-id",
+                    "params": {},
+                    "pong": True,
+                },
             }
         ),
         call(
@@ -560,6 +625,7 @@ async def test_streaming_resubscribes_existing_channels(
                     "channel": "antenna",
                     "id": "antenna-id",
                     "params": {"antennaId": "a-1"},
+                    "pong": True,
                 },
             }
         ),
@@ -615,6 +681,105 @@ async def test_streaming_chat_timer_preserves_replacement(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await client.close()
+
+
+@pytest.mark.parametrize(
+    ("message", "channel_name", "params"),
+    [
+        (
+            {"id": "message-1", "fromUserId": "user-1"},
+            "chatUser",
+            {"otherId": "user-1"},
+        ),
+        (
+            {
+                "id": "message-2",
+                "fromUserId": "user-1",
+                "toRoomId": "room-1",
+            },
+            "chatRoom",
+            {"roomId": "room-1"},
+        ),
+    ],
+)
+async def test_main_chat_message_uses_matching_misskey_channel(
+    monkeypatch: pytest.MonkeyPatch,
+    message: dict[str, str],
+    channel_name: str,
+    params: dict[str, str],
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    send = AsyncMock()
+    monkeypatch.setattr(client, "_send_channel_message", send)
+    try:
+        await client._handle_main_new_chat_message(message)
+
+        channel_id = next(
+            channel_id
+            for channel_id, info in client.channels.items()
+            if info == {"name": channel_name, "params": params}
+        )
+        send.assert_awaited_once_with(channel_id, "read", {"id": message["id"]})
+    finally:
+        await client.close()
+
+
+async def test_streaming_channel_waits_for_misskey_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    send_json = AsyncMock()
+    client.ws_connection = cast(
+        Any, SimpleNamespace(closed=False, send_json=send_json, close=AsyncMock())
+    )
+
+    task = asyncio.create_task(client.connect_channel("chatRoom", {"roomId": "room-1"}))
+    await asyncio.sleep(0)
+    assert send_json.await_args is not None
+    sent = send_json.await_args.args[0]
+    channel_id = sent["body"]["id"]
+
+    assert sent["body"]["pong"] is True
+    assert not task.done()
+
+    await client._process_message({"type": "connected", "body": {"id": channel_id}})
+
+    assert await task == channel_id
+    assert channel_id in client._confirmed_channel_ids
+    await client.close()
+
+
+async def test_streaming_rejects_more_than_official_channel_limit() -> None:
+    client = StreamingClient("https://example.com", "token")
+    try:
+        for index in range(32):
+            await client.connect_channel("antenna", {"antennaId": str(index)})
+
+        with pytest.raises(WebSocketConnectionError, match="at most 32"):
+            await client.connect_channel("antenna", {"antennaId": "overflow"})
+    finally:
+        await client.close()
+
+
+async def test_main_chat_message_survives_channel_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    handler = AsyncMock()
+    client.on_message(handler)
+    monkeypatch.setattr(
+        client,
+        "connect_channel",
+        AsyncMock(side_effect=WebSocketConnectionError("rejected")),
+    )
+
+    await client._handle_main_new_chat_message(
+        {"id": "message-1", "fromUserId": "user-1", "text": "hello"}
+    )
+
+    handler.assert_awaited_once()
+    assert handler.await_args is not None
+    assert handler.await_args.args[0]["id"] == "message-1"
 
 
 async def test_streaming_flushes_send_buffer_in_order(

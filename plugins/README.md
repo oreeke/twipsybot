@@ -1,6 +1,6 @@
 ## 插件开发
 
-Plugin API v2。只从 `twipsybot.plugin` 导入公共接口。
+Plugin API v3。只从 `twipsybot.plugin` 导入公共接口。
 
 完整开发流程另见[开发指南](../docs/dev-guide/plugins.md)。
 
@@ -17,7 +17,7 @@ from twipsybot.plugin import MessageEvent, PluginBase
 
 
 class EchoPlugin(PluginBase):
-    api_version = 2
+    api_version = 3
 
     async def on_message(self, event: MessageEvent):
         return self.handled(f"echo: {event.text}")
@@ -49,7 +49,7 @@ class EchoConfig(PluginConfig):
 
 
 class EchoPlugin(PluginBase):
-    api_version = 2
+    api_version = 3
     config_class = EchoConfig
     settings: EchoConfig
 ```
@@ -104,7 +104,7 @@ deleted = await self.context.storage.delete("key")
 
 | 接口 | 用途 |
 | --- | --- |
-| `misskey.create_note(text, visibility, reply_id, local_only, validate_reply)` | 发帖或回复 |
+| `misskey.create_note(text, visibility, reply_id, local_only)` | 发帖或回复 |
 | `misskey.create_renote(note_id, visibility, text, local_only)` | 转帖或引用 |
 | `misskey.create_reaction(note_id, reaction)` | 添加反应 |
 | `misskey.send_message(user_id, text)` | 向用户发送私信 |
@@ -112,7 +112,7 @@ deleted = await self.context.storage.delete("key")
 | `misskey.instance_url` | 实例地址 |
 | `misskey.drive.show_file(file_id)` | 获取文件信息 |
 | `misskey.drive.fetch_bytes(url, max_bytes=...)` | 从 URL 下载 |
-| `misskey.drive.download_bytes(file_id, thumbnail=..., max_bytes=...)` | 下载 Drive 文件 |
+| `misskey.drive.download_bytes(file_id, thumbnail=..., max_bytes=...)` | 下载文件 |
 | `misskey.drive.upload_bytes(data, name=..., content_type=...)` | 上传文件 |
 
 `visibility` 可为 `public`、`home` 或 `followers`。上传结果中的 `id` 是文件 ID。
@@ -203,4 +203,4 @@ __init__ -> initialize -> on_startup -> hooks -> on_shutdown -> cleanup
 
 内部 API 包括其他 `twipsybot.*` 模块、`PluginManager`、底层对象、未文档化的私有属性和事件 `raw`。
 
-插件 API v2 只进行向后兼容的扩展。删除、重命名公共 API 成员或改变其语义属于破坏性变更，需要提升 API 主版本号。
+插件 API v3 只进行向后兼容的扩展。删除、重命名公共 API 成员或改变其语义属于破坏性变更，需要提升 API 主版本号。

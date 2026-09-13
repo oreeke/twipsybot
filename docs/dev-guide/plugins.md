@@ -32,7 +32,7 @@ class ExampleConfig(PluginConfig):
 
 
 class ExamplePlugin(PluginBase):
-    api_version = 2
+    api_version = 3
     config_class = ExampleConfig
     settings: ExampleConfig
 
@@ -78,7 +78,7 @@ from twipsybot.plugin import PluginBase
 
 
 class ExamplePlugin(PluginBase):
-    api_version = 2
+    api_version = 3
 
 
 plugin = ExamplePlugin
@@ -198,7 +198,7 @@ deleted = await self.context.storage.delete("key")
 | `misskey.instance_url` | 读取实例地址 |
 | `misskey.drive.show_file(...)` | 获取文件信息 |
 | `misskey.drive.fetch_bytes(...)` | 从 URL 下载文件 |
-| `misskey.drive.download_bytes(...)` | 下载 Drive 文件 |
+| `misskey.drive.download_bytes(...)` | 下载文件 |
 | `misskey.drive.upload_bytes(...)` | 上传文件 |
 
 `visibility` 支持 `public`、`home` 和 `followers`。Drive 上传结果中的 `id` 是文件 ID。当前 `create_note` 和 `HandledResult` 不支持附带文件 ID。
@@ -241,4 +241,4 @@ Hook 异常或超时只隔离本次调用，不会终止其他插件。Hook 超�
 
 内部 API 包括其他 `twipsybot.*` 模块、`PluginManager`、底层对象、未文档化的私有属性和事件 `raw`。
 
-插件 API v2 只进行向后兼容的扩展。删除、重命名公共 API 成员或改变其语义属于破坏性变更，需要提升 API 主版本号。
+插件 API v3 只进行向后兼容的扩展。删除、重命名公共 API 成员或改变其语义属于破坏性变更，需要提升 API 主版本号。

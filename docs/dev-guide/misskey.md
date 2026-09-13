@@ -14,7 +14,7 @@ TwipsyBot 通过 REST API 执行查询和写入，通过 Streaming API 接收实
 | Endpoint | 用途 | 客户端方法 |
 | --- | --- | --- |
 | `i` | 获取机器人账号信息 | `get_current_user()` |
-| `notes/show` | 获取帖子并校验回复可见性 | `get_note()` |
+| `notes/show` | 获取帖子 | `get_note()` |
 | `notes/create` | 发帖、回复、引用和转帖 | `create_note()`、`create_renote()` |
 | `notes/delete` | 删除帖子 | `delete_note()` |
 | `notes/reactions/create` | 添加反应 | `create_reaction()` |
@@ -29,7 +29,7 @@ TwipsyBot 通过 REST API 执行查询和写入，通过 Streaming API 接收实
 
 所有 REST 请求共享最多 32 个并发槽位，单次请求超时为 60 秒。读取类请求会对连接错误和限流执行最多 2 次带随机抖动的指数退避重试。写入类请求默认不重试，避免发帖、聊天或反应被重复提交。新增调用时应继续通过 `MisskeyAPI` 或 `MisskeyDrive` 复用这些约束和 HTTP 会话。
 
-帖子文本最长 3000 字符，聊天文本最长 2000 字符，客户端会截断超长内容。回复遵循原贴可见性。
+帖子文本最长 3000 字符，聊天文本最长 2000 字符，Misskey 客户端会统一安全截断超长文本。回复可见性、联合范围和权限由 Misskey 服务端校验与收敛；指定可见帖子使用事件中已有的可见性发起回复。
 
 ## Streaming API
 
@@ -44,8 +44,9 @@ TwipsyBot 通过 REST API 执行查询和写入，通过 Streaming API 接收实
 | `globalTimeline` | Global 时间线帖子 |
 | `antenna` | 指定天线的帖子 |
 | `chatUser` | 指定用户的聊天消息 |
+| `chatRoom` | 指定房间的聊天消息 |
 
-Streaming 客户端负责断线重连和 Channel 恢复，使用多个 worker 处理事件，并通过有限队列提供背压。队列拥塞时会丢弃无法及时入队的事件，断线期间使用有限缓冲保存待发送消息，缓冲溢出时丢弃最早消息。近期事件 ID 会短期缓存以避免重复处理。
+Streaming 客户端负责断线重连和 Channel 恢复，使用 `pong` 回执确认动态聊天订阅，并遵守单连接最多 32 个 Channel 的官方限制。客户端使用多个 worker 处理事件，并通过有限队列提供背压。队列拥塞时会丢弃无法及时入队的事件，断线期间使用有限缓冲保存待发送消息，缓冲溢出时丢弃最早消息。同一 Channel 内的重复事件会按事件 ID 短期去重。
 
 新增事件时，应先在客户端层规范化不同 Channel 的 payload，再由 flow 转换为业务行为或插件事件。不要让下游代码依赖原始 WebSocket 包装结构。
 

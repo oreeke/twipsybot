@@ -60,11 +60,8 @@ class MisskeyServiceAdapter:
         visibility: str | None = None,
         reply_id: str | None = None,
         local_only: bool | None = None,
-        validate_reply: bool = True,
     ) -> dict[str, Any]:
-        return await self._misskey.create_note(
-            text, visibility, reply_id, local_only, validate_reply
-        )
+        return await self._misskey.create_note(text, visibility, reply_id, local_only)
 
     async def create_renote(
         self,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -208,6 +209,20 @@ async def test_topics_txt_uses_configured_prompt(topic: str) -> None:
     result = await plugin.on_auto_post(AutoPostEvent(datetime.now(UTC)))
 
     assert result == {"prompt": f"Topic:\n{topic}"}
+
+
+async def test_topics_prefers_custom_file_from_prompts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "topics.txt").write_text("custom topic\n", encoding="utf-8")
+    plugin = TopicsPlugin(_context({"enabled": True, "txt_ai_prefix": "{topic}"}))
+
+    await plugin._load_topics()
+
+    assert plugin.topics == ["custom topic"]
 
 
 async def test_topics_initializes_rss_storage_defaults() -> None:

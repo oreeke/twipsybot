@@ -70,10 +70,6 @@ _ENV_TO_KEY = {
 }
 
 
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
-
 def _set_dotted(config: dict[str, Any], dotted: str, value: Any) -> None:
     cur: dict[str, Any] = config
     parts = dotted.split(".")
@@ -332,7 +328,7 @@ class Config:
         config_path = Path(self.config_path)
         merged = self._load_yaml_config(config_path)
         self._apply_env_overrides(merged)
-        self._expand_prompt_files(merged)
+        self._expand_prompt_files(merged, project_root=config_path.resolve().parent)
         self._model = self._validate_model(merged)
         self.data = self._model.model_dump(by_alias=True)
         self._ensure_paths()
@@ -364,8 +360,7 @@ class Config:
                 _set_dotted(config, key, env_value)
 
     @staticmethod
-    def _expand_prompt_files(config: dict[str, Any]) -> None:
-        project_root = _project_root()
+    def _expand_prompt_files(config: dict[str, Any], *, project_root: Path) -> None:
         for key in (ConfigKeys.BOT_SYSTEM_PROMPT, ConfigKeys.BOT_AUTO_POST_PROMPT):
             value = _get_dotted(config, key)
             if not isinstance(value, str):

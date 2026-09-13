@@ -111,7 +111,12 @@ class TopicsPlugin(PluginBase):
 
     async def _load_topics(self) -> None:
         try:
-            topics_file_path = Path(__file__).parent / "topics.txt"
+            custom_topics_path = Path("prompts/topics.txt")
+            topics_file_path = (
+                custom_topics_path
+                if custom_topics_path.is_file()
+                else Path(__file__).parent / "topics.txt"
+            )
             if not topics_file_path.exists():
                 logger.warning(f"Topics file not found: {topics_file_path}")
                 self._use_default_topics()

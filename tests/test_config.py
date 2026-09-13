@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -90,6 +91,25 @@ def test_response_reply_defaults_are_empty(write_config: WriteConfig) -> None:
 
     assert config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT_REPLY) == ""
     assert config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY) == ""
+
+
+def test_prompt_files_resolve_from_config_directory(
+    tmp_path: Path, write_config: WriteConfig
+) -> None:
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "system.txt").write_text("system from file", encoding="utf-8")
+    (prompts_dir / "post.txt").write_text("post from file", encoding="utf-8")
+
+    config = write_config(
+        bot={
+            "system_prompt": "prompts/system.txt",
+            "auto_post": {"prompt": "prompts/post.txt"},
+        }
+    )
+
+    assert config.get(ConfigKeys.BOT_SYSTEM_PROMPT) == "system from file"
+    assert config.get(ConfigKeys.BOT_AUTO_POST_PROMPT) == "post from file"
 
 
 def test_timeline_channels_are_independently_enabled(write_config: WriteConfig) -> None:

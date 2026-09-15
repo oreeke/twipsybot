@@ -29,6 +29,10 @@ from twipsybot.clients.misskey.payloads import (
 from twipsybot.clients.misskey.socket import _redact_access_token
 from twipsybot.clients.misskey.streaming import StreamingClient
 from twipsybot.clients.openai.api import OpenAIAPI
+from twipsybot.clients.openai.extract import (
+    extract_responses_text,
+    process_chat_completions_response,
+)
 from twipsybot.clients.openai.requests import (
     make_chat_completions_request,
     make_responses_request,
@@ -955,6 +959,74 @@ def test_responses_unavailable_rejects_parameter_error() -> None:
     assert not OpenAIAPI._is_responses_unavailable(
         _BadRequest("Invalid max_output_tokens")
     )
+
+
+def test_responses_text_prefers_aggregated_output() -> None:
+    response = SimpleNamespace(output_text="complete", output=None)
+
+    assert extract_responses_text(response) == "complete"
+
+
+def test_responses_text_collects_message_output_parts() -> None:
+    response = SimpleNamespace(
+        output_text="",
+        output=[
+            SimpleNamespace(type="reasoning", content=[]),
+            SimpleNamespace(
+                type="message",
+                content=[
+                    SimpleNamespace(type="output_text", text="first"),
+                    SimpleNamespace(type="refusal", text="ignored"),
+                    SimpleNamespace(type="output_text", text=" second"),
+                ],
+            ),
+            SimpleNamespace(type="message", content=None),
+        ],
+    )
+
+    assert extract_responses_text(response) == "first second"
+
+
+def test_responses_text_rejects_truncated_output() -> None:
+    response = SimpleNamespace(
+        status="incomplete",
+        incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+    )
+
+    with pytest.raises(APIConnectionError, match="max_output_tokens"):
+        extract_responses_text(response)
+
+
+@pytest.mark.parametrize(
+    ("output", "message"),
+    ((None, "Invalid output type"), ([], "Empty output")),
+)
+def test_responses_text_rejects_invalid_or_empty_output(
+    output: Any, message: str
+) -> None:
+    response = SimpleNamespace(output_text="", output=output)
+
+    with pytest.raises(APIConnectionError, match=message):
+        extract_responses_text(response)
+
+
+@pytest.mark.parametrize(
+    ("content", "finish_reason", "message"),
+    (("truncated", "length", "max_tokens"), ("", "stop", None)),
+)
+def test_chat_completions_rejects_incomplete_output(
+    content: str, finish_reason: str, message: str | None
+) -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content=content), finish_reason=finish_reason
+            )
+        ]
+    )
+
+    with pytest.raises(APIConnectionError, match=message):
+        process_chat_completions_response(response, "test")
 
 
 async def test_responses_request_enables_json_output() -> None:

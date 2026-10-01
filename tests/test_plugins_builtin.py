@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -663,7 +664,10 @@ def test_vision_rejects_invalid_size(value: Any) -> None:
         VisionPlugin(context)
 
 
-async def test_radar_reacts_through_public_misskey_service() -> None:
+async def test_radar_reacts_through_public_misskey_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("plugins.radar.plugin._DELAY_RANGE", (0.0, 0.0))
     create_reaction = AsyncMock(return_value={})
     misskey = SimpleNamespace(create_reaction=create_reaction)
 
@@ -696,8 +700,26 @@ async def test_radar_reacts_through_public_misskey_service() -> None:
     )
 
     await plugin.on_timeline_note(event)
+    await plugin.on_timeline_note(event)
+    await asyncio.gather(*plugin._pending.values())
 
     create_reaction.assert_awaited_once_with("note-1", "heart")
+    assert not plugin._pending
+
+    monkeypatch.setattr("plugins.radar.plugin._DELAY_RANGE", (60.0, 60.0))
+    await plugin.on_timeline_note(
+        TimelineNoteEvent(
+            id="note-4",
+            text="hello",
+            cw=None,
+            user=UserRef(id="user-1", username="alice", host=None),
+            channel="antenna",
+            files=(),
+            raw=raw,
+        )
+    )
+    await plugin.on_shutdown()
+    assert not plugin._pending
 
     remote_same_name = TimelineNoteEvent(
         id="note-2",
@@ -886,7 +908,6 @@ async def test_iincho_collects_only_eligible_local_notes() -> None:
     await plugin.on_timeline_note(_iincho_event(text=""))
     await plugin.on_timeline_note(_iincho_event(text="正文", cw="预警"))
 
-    assert plugin._window.total == 3
     assert plugin._window.eligible == 1
     assert [sample.text for sample in plugin._window.samples] == ["预警\n正文"]
 
@@ -905,7 +926,9 @@ async def test_iincho_reservoir_stays_bounded() -> None:
 
 
 async def test_iincho_publishes_formatted_summary() -> None:
-    context = _iincho_context({"sample_size": 2, "min_notes": 2})
+    context = _iincho_context(
+        {"sample_size": 2, "min_notes": 2, "admin_ids": ["admin-1"]}
+    )
     context.openai.generate_text.return_value = _iincho_result()
     context.openai.moderate_texts.side_effect = None
     context.openai.moderate_texts.return_value = [
@@ -948,7 +971,9 @@ async def test_iincho_publishes_formatted_summary() -> None:
 
 
 async def test_iincho_limits_serialized_input() -> None:
-    context = _iincho_context({"min_notes": 1, "max_input_chars": 1000})
+    context = _iincho_context(
+        {"min_notes": 1, "max_input_chars": 1000, "admin_ids": ["admin-1"]}
+    )
     context.openai.generate_text.return_value = _iincho_result()
     plugin = IinchoPlugin(context)
     await plugin.on_timeline_note(_iincho_event("\\" * 2000, event_id="1"))
@@ -978,7 +1003,9 @@ def test_iincho_serializes_special_characters_losslessly() -> None:
 
 
 async def test_iincho_keeps_notes_arriving_during_generation() -> None:
-    context = _iincho_context({"sample_size": 2, "min_notes": 1})
+    context = _iincho_context(
+        {"sample_size": 2, "min_notes": 1, "admin_ids": ["admin-1"]}
+    )
     plugin = IinchoPlugin(context)
     await plugin.on_timeline_note(_iincho_event("旧窗口"))
 
@@ -1051,8 +1078,20 @@ async def test_iincho_sends_trends_to_admin_without_violations() -> None:
     assert "🚨 违规审查：\n✅ 未发现明显违规" in message
 
 
-async def test_iincho_discards_invalid_ai_result_without_retry() -> None:
+async def test_iincho_skips_trends_without_admins() -> None:
     context = _iincho_context({"min_notes": 1})
+    plugin = IinchoPlugin(context)
+    await plugin.on_timeline_note(_iincho_event())
+
+    await plugin._process_window()
+
+    context.openai.generate_text.assert_not_awaited()
+    context.openai.moderate_texts.assert_awaited_once_with(["本地帖子"])
+    context.misskey.create_note.assert_awaited_once()
+
+
+async def test_iincho_discards_invalid_ai_result_without_retry() -> None:
+    context = _iincho_context({"min_notes": 1, "admin_ids": ["admin-1"]})
     context.openai.generate_text.return_value = "not json"
     plugin = IinchoPlugin(context)
     await plugin.on_timeline_note(_iincho_event())

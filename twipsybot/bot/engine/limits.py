@@ -1,7 +1,6 @@
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
 from urllib.parse import urlparse
 
 from cachetools import TTLCache
@@ -26,7 +25,7 @@ class ResponseLimiter:
         *,
         config: Config,
         db: DBManager,
-        instance_url: str | None,
+        instance_url: str,
         blacklist_user: Callable[[str], Awaitable[None]],
     ):
         self._config = config
@@ -39,16 +38,7 @@ class ResponseLimiter:
             timer=time.monotonic,
         )
 
-    @staticmethod
-    def _parse_user_list(value: Any) -> set[str]:
-        return set(normalize_tokens(value, lower=True))
-
-    def _load_response_user_set(self, key: str) -> set[str]:
-        return self._parse_user_list(self._config.get(key))
-
-    def _canonicalize_user_handle(self, username: str) -> str | None:
-        if not isinstance(self._instance_url, str) or not self._instance_url:
-            return None
+    def canonical_handle(self, username: str) -> str | None:
         host = urlparse(self._instance_url).hostname
         return f"{username}@{host}" if host else None
 
@@ -60,30 +50,21 @@ class ResponseLimiter:
                 candidates.add(normalized)
                 candidates.add(f"@{normalized}")
                 if "@" not in normalized and (
-                    canonical := self._canonicalize_user_handle(normalized)
+                    canonical := self.canonical_handle(normalized)
                 ):
                     candidates.add(canonical)
                     candidates.add(f"@{canonical}")
         return candidates
 
-    def _is_response_whitelisted_user(
-        self, *, user_id: str, handle: str | None
-    ) -> bool:
-        whitelist = self._load_response_user_set(ConfigKeys.BOT_RESPONSE_WHITELIST)
-        if not whitelist:
-            return False
-        return any(
-            c in whitelist
-            for c in self._user_candidates(user_id=user_id, handle=handle)
+    def _in_user_list(self, key: str, *, user_id: str, handle: str | None) -> bool:
+        users = set(normalize_tokens(self._config.get(key), lower=True))
+        return bool(users) and not users.isdisjoint(
+            self._user_candidates(user_id=user_id, handle=handle)
         )
 
     def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
-        blacklist = self._load_response_user_set(ConfigKeys.BOT_RESPONSE_BLACKLIST)
-        if not blacklist:
-            return False
-        return any(
-            c in blacklist
-            for c in self._user_candidates(user_id=user_id, handle=handle)
+        return self._in_user_list(
+            ConfigKeys.BOT_RESPONSE_BLACKLIST, user_id=user_id, handle=handle
         )
 
     def _duration_config_seconds(self, key: str) -> int:
@@ -126,7 +107,9 @@ class ResponseLimiter:
     async def get_response_block_reply(
         self, *, user_id: str, handle: str | None
     ) -> tuple[bool, str]:
-        if self._is_response_whitelisted_user(user_id=user_id, handle=handle):
+        if self._in_user_list(
+            ConfigKeys.BOT_RESPONSE_WHITELIST, user_id=user_id, handle=handle
+        ):
             return False, ""
         now = time.time()
         state = await self._get_response_limit_state(user_id)

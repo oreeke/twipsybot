@@ -772,8 +772,9 @@ async def test_shutdown_waits_for_active_hook_and_rejects_new_hooks(
     )
     await hook_started.wait()
     shutdown = asyncio.create_task(bot.plugin_manager.shutdown_plugins())
-    while bot.plugin_manager._accepting_hooks:
-        await asyncio.sleep(0)
+    async with asyncio.timeout(1):
+        while bot.plugin_manager._accepting_hooks:
+            await asyncio.sleep(0)
 
     assert await bot.plugin_manager.call_plugin_hook("on_message", payload) == []
     assert not shutdown.done()
@@ -821,6 +822,205 @@ async def test_shutdown_cancels_hook_after_grace_period(
 
     assert active_hook.cancelled()
     assert hook_cancelled.is_set()
+
+
+_RELOAD_BODY = (
+    "from twipsybot.plugin import PluginConfig\n"
+    "class Settings(PluginConfig):\n"
+    "    reply: str = 'default'\n"
+    "config_class = Settings\n"
+    "def __init__(self, context):\n"
+    "    super().__init__(context)\n"
+    "    self.events = ['init']\n"
+    "async def initialize(self):\n"
+    "    self.events.append('initialize')\n"
+    "    return True\n"
+    "async def on_startup(self):\n"
+    "    self.events.append('startup')\n"
+    "async def on_shutdown(self):\n"
+    "    self.events.append('shutdown')\n"
+    "async def cleanup(self):\n"
+    "    self.events.append('cleanup')\n"
+    "async def on_message(self, event):\n"
+    "    return self.handled(self.settings.reply)\n"
+)
+_MESSAGE = {"id": "message-1", "user": {"username": "alice"}}
+
+
+async def test_reload_plugin_replaces_instance_with_new_config(
+    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+) -> None:
+    plugins_dir = make_plugin_dir("reload", body=_RELOAD_BODY)
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    manager = bot.plugin_manager
+    old = manager.get_plugin("reload")
+    assert old is not None
+    await old.context.storage.set("kept", "yes")
+    (plugins_dir / "reload" / "config.yaml").write_text(
+        "enabled: true\nreply: updated\n", encoding="utf-8"
+    )
+
+    assert await manager.reload_plugin("reload") == "enabled"
+
+    new = manager.get_plugin("reload")
+    assert new is not None
+    assert new is not old
+    assert type(new) is type(old)
+    assert old.events == ["init", "initialize", "startup", "shutdown", "cleanup"]
+    assert new.events == ["init", "initialize", "startup"]
+    assert await new.context.storage.get("kept") == "yes"
+    assert await manager.call_plugin_hook("on_message", _MESSAGE) == [
+        {"handled": True, "response": "updated", "plugin_name": "reload"}
+    ]
+
+
+async def test_reload_plugin_failure_disables_only_that_plugin(
+    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+) -> None:
+    plugins_dir = make_plugin_dir(
+        "broken", body=_RELOAD_BODY, config="enabled: true\npriority: 20\n"
+    )
+    make_plugin_dir(
+        "healthy",
+        body="async def on_message(self, event):\n    return self.handled('ok')\n",
+        config="enabled: true\npriority: 10\n",
+    )
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    manager = bot.plugin_manager
+    old = manager.get_plugin("broken")
+    assert old is not None
+    (plugins_dir / "broken" / "config.yaml").write_text(
+        "enabled: true\nreply: [1]\n", encoding="utf-8"
+    )
+
+    assert await manager.reload_plugin("broken") == "failed"
+
+    assert manager.get_plugin("broken") is old
+    assert old.events[-2:] == ["shutdown", "cleanup"]
+    info = {item["name"]: item["enabled"] for item in manager.get_plugin_info()}
+    assert info == {"broken": False, "healthy": True}
+    assert await manager.call_plugin_hook("on_message", _MESSAGE) == [
+        {"handled": True, "response": "ok", "plugin_name": "healthy"}
+    ]
+
+
+async def test_reload_plugin_follows_enabled_flag(
+    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+) -> None:
+    plugins_dir = make_plugin_dir(
+        "toggle", body=_RELOAD_BODY, config="enabled: false\n"
+    )
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    manager = bot.plugin_manager
+    config_file = plugins_dir / "toggle" / "config.yaml"
+    assert manager.get_plugin("toggle") is None
+
+    config_file.write_text("enabled: true\n", encoding="utf-8")
+    assert await manager.reload_plugin("toggle") == "enabled"
+    plugin = manager.get_plugin("toggle")
+    assert plugin is not None
+    assert plugin._started
+
+    config_file.write_text("enabled: false\n", encoding="utf-8")
+    assert await manager.reload_plugin("toggle") == "disabled"
+    assert plugin.events[-2:] == ["shutdown", "cleanup"]
+    assert manager.get_plugin_info()[0]["enabled"] is False
+    assert await manager.call_plugin_hook("on_message", _MESSAGE) == []
+
+    config_file.write_text("enabled: true\n", encoding="utf-8")
+    assert await manager.reload_plugin("toggle") == "enabled"
+    reloaded = manager.get_plugin("toggle")
+    assert reloaded is not None
+    assert type(reloaded) is type(plugin)
+
+
+async def test_reload_plugin_reads_master_config_first(
+    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+) -> None:
+    plugins_dir = make_plugin_dir(
+        "central", body=_RELOAD_BODY, config="enabled: true\nreply: local\n"
+    )
+    master_file = plugins_dir / "config.yaml"
+    master_file.write_text(
+        "central:\n  enabled: true\n  reply: master\n", encoding="utf-8"
+    )
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    manager = bot.plugin_manager
+    master_file.write_text(
+        "central:\n  enabled: true\n  reply: updated\n", encoding="utf-8"
+    )
+
+    assert await manager.reload_plugin("central") == "enabled"
+    assert (await manager.call_plugin_hook("on_message", _MESSAGE))[0][
+        "response"
+    ] == "updated"
+
+    master_file.write_text("{}\n", encoding="utf-8")
+    assert await manager.reload_plugin("central") == "enabled"
+    assert (await manager.call_plugin_hook("on_message", _MESSAGE))[0][
+        "response"
+    ] == "local"
+
+
+@pytest.mark.parametrize("name", ("missing", "../toggle", "."))
+async def test_reload_plugin_rejects_unknown_names(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    name: str,
+) -> None:
+    plugins_dir = make_plugin_dir("toggle", body=_RELOAD_BODY)
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    assert await bot.plugin_manager.reload_plugin(name) == "unknown"
+
+
+async def test_reload_plugin_drains_active_hook_before_shutdown(
+    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+) -> None:
+    plugins_dir = make_plugin_dir(
+        "slow",
+        body=_RELOAD_BODY.replace(
+            "async def on_message(self, event):\n",
+            "async def on_message(self, event):\n"
+            "    self.events.append('hook')\n"
+            "    await self.release.wait()\n",
+        ),
+    )
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    manager = bot.plugin_manager
+    plugin = manager.get_plugin("slow")
+    assert plugin is not None
+    release = asyncio.Event()
+    plugin.release = release
+    active_hook = asyncio.create_task(manager.call_plugin_hook("on_message", _MESSAGE))
+    async with asyncio.timeout(1):
+        while "hook" not in plugin.events:
+            await asyncio.sleep(0)
+
+    reload = asyncio.create_task(manager.reload_plugin("slow"))
+    async with asyncio.timeout(1):
+        while "slow" not in manager._reloading:
+            await asyncio.sleep(0)
+
+    assert await manager.call_plugin_hook("on_message", _MESSAGE) == []
+    assert "shutdown" not in plugin.events
+
+    release.set()
+    assert await reload == "enabled"
+    assert (await active_hook)[0]["response"] == "default"
+    assert plugin.events[-3:] == ["hook", "shutdown", "cleanup"]
+
+
+async def test_reload_plugin_is_unavailable_after_shutdown(
+    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+) -> None:
+    plugins_dir = make_plugin_dir("toggle", body=_RELOAD_BODY)
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    await bot.plugin_manager.shutdown_plugins()
+
+    assert await bot.plugin_manager.reload_plugin("toggle") == "unavailable"
 
 
 async def test_plugin_cleanup_responds_to_cancellation(

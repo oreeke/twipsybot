@@ -118,6 +118,8 @@ class ExampleConfig(PluginConfig):
 
 通过 `_register_resource(resource)` 注册带 `close()` 的资源，基类会在清理时关闭。插件自身创建的任务应在 `on_shutdown()` 中停止，并在 `cleanup()` 中完成最终释放。
 
+管理员执行 `^reload <插件名>` 时，框架会先停止向该插件分发 Hook 并等待进行中的调用结束，然后对旧实例依次调用 `on_shutdown()` 和 `cleanup()`，再用同一类和新配置创建实例并执行 `initialize()`、`on_startup()`。插件无需实现额外接口，只要做到全部运行时状态都在实例内、并在上述两个方法中释放，就能正确重载。不要把状态放在模块或类变量中；需要跨重载保留的数据写入 `storage`。
+
 ## 事件 Hook
 
 | Hook | 事件类型 | 可返回结果 |
@@ -231,9 +233,7 @@ async with self.context.bot.actor_lock(event.user.id, event.user.handle):
 
 Hook 异常或超时只隔离本次调用，不会终止其他插件。Hook 超时为 180 秒；关闭时最多等待 3 秒，随后取消。插件仍应捕获可预期的网络或解析错误，不要吞掉 `asyncio.CancelledError`。
 
-生命周期方法超时 30 秒。初始化或启动失败时，插件会执行 `cleanup` 并被禁用；Bot 停止时会先执行 `on_shutdown`，再执行 `cleanup`。
-
-插件类可以设置 `description`，用于状态和插件信息展示。
+生命周期方法超时 30 秒。初始化或启动失败时，插件会执行 `cleanup` 并被禁用；Bot 停止时会先执行 `on_shutdown`，再执行 `cleanup`。重载时配置校验、初始化或启动失败，该插件同样被禁用，其他插件不受影响。
 
 ## API 边界
 

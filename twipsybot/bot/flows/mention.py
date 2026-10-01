@@ -13,7 +13,6 @@ from ...clients.misskey.payloads import (
 )
 from ...shared.config_keys import ConfigKeys
 from ...shared.utils import format_log_text, maybe_log_event_dump
-from ..engine.pipeline import AIResponse
 
 if TYPE_CHECKING:
     from ..engine.core import MisskeyBot
@@ -22,7 +21,6 @@ if TYPE_CHECKING:
 @dataclass(slots=True)
 class MentionContext:
     mention_id: str | None
-    reply_target_id: str | None
     text: str
     user_id: str | None
     username: str | None
@@ -53,7 +51,7 @@ class MentionHandler:
         await self.bot.misskey.create_note(
             text=self._format_mention_reply(mention, text),
             visibility=mention.reply_visibility,
-            reply_id=mention.reply_target_id,
+            reply_id=mention.mention_id,
             file_ids=[file_id] if file_id else None,
         )
 
@@ -89,7 +87,7 @@ class MentionHandler:
     async def _build_mention_prompt(
         self, mention: MentionContext, note: dict[str, Any]
     ) -> str:
-        note_data = normalize_payload(note, kind="mention")
+        note_data = normalize_payload(note)
         base = mention.text.strip()
         if not note_data:
             return base
@@ -156,9 +154,7 @@ class MentionHandler:
                 actor_id=mention.user_id,
                 actor_name=mention.username,
                 command_call=lambda: self.bot.admin.handle_slash_command(
-                    extract_note_text(
-                        normalize_payload(note, kind="mention"), include_cw=True
-                    )
+                    extract_note_text(normalize_payload(note), include_cw=True)
                     or mention.text,
                     user_id=mention.user_id,
                     username=mention.username or "unknown",
@@ -195,15 +191,14 @@ class MentionHandler:
                 kind="Mention",
                 payload=note,
             )
-            note_data = normalize_payload(note, kind="mention")
+            note_data = normalize_payload(note)
             if not note_data:
-                return MentionContext(None, None, "", None, None, False, None)
+                return MentionContext(None, "", None, None, False, None)
             note_type = note.get("type")
             is_reply_event = note_type == "reply"
             note_id = (
                 note_data.get("id") if isinstance(note_data.get("id"), str) else None
             )
-            reply_target_id = note_id
             user_id = extract_user_id(note_data)
             username = extract_user_handle(note_data)
             if is_reply_event:
@@ -226,7 +221,6 @@ class MentionHandler:
                 note_id = None
             return MentionContext(
                 note_id,
-                reply_target_id,
                 text,
                 user_id,
                 username,
@@ -235,7 +229,7 @@ class MentionHandler:
             )
         except Exception:
             logger.exception("Failed to parse message data")
-            return MentionContext(None, None, "", None, None, False, None)
+            return MentionContext(None, "", None, None, False, None)
 
     def _mentions_bot(self, note_data: dict[str, Any]) -> bool:
         mentions = note_data.get("mentions")
@@ -245,7 +239,7 @@ class MentionHandler:
 
     async def _generate_ai_reply(
         self, mention: MentionContext, note: dict[str, Any]
-    ) -> str | AIResponse | None:
+    ) -> str:
         prompt = await self._build_mention_prompt(mention, note)
         return await self.bot.openai.generate_text(
             prompt, self.bot.system_prompt, **self.bot.ai_config

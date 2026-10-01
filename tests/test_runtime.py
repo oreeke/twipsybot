@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
-from conftest import MakeBot, WriteConfig
+from conftest import MakeBot, MakePluginDir, WriteConfig
 
 from twipsybot import MisskeyBot
 from twipsybot.admin.service import AdminCommandService
@@ -465,6 +465,34 @@ async def test_admin_resets_auto_post_counter(
     assert "自动发帖计数器已重置" in response
     assert bot.auto_post.posts_today == 0
     assert await bot.db.get_auto_post_state() == (bot.auto_post._today(), 0)
+
+
+async def test_admin_reloads_plugin_config(
+    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+) -> None:
+    plugins_dir = make_plugin_dir("demo")
+    bot = await make_bot(
+        write_config(bot={"admin": {"allowed_users": ["user-2"]}}),
+        plugins_dir=plugins_dir,
+    )
+    user = {"id": "user-2", "username": "bob"}
+
+    async def run(text: str) -> str:
+        response = await bot.admin.on_message({"text": text, "user": user})
+        assert response is not None
+        return response
+
+    assert "插件 demo 已重载" in await run("^reload demo")
+    (plugins_dir / "demo" / "config.yaml").write_text(
+        "enabled: false\n", encoding="utf-8"
+    )
+    assert "插件 demo 已按配置禁用" in await run("^reload demo")
+    (plugins_dir / "demo" / "config.yaml").write_text(
+        "enabled: true\npriority: x\n", encoding="utf-8"
+    )
+    assert "重载失败，已禁用" in await run("^reload demo")
+    assert "未知插件: ghost" in await run("^reload ghost")
+    assert "用法: ^reload <插件名>" in await run("^reload")
 
 
 def _cleanable_note(note_id: str, created_at: str) -> dict[str, Any]:

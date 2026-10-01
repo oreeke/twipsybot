@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.0 - 2026-10-01
+
+新增插件热重载，精简插件框架与核心流程
+
+### Added
+
+- 新增 `^reload <插件名>` 管理命令，重新读取插件配置并重建实例；重载前停止分发并等待进行中的 Hook，失败时禁用该插件
+- Topics 文本模式优先读取 `prompts/topics.txt`，便于 Docker 挂载自定义主题
+- 开发依赖新增 `pytest-cov`，补充客户端、流程和内置插件测试覆盖
+
+### Changed
+
+- Radar 天线互动改为收到帖子后随机延迟 3–5 分钟执行，最多等待 100 条，关闭时取消未执行的互动
+- Iincho 未配置 `admin_ids` 时不再调用趋势模型，只审核并发布概览，趋势生成失败不再阻止发布
+- 插件信息不再包含 `description`，内置插件移除该属性
+- 合并插件 API 子模块：删除 `twipsybot.plugin.api`、`context`、`results`，公共类型统一从 `twipsybot.plugin` 导入
+- 聊天历史缓存移入聊天流程，并精简响应管道、插件 Hook 分发、流式客户端和管理命令
+
+### Fixed
+
+- 修复提示词文件按安装包目录解析，导致 Docker 部署无法读取 `prompts/*.txt` 的问题
+
+<br>
+
 ## 0.8.0 - 2026-09-13
 
 规范 Misskey 对接，发布 Plugin API v3

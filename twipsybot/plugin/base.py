@@ -5,10 +5,12 @@ from typing import Any, ClassVar
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
-from .context import PluginContext
-from .results import HandledResult
+from .contracts import PluginContext
+from .events import HandledResult
 
-__all__ = ("PluginBase", "PluginConfig")
+__all__ = ("PLUGIN_API_VERSION", "PluginBase", "PluginConfig")
+
+PLUGIN_API_VERSION = 3
 
 
 class PluginConfig(BaseModel):
@@ -60,7 +62,6 @@ class PluginBase:
             "name": self.context.name,
             "enabled": self._enabled,
             "priority": self._priority,
-            "description": getattr(self, "description", "No description available"),
         }
 
     def _set_enabled(self, enabled: bool) -> None:

@@ -47,7 +47,6 @@ class _Sample:
 @dataclass(slots=True)
 class _Window:
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    total: int = 0
     eligible: int = 0
     samples: list[_Sample] = field(default_factory=list)
 
@@ -98,7 +97,6 @@ class IinchoPlugin(PluginBase):
     api_version = 3
     config_class = _Config
     settings: _Config
-    description = "定时汇总本地时间线趋势并审查疑似违规内容"
 
     def __init__(self, context):
         super().__init__(context)
@@ -121,13 +119,6 @@ class IinchoPlugin(PluginBase):
             )
 
     async def on_shutdown(self) -> None:
-        await self._stop_task()
-
-    async def cleanup(self) -> None:
-        await self._stop_task()
-        await super().cleanup()
-
-    async def _stop_task(self) -> None:
         if self._task is None:
             return
         self._task.cancel()
@@ -146,10 +137,7 @@ class IinchoPlugin(PluginBase):
                 logger.error(f"Iincho summary cycle failed: {error!r}")
 
     async def on_timeline_note(self, event: TimelineNoteEvent) -> None:
-        if event.channel != "localTimeline":
-            return
-        self._window.total += 1
-        if self._is_self(event):
+        if event.channel != "localTimeline" or self._is_self(event):
             return
         content = "\n".join(part.strip() for part in (event.cw, event.text) if part)
         if not content:
@@ -191,6 +179,10 @@ class IinchoPlugin(PluginBase):
 
     async def _generate(self, samples: list[_Sample]) -> dict[str, Any]:
         payload, selected = self._serialize_samples(samples)
+        texts = [sample.text for sample in selected]
+        if not self.settings.admin_ids:
+            moderation = await self.context.openai.moderate_texts(texts)
+            return self._build_result([], selected, moderation)
         prompt = f"{self.settings.prompt.rstrip()}\nDATA={payload}"
         response, moderation = await asyncio.gather(
             self.context.openai.generate_text(
@@ -200,7 +192,7 @@ class IinchoPlugin(PluginBase):
                 temperature=self.settings.temperature,
                 json_output=True,
             ),
-            self.context.openai.moderate_texts([sample.text for sample in selected]),
+            self.context.openai.moderate_texts(texts),
         )
         trends = self._validate_trends(json.loads(response))
         return self._build_result(trends, selected, moderation)

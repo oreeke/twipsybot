@@ -132,38 +132,17 @@ class AutoPostService:
     async def _try_plugin_post(
         self, plugin_results: list[Any], max_posts: int, local_only: bool | None
     ) -> bool:
+        default_visibility = self.bot.config.get(ConfigKeys.BOT_AUTO_POST_VISIBILITY)
         for result in plugin_results:
-            extracted = self._extract_plugin_post_request(result)
-            if not extracted:
-                continue
-            visibility, contents = extracted
-            posted_any = await self._post_plugin_contents(
-                result, contents, visibility, max_posts, local_only
-            )
-            if posted_any:
+            if "contents" in result and await self._post_plugin_contents(
+                result,
+                result["contents"],
+                result.get("visibility", default_visibility),
+                max_posts,
+                local_only,
+            ):
                 return True
         return False
-
-    def _extract_plugin_post_request(
-        self, result: Any
-    ) -> tuple[str | None, list[str]] | None:
-        if not isinstance(result, dict):
-            return None
-        visibility = result.get(
-            "visibility",
-            self.bot.config.get(ConfigKeys.BOT_AUTO_POST_VISIBILITY),
-        )
-        contents = self._extract_plugin_contents(result)
-        if not contents:
-            return None
-        return visibility, contents
-
-    @staticmethod
-    def _extract_plugin_contents(result: Any) -> list[str]:
-        contents_value = result.get("contents")
-        if isinstance(contents_value, list):
-            return [c for c in contents_value if isinstance(c, str) and c]
-        return []
 
     async def _post_plugin_contents(
         self,

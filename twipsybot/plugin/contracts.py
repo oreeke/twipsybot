@@ -1,5 +1,6 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 __all__ = (
@@ -7,6 +8,7 @@ __all__ = (
     "DriveService",
     "MisskeyService",
     "OpenAIService",
+    "PluginContext",
     "PluginStorage",
 )
 
@@ -113,3 +115,13 @@ class BotControl(Protocol):
     def load_antenna_selectors(self) -> list[str]: ...
 
     async def resolve_antenna_ids(self, selectors: Sequence[str]) -> list[str]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PluginContext:
+    name: str
+    config: Mapping[str, Any]
+    storage: PluginStorage
+    misskey: MisskeyService
+    openai: OpenAIService
+    bot: BotControl

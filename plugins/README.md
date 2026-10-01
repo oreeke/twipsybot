@@ -195,7 +195,7 @@ __init__ -> initialize -> on_startup -> hooks -> on_shutdown -> cleanup
 
 通过 `_register_resource(resource)` 注册带 `close()` 的资源，基类会在 `cleanup` 时关闭。插件自行创建的任务应在 `on_shutdown()` 中停止，并在 `cleanup()` 中完成最终释放。不要吞掉 `asyncio.CancelledError`，长时间 I/O 应设置自身超时。
 
-`context.config` 是原始配置的只读映射。集中配置 `plugins/config.yaml` 中存在同名条目时，会完整取代插件目录的 `config.yaml`，两处不会合并。修改配置后需重启 Bot。关闭时最多等待 Hook 3 秒，随后取消。插件类可设置 `description` 供插件信息展示。
+`context.config` 是原始配置的只读映射。集中配置 `plugins/config.yaml` 中存在同名条目时，会完整取代插件目录的 `config.yaml`，两处不会合并。修改配置后可由管理员发送 `^reload <插件名>` 重载。关闭时最多等待 Hook 3 秒。
 
 ### API 边界
 

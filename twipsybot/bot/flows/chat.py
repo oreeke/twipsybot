@@ -17,16 +17,9 @@ from ...clients.misskey.payloads import (
 from ...shared.config_keys import ConfigKeys
 from ...shared.constants import CHAT_CACHE_MAX_USERS, CHAT_CACHE_TTL
 from ...shared.utils import format_log_text, maybe_log_event_dump
-from ..engine.pipeline import AIResponse
 
 if TYPE_CHECKING:
     from ..engine.core import MisskeyBot
-
-
-def _resolve_history_limit(config_value: int | None, limit: int | None) -> int:
-    if isinstance(limit, int):
-        return limit
-    return config_value if isinstance(config_value, int) else 0
 
 
 @dataclass(slots=True)
@@ -37,7 +30,6 @@ class _ChatContext:
     handle: str | None
     mention_to: str | None
     room_id: str | None
-    room_name: str | None
     has_media: bool
     conversation_id: str
     actor_id: str
@@ -57,21 +49,16 @@ class ChatHandler:
         self,
         conversation_id: str,
         *,
-        limit: int | None,
+        limit: int,
         user_id: str | None = None,
         room_id: str | None = None,
     ) -> list[dict[str, str]]:
-        limit_value = _resolve_history_limit(
-            self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
-        )
         if (cached := self._histories.get(conversation_id)) is not None:
-            return self._trim_history(list(cached), limit_value)
-        if conversation_id.startswith("room:"):
-            room_id = room_id or conversation_id.removeprefix("room:")
+            return self._trim_history(list(cached), limit)
         history = await self.get_chat_history(
-            user_id=user_id, room_id=room_id, limit=limit_value
+            user_id=user_id, room_id=room_id, limit=limit
         )
-        trimmed = self._trim_history(history, limit_value)
+        trimmed = self._trim_history(history, limit)
         self._histories[conversation_id] = trimmed
         return list(trimmed)
 
@@ -86,11 +73,8 @@ class ChatHandler:
         conversation_id: str,
         user_text: str,
         assistant_text: str,
-        limit: int | None,
+        limit: int,
     ) -> None:
-        limit_value = _resolve_history_limit(
-            self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
-        )
         history = list(self._histories.get(conversation_id) or [])
         last = next(reversed(history), None)
         if user_text and not (
@@ -106,7 +90,7 @@ class ChatHandler:
             and last.get("content") == assistant_text
         ):
             history.append({"role": "assistant", "content": assistant_text})
-        self._histories[conversation_id] = self._trim_history(history, limit_value)
+        self._histories[conversation_id] = self._trim_history(history, limit)
 
     async def _handle_admin_message(
         self,
@@ -186,7 +170,7 @@ class ChatHandler:
         ctx = self._parse_chat_context(message)
         if not ctx:
             return
-        limit = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
+        limit: int = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
         user_content_ai = f"{ctx.username}: {ctx.text}" if ctx.room_id else ctx.text
 
         def log_incoming() -> None:
@@ -229,7 +213,7 @@ class ChatHandler:
             user_content = f"{ctx.username}: {user_text}" if ctx.room_id else user_text
             self.append_turn(ctx.conversation_id, user_content, text, limit)
 
-        async def ai_generate() -> str | AIResponse | None:
+        async def ai_generate() -> str | None:
             if not ctx.text:
                 return None
             return await self._generate_ai_reply(
@@ -316,7 +300,6 @@ class ChatHandler:
             handle=handle,
             mention_to=mention_to,
             room_id=room_id,
-            room_name=room_name,
             has_media=has_media,
             conversation_id=conversation_id,
             actor_id=actor_id,
@@ -360,17 +343,14 @@ class ChatHandler:
         user_id: str,
         user_content: str,
         room_id: str | None,
-        limit: int | None,
-    ) -> str | AIResponse | None:
-        limit_value = _resolve_history_limit(
-            self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
-        )
+        limit: int,
+    ) -> str:
         token_budget = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_CONTEXT_TOKENS)
         history = (
             await self.get_or_load_history(
-                conversation_id, limit=limit_value, user_id=user_id, room_id=room_id
+                conversation_id, limit=limit, user_id=user_id, room_id=room_id
             )
-            if limit_value > 0 and isinstance(token_budget, int) and token_budget > 0
+            if limit > 0 and isinstance(token_budget, int) and token_budget > 0
             else []
         )
         last = next(reversed(history), None)
@@ -393,16 +373,13 @@ class ChatHandler:
         *,
         user_id: str | None = None,
         room_id: str | None = None,
-        limit: int | None = None,
+        limit: int,
     ) -> list[dict[str, str]]:
         try:
-            limit_value = _resolve_history_limit(
-                self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY), limit
-            )
             if room_id:
-                return await self._get_room_chat_history(room_id, limit_value)
+                return await self._get_room_chat_history(room_id, limit)
             if user_id:
-                return await self._get_user_chat_history(user_id, limit_value)
+                return await self._get_user_chat_history(user_id, limit)
             return []
         except asyncio.CancelledError:
             raise

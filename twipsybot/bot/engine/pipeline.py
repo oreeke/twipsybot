@@ -1,4 +1,3 @@
-import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -64,31 +63,21 @@ class ResponsePipeline:
                 log_sent(response.text)
             return True
 
-    async def apply_handled_plugin_result(
+    async def _deliver(
         self,
-        result: Any,
+        text: str,
         *,
-        kind: str,
         user_id: str | None,
         send_reply: Callable[[str, str | None], Awaitable[None]],
         log_sent: Callable[[str], None],
-        after_sent: Callable[[str], Any] | None = None,
-    ) -> bool:
-        if not (isinstance(result, dict) and result.get("handled")):
-            return False
-        logger.debug(f"{kind} handled by plugin: {result.get('plugin_name')}")
-        response = result.get("response")
-        if not response:
-            return True
-        await send_reply(response, None)
-        log_sent(response)
+        after_sent: Callable[[str], None] | None,
+    ) -> None:
+        await send_reply(text, None)
+        log_sent(text)
         if user_id:
             await self._limits.record_response(user_id, count_turn=True)
         if after_sent is not None:
-            maybe = after_sent(response)
-            if inspect.isawaitable(maybe):
-                await maybe
-        return True
+            after_sent(text)
 
     async def run_response_pipeline(
         self,
@@ -101,36 +90,35 @@ class ResponsePipeline:
         plugin_call: Callable[[], Awaitable[list[Any]]],
         plugin_kind: str,
         plugin_log_sent: Callable[[str], None],
-        plugin_after_sent: Callable[[str], Any] | None = None,
-        ai_generate: Callable[[], Awaitable[str | AIResponse | None]],
+        plugin_after_sent: Callable[[str], None] | None = None,
+        ai_generate: Callable[[], Awaitable[str | None]],
         ai_log_sent: Callable[[str], None],
-        ai_after_sent: Callable[[str], Any] | None = None,
+        ai_after_sent: Callable[[str], None] | None = None,
     ) -> None:
         async with self._actor_locks.hold(actor_key(actor_id, actor_name)):
             if user_id and await self._limits.maybe_send_blocked_reply(
                 user_id=user_id, handle=handle, send_reply=send_reply
             ):
                 return
-            plugin_results = await plugin_call()
-            for result in plugin_results:
-                if await self.apply_handled_plugin_result(
-                    result,
-                    kind=plugin_kind,
+            if plugin_results := await plugin_call():
+                result = plugin_results[0]
+                logger.debug(
+                    f"{plugin_kind} handled by plugin: {result['plugin_name']}"
+                )
+                if response := result["response"]:
+                    await self._deliver(
+                        response,
+                        user_id=user_id,
+                        send_reply=send_reply,
+                        log_sent=plugin_log_sent,
+                        after_sent=plugin_after_sent,
+                    )
+                return
+            if reply := await ai_generate():
+                await self._deliver(
+                    reply,
                     user_id=user_id,
                     send_reply=send_reply,
-                    log_sent=plugin_log_sent,
-                    after_sent=plugin_after_sent,
-                ):
-                    return
-            reply = await ai_generate()
-            if not reply:
-                return
-            response = AIResponse(reply) if isinstance(reply, str) else reply
-            await send_reply(response.text, response.file_id)
-            ai_log_sent(response.text)
-            if user_id:
-                await self._limits.record_response(user_id, count_turn=True)
-            if ai_after_sent is not None:
-                maybe = ai_after_sent(response.text)
-                if inspect.isawaitable(maybe):
-                    await maybe
+                    log_sent=ai_log_sent,
+                    after_sent=ai_after_sent,
+                )

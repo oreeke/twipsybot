@@ -2,7 +2,6 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
 
 from loguru import logger
 
@@ -70,16 +69,12 @@ class AdminCommandService(CmdHandlersMixin):
         ]
         return "\n\n".join((super()._get_help_text(), "\n".join(slash_commands)))
 
-    def _global_get(self, key: str, default: Any) -> Any:
-        cfg = getattr(self, "global_config", None)
-        return cfg.get(key) if cfg else default
-
     def _init_baselines(self) -> None:
         self._baseline_response_whitelist = normalize_tokens(
-            self._global_get(ConfigKeys.BOT_RESPONSE_WHITELIST, []), lower=True
+            self.global_config.get(ConfigKeys.BOT_RESPONSE_WHITELIST), lower=True
         )
         self._baseline_response_blacklist = normalize_tokens(
-            self._global_get(ConfigKeys.BOT_RESPONSE_BLACKLIST, []), lower=True
+            self.global_config.get(ConfigKeys.BOT_RESPONSE_BLACKLIST), lower=True
         )
 
     def _build_command_alias_index(self) -> dict[str, str]:
@@ -100,6 +95,7 @@ class AdminCommandService(CmdHandlersMixin):
             "model": self._handle_model,
             "autopost": self._handle_autopost,
             "clean": self._handle_clean,
+            "reload": self._handle_reload,
             "mention": lambda args: self._handle_set_bool(
                 "mention", ConfigKeys.BOT_RESPONSE_MENTION, args
             ),
@@ -137,6 +133,10 @@ class AdminCommandService(CmdHandlersMixin):
                     "description": "清理帖子 (用法: ^clean posts <天数> [-y])",
                     "aliases": [],
                 },
+                "reload": {
+                    "description": "重载插件配置 (用法: ^reload <插件名>)",
+                    "aliases": [],
+                },
                 "mention": {
                     "description": "响应提及开关 (用法: ^mention on|off)",
                     "aliases": [],
@@ -171,6 +171,23 @@ class AdminCommandService(CmdHandlersMixin):
             return "自动发帖计数器已重置"
         return self._handle_set_bool("autopost", ConfigKeys.BOT_AUTO_POST_ENABLED, args)
 
+    async def _handle_reload(self, args: str) -> str:
+        parts = args.split()
+        if len(parts) != 1:
+            return "用法: ^reload <插件名>"
+        name = parts[0]
+        match await self.plugin_manager.reload_plugin(name):
+            case "enabled":
+                return f"插件 {name} 已重载"
+            case "disabled":
+                return f"插件 {name} 已按配置禁用"
+            case "failed":
+                return f"插件 {name} 重载失败，已禁用，详见日志"
+            case "unknown":
+                return f"未知插件: {name}"
+            case _:
+                return "当前无法重载插件"
+
     async def blacklist_response_user(self, user_id: str) -> None:
         blacklist = normalize_tokens(
             self.global_config.get(ConfigKeys.BOT_RESPONSE_BLACKLIST), lower=True
@@ -180,10 +197,6 @@ class AdminCommandService(CmdHandlersMixin):
             await self._save_response_user_list(
                 ConfigKeys.BOT_RESPONSE_BLACKLIST, [*blacklist, normalized]
             )
-
-    @staticmethod
-    def handled(response: str) -> str:
-        return response
 
     def _log_plugin_action(self, action: str, details: str = "") -> None:
         logger.info(f"Admin {action}{': ' + details if details else ''}")
@@ -252,12 +265,7 @@ class AdminCommandService(CmdHandlersMixin):
                 return None
         if not username or username == "unknown":
             return None
-        misskey = getattr(self, "misskey", None)
-        instance_url = getattr(misskey, "instance_url", None) if misskey else None
-        if not isinstance(instance_url, str) or not instance_url:
-            return None
-        host = urlparse(instance_url).hostname
-        return f"{username}@{host}" if host else None
+        return self.bot.limits.canonical_handle(username)
 
     def _find_command(self, cmd: str) -> str | None:
         cmd_lower = cmd.lower()
@@ -304,9 +312,7 @@ class AdminCommandService(CmdHandlersMixin):
             if not user_id:
                 return None
             if not self._is_authorized(user_id, handle):
-                return self.handled(
-                    self._format_command_output("命令", "您没有权限使用命令。")
-                )
+                return self._format_command_output("命令", "您没有权限使用命令。")
             command_text = text[1:].strip()
             parts = command_text.split(maxsplit=1)
             command_name = self._find_command(parts[0])
@@ -315,21 +321,15 @@ class AdminCommandService(CmdHandlersMixin):
                 who = handle or username
                 self._log_plugin_action("ran command", f"@{who}: ^{command_text}")
                 result = await self._execute_command(command_name, args)
-                return self.handled(
-                    self._format_command_output(
-                        self._get_command_title(command_name), result
-                    )
+                return self._format_command_output(
+                    self._get_command_title(command_name), result
                 )
-            return self.handled(
-                self._format_command_output(
-                    f"^{parts[0]}",
-                    f"未知命令: {parts[0]}\n使用 ^help 查看可用命令。",
-                )
+            return self._format_command_output(
+                f"^{parts[0]}",
+                f"未知命令: {parts[0]}\n使用 ^help 查看可用命令。",
             )
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.error(f"Error handling command: {e}")
-            return self.handled(
-                self._format_command_output("命令", "命令处理失败，请稍后重试。")
-            )
+            return self._format_command_output("命令", "命令处理失败，请稍后重试。")

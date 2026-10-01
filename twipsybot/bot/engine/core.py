@@ -66,7 +66,7 @@ class MisskeyBot:
         self.limits = ResponseLimiter(
             config=config,
             db=self.db,
-            instance_url=getattr(self.misskey, "instance_url", None),
+            instance_url=self.misskey.instance_url,
             blacklist_user=lambda user_id: self.admin.blacklist_response_user(user_id),
         )
         self.plugin_manager = PluginManager(

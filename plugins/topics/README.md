@@ -14,5 +14,5 @@
   - 插件有序装载关键词，拼接成提示前缀，AI 以此为题生成内容
 - `rss`
   - `rss_list` 中添加 RSS 链接，机器人筛选最新动态作为帖子发布
-  - RSS 拉取和发帖间隔由主配置 `auto_post.interval` 控制
+  - RSS 拉取和发帖间隔由主配置 `bot.auto_post.interval` 控制
   - `rss_ai` 让 AI 生成总结或感想，前提是 RSS 包含摘要或接入的模型能预览 URL

@@ -54,6 +54,7 @@ radar:
 - `reply_ai_prompt` 和 `quote_ai_prompt` 支持 `{content}`。
 - 引用成功后不会再执行普通转帖；引用没有生成有效文本时，仍可继续转帖。
 - Radar 会跳过机器人自己的帖子和已有 `myReaction` 的反应动作。
+- 互动会在收到帖子后随机延迟 3–5 分钟执行；等待中的帖子最多 100 条，超出部分跳过。
 
 `visibility` 支持 `public`、`home`、`followers`。`local_only` 控制对应回复、引用或转帖是否联合。
 

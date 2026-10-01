@@ -5,14 +5,14 @@ description: 使用 Iincho 汇总 Misskey 本地时间线趋势并提供内容�
 
 # Iincho：本地时间线观察
 
-Iincho 定期对本地时间线进行均匀抽样，生成热点趋势和内容风险概览。
+Iincho 定期对本地时间线进行均匀抽样，发布内容风险概览；配置管理员后，生成热点趋势并私聊发送。
 
 公开概览不包含原帖、用户身份或疑似违规帖子 ID；管理员可以通过私聊收到相关帖子 ID。
 
 ## 前置条件
 
 - 设置 `bot.timeline.local: true`。
-- 文本模型支持 JSON Object 输出。
+- 文本模型支持 JSON Object 输出（仅配置 `admin_ids` 时用于生成趋势）。
 - OpenAI 兼容端点支持 `/moderations`，并可使用 `omni-moderation-latest`。
 - 如需管理员提醒，准备接收私聊的 Misskey 用户 ID。
 

@@ -19,12 +19,15 @@
 | `^model reset` | 恢复默认模型 |
 | `^autopost <on\|off\|reset>` | 自动发帖开关或重置当天发帖计数 |
 | `^clean posts <天数> [-y]` | 预览或删除超过指定时间且未被互动的帖子 |
+| `^reload <插件名>` | 重载指定插件配置 |
 | `^mention <on\|off>` | 响应提及开关 |
 | `^chat <on\|off>` | 响应聊天开关 |
 | `^whitelist [list\|add\|del\|set\|clear\|reset]` | 查看/修改白名单 |
 | `^blacklist [list\|add\|del\|set\|clear\|reset]` | 查看/修改黑名单 |
 
 `^clean posts <天数>` 仅预览，只有追加 `-y` 才会执行不可恢复的删除。Misskey API 每小时最多接受 300 次删除请求，且请求间隔至少 1 秒。命令每次最多处理 300 条。回复、转帖、提及、频道、投票、置顶、Clip 及已有互动的帖子不会删除。
+
+`^reload <插件名>` 重载失败时该插件被禁用，其他插件不受影响。修改机器人主配置需要重启机器人。
 
 让远程 AI 干活的 `/` 命令：
 

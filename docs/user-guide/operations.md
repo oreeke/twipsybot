@@ -26,7 +26,7 @@ docker compose logs -f --tail 200 twipsybot
 
 ## 修改配置
 
-修改 YAML、环境变量或插件配置后需要重启：
+修改主配置或环境变量后需要重启；仅修改插件配置时，可由管理员发送 `^reload <插件名>` 重载：
 
 ```bash
 docker compose up -d

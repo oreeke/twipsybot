@@ -46,7 +46,6 @@ class TopicsPlugin(PluginBase):
     api_version = 3
     config_class = _Config
     settings: _Config
-    description = "为自动发帖提供内容源（文本主题 / RSS）"
 
     def __init__(self, context):
         super().__init__(context)

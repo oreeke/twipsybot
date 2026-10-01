@@ -47,7 +47,6 @@ class KeyActPlugin(PluginBase):
     api_version = 3
     config_class = _Config
     settings: _Config
-    description = "匹配自定义关键词触发直接回复，绕过 AI"
 
     rules: tuple[_Rule, ...] = ()
 

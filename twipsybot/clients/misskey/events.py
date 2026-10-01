@@ -300,13 +300,12 @@ class _StreamingEventsMixin:
         except Exception as e:
             logger.debug(f"Failed to connect chatUser channel for {other_id}: {e}")
             return None
-        self._chat_user_channel_ids[other_id] = channel_id
         self._chat_channel_other_ids[channel_id] = other_id
         if task := self._chat_channel_tasks.get(channel_id):
             task.cancel()
         self._chat_channel_tasks[channel_id] = asyncio.create_task(
             self._disconnect_chat_channel_later(
-                ChannelType.CHAT_USER.value, other_id, channel_id
+                ChannelType.CHAT_USER.value, channel_id
             ),
             name=f"chatUser-disconnect-{other_id}",
         )
@@ -322,20 +321,19 @@ class _StreamingEventsMixin:
         except Exception as e:
             logger.debug(f"Failed to connect chatRoom channel for {room_id}: {e}")
             return None
-        self._chat_room_channel_ids[room_id] = channel_id
         self._chat_channel_room_ids[channel_id] = room_id
         if task := self._chat_channel_tasks.get(channel_id):
             task.cancel()
         self._chat_channel_tasks[channel_id] = asyncio.create_task(
             self._disconnect_chat_channel_later(
-                ChannelType.CHAT_ROOM.value, room_id, channel_id
+                ChannelType.CHAT_ROOM.value, channel_id
             ),
             name=f"chatRoom-disconnect-{room_id}",
         )
         return channel_id
 
     async def _disconnect_chat_channel_later(
-        self, channel_name: str, target_id: str, channel_id: str
+        self, channel_name: str, channel_id: str
     ) -> None:
         try:
             await asyncio.sleep(120)
@@ -348,14 +346,8 @@ class _StreamingEventsMixin:
             )
         finally:
             if self._chat_channel_tasks.get(channel_id) is asyncio.current_task():
-                if channel_name == ChannelType.CHAT_ROOM.value:
-                    if self._chat_room_channel_ids.get(target_id) == channel_id:
-                        self._chat_room_channel_ids.pop(target_id, None)
-                    self._chat_channel_room_ids.pop(channel_id, None)
-                else:
-                    if self._chat_user_channel_ids.get(target_id) == channel_id:
-                        self._chat_user_channel_ids.pop(target_id, None)
-                    self._chat_channel_other_ids.pop(channel_id, None)
+                self._chat_channel_room_ids.pop(channel_id, None)
+                self._chat_channel_other_ids.pop(channel_id, None)
                 self._chat_channel_tasks.pop(channel_id, None)
 
     def _refresh_chat_channel_timer(self, channel_id: str) -> None:
@@ -369,16 +361,14 @@ class _StreamingEventsMixin:
         if task := self._chat_channel_tasks.get(channel_id):
             task.cancel()
         self._chat_channel_tasks[channel_id] = asyncio.create_task(
-            self._disconnect_chat_channel_later(channel_name, target_id, channel_id),
+            self._disconnect_chat_channel_later(channel_name, channel_id),
             name=f"{channel_name}-disconnect-{target_id}",
         )
 
     def _cancel_chat_channel_tasks(self) -> None:
         tasks = list(self._chat_channel_tasks.values())
         self._chat_channel_tasks.clear()
-        self._chat_user_channel_ids.clear()
         self._chat_channel_other_ids.clear()
-        self._chat_room_channel_ids.clear()
         self._chat_channel_room_ids.clear()
         self._chat_user_cache.clear()
         for task in tasks:

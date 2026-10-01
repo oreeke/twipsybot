@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal, NotRequired, TypedDict
 
 from ..clients.misskey.payloads import (
     extract_chat_text,
@@ -13,13 +13,34 @@ from ..clients.misskey.payloads import (
 
 __all__ = (
     "AutoPostEvent",
+    "AutoPostResult",
+    "AutoPostVisibility",
     "FileRef",
+    "HandledResult",
     "MentionEvent",
     "MessageEvent",
     "NotificationEvent",
+    "PromptModificationResult",
     "TimelineNoteEvent",
     "UserRef",
 )
+
+AutoPostVisibility = Literal["public", "home", "followers"]
+
+
+class HandledResult(TypedDict):
+    handled: Literal[True]
+    response: str
+
+
+class AutoPostResult(TypedDict):
+    contents: list[str]
+    visibility: NotRequired[AutoPostVisibility]
+
+
+class PromptModificationResult(TypedDict):
+    prompt: str
+    timestamp: NotRequired[int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +170,7 @@ def _message_event(raw: dict[str, Any]) -> MessageEvent:
 
 
 def _mention_event(raw: dict[str, Any]) -> MentionEvent:
-    note = normalize_payload(raw, kind="mention")
+    note = normalize_payload(raw)
     if not (event_id := _string(note.get("id"))):
         raise ValueError("mention event requires id")
     return MentionEvent(

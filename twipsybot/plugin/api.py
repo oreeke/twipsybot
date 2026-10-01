@@ -1,3 +1,0 @@
-PLUGIN_API_VERSION = 3
-
-__all__ = ("PLUGIN_API_VERSION",)

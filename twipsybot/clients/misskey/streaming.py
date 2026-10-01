@@ -61,9 +61,7 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         self.running = False
         self._first_connection = True
         self._chat_channel_tasks: dict[str, asyncio.Task[None]] = {}
-        self._chat_user_channel_ids: dict[str, str] = {}
         self._chat_channel_other_ids: dict[str, str] = {}
-        self._chat_room_channel_ids: dict[str, str] = {}
         self._chat_channel_room_ids: dict[str, str] = {}
         self._chat_user_cache: dict[str, dict[str, Any]] = {}
         self._send_buffer: deque[dict[str, Any]] = deque(maxlen=STREAM_SEND_BUFFER_MAX)
@@ -233,25 +231,6 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         for event in events:
             event.set()
 
-    async def disconnect_channel(self, channel: ChannelType | str) -> None:
-        channel_name = (
-            channel.value if isinstance(channel, ChannelType) else str(channel)
-        )
-        if not channel_name:
-            raise ValueError("channel name must not be empty")
-        channels_to_remove = [
-            ch_id
-            for ch_id, ch_info in self.channels.items()
-            if ch_info.get("name") == channel_name
-        ]
-        for channel_id in channels_to_remove:
-            await self._try_send_disconnect(channel_id)
-            self.channels.pop(channel_id, None)
-            self._confirmed_channel_ids.discard(channel_id)
-            if event := self._channel_confirmation_events.pop(channel_id, None):
-                event.set()
-        logger.debug(f"Disconnected channel: {channel_name}")
-
     async def disconnect_channel_id(self, channel_id: str) -> None:
         if not channel_id:
             return
@@ -270,40 +249,12 @@ class StreamingClient(_StreamingSocketMixin, _StreamingEventsMixin):
         except WebSocketConnectionError:
             pass
 
-    async def send_channel_message(
-        self,
-        channel: ChannelType | str,
-        event_type: str,
-        body: dict[str, Any] | None = None,
-        *,
-        params: dict[str, Any] | None = None,
-    ) -> None:
-        channel_name = (
-            channel.value if isinstance(channel, ChannelType) else str(channel)
-        )
-        if not channel_name or not event_type:
-            return
-        channel_id = self._find_channel_id(channel_name, params or {})
-        if not channel_id:
-            return
-        await self._send_channel_message(channel_id, event_type, body or {})
-
     async def _send_channel_message(
         self, channel_id: str, event_type: str, body: dict[str, Any]
     ) -> None:
         await self._send_or_buffer(
             {"type": "ch", "body": {"id": channel_id, "type": event_type, "body": body}}
         )
-
-    def _find_channel_id(self, channel_name: str, params: dict[str, Any]) -> str | None:
-        for ch_id, ch_info in self.channels.items():
-            if (
-                ch_id in self._confirmed_channel_ids
-                and ch_info.get("name") == channel_name
-                and ch_info.get("params") == params
-            ):
-                return ch_id
-        return None
 
     async def connect_once(
         self,

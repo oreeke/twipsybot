@@ -27,7 +27,7 @@ plugin_name:
 
 - `enabled` 决定是否加载。
 - `priority` 越大越先执行。
-- 修改插件配置后需要重启机器人。
+- 修改插件配置后，管理员可发送 `^reload <插件名>` 重载，无需重启机器人。
 - `plugins/config.yaml` 中的条目会完整取代插件目录配置，不会合并。
 
 KeyAct 和 Vision 会处理消息或提及。一个插件返回结果后，后续插件和默认 AI 不再处理同一事件。Radar 和 Iincho 观察时间线事件，不会互相截断。Topics 只在自动发帖任务中运行。

@@ -159,10 +159,14 @@ class CmdHandlersMixin:
             parts.append(f"实例  {hostname}")
         if bot.openai.model:
             parts.append(f"模型  {bot.openai.model}")
-        parts.append("")
-        parts.append(self._get_feature_toggle_text())
-        parts.append(self._get_auto_post_status_text())
-        parts.append(self._get_channel_status_text())
+        parts.extend(
+            (
+                "",
+                self._get_feature_toggle_text(),
+                self._get_auto_post_status_text(),
+                self._get_channel_status_text(),
+            )
+        )
         if plugin_status := self._get_plugin_status_text():
             parts.extend(("", plugin_status))
         parts.append(f"授权  {len(self.allowed_users)}")

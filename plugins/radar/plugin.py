@@ -1,3 +1,5 @@
+import asyncio
+import random
 from typing import Any, Literal
 
 from loguru import logger
@@ -8,6 +10,9 @@ from twipsybot.plugin import (
     PluginConfig,
     TimelineNoteEvent,
 )
+
+_DELAY_RANGE = (180.0, 300.0)
+_MAX_PENDING = 100
 
 
 class _Config(PluginConfig):
@@ -50,7 +55,10 @@ class RadarPlugin(PluginBase):
     api_version = 3
     config_class = _Config
     settings: _Config
-    description = "主动与天线发现的帖子互动（反应、回复、转发、引用）"
+
+    def __init__(self, context):
+        super().__init__(context)
+        self._pending: dict[str, asyncio.Task[None]] = {}
 
     async def initialize(self) -> bool:
         selectors = self.context.bot.load_antenna_selectors()
@@ -108,13 +116,31 @@ class RadarPlugin(PluginBase):
     async def on_timeline_note(self, event: TimelineNoteEvent) -> None:
         if event.channel != "antenna" or not event.id:
             return None
-        if self._should_skip_self(event):
+        if self._should_skip_self(event) or event.id in self._pending:
             return None
+        if len(self._pending) >= _MAX_PENDING:
+            logger.debug(f"Radar pending queue full; skipping {event.id}")
+            return None
+        note_id = event.id
+        task = asyncio.create_task(
+            self._delayed_act(event), name=f"plugin-{self.context.name}-{note_id}"
+        )
+        self._pending[note_id] = task
+        task.add_done_callback(lambda _: self._pending.pop(note_id, None))
+
+    async def _delayed_act(self, event: TimelineNoteEvent) -> None:
+        await asyncio.sleep(random.uniform(*_DELAY_RANGE))
         try:
             async with self.context.bot.actor_lock(event.user.id, event.user.handle):
-                await self._act(dict(event.raw), event.id, event.channel)
+                await self._act(dict(event.raw), event.id, "antenna")
         except Exception as e:
             logger.error(f"Radar interaction failed: {e!r}")
+
+    async def on_shutdown(self) -> None:
+        tasks = tuple(self._pending.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _maybe_react(
         self, note_data: dict[str, Any], note_id: str, channel: str

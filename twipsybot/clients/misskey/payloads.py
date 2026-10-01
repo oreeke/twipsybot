@@ -26,10 +26,10 @@ def extract_note_text(data: Any, *, include_cw: bool = True) -> str:
     return "\n\n".join(parts).strip()
 
 
-def normalize_payload(data: Any, *, kind: str) -> dict[str, Any]:
+def normalize_payload(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {}
-    if kind != "chat" and isinstance(data.get("note"), dict):
+    if isinstance(data.get("note"), dict):
         return data["note"]
     return data
 

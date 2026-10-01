@@ -668,7 +668,6 @@ async def test_streaming_chat_timer_preserves_replacement(
 
             assert previous.cancelled()
             assert client._chat_channel_tasks.get(channel_id) is current
-            assert client._chat_user_channel_ids.get("user-1") == channel_id
             assert client._chat_channel_other_ids.get(channel_id) == "user-1"
             assert channel_id in client.channels
             await asyncio.wait_for(timer_started.wait(), timeout=2)
@@ -678,7 +677,6 @@ async def test_streaming_chat_timer_preserves_replacement(
 
         assert channel_id not in client.channels
         assert not client._chat_channel_tasks
-        assert not client._chat_user_channel_ids
         assert not client._chat_channel_other_ids
     finally:
         for task in tasks:

@@ -32,7 +32,6 @@ class VisionPlugin(PluginBase):
     api_version = 3
     config_class = _Config
     settings: _Config
-    description = "理解 @提及或聊天中的图片并生成回复"
 
     @staticmethod
     def _make_text_part(text: str, *, use_responses: bool) -> dict[str, Any]:

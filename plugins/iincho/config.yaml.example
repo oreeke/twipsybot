@@ -8,7 +8,7 @@ prompt: |-                       # 趋势总结提示词，帖子数组会以 DA
   只返回 JSON：{"trends":["趋势"]}。
   trends 包含 1-5 项。
 system_prompt: |-
-  你是社区趋势分析员。
+  你是社区纪律委员长。
 interval: "1h"                   # 汇总间隔，最低 5m
 min_notes: 10                    # 少于此有效帖子数则跳过
 sample_size: 100                 # 每周期最多送入 AI 的均匀样本数
@@ -18,3 +18,8 @@ temperature: 0.2                 # AI 生成温度，范围 0-2
 local_only: true                 # 是否禁止联合，仅在本实例显示
 admin_ids:                       # 接收小报告私信的 Misskey 用户 ID
   - "9abcdef012345678"
+moderation:
+  provider: openai               # openai 使用主配置 /moderations；cloudflare 使用 Workers AI Llama Guard 3
+  cf_account_id: ""              # Cloudflare 账户 ID，provider=cloudflare 时必填
+  cf_api_token: ""               # 需 Workers AI Read 权限的 API 令牌
+  concurrency: 4                 # Cloudflare 逐篇审查并发数，范围 1-16

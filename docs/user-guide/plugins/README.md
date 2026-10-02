@@ -9,7 +9,7 @@ TwipsyBot 自带几个可选插件。插件默认关闭，可以在 `plugins/con
 
 | 插件 | 用途 | 依赖 |
 | --- | --- | --- |
-| [Iincho](iincho.md) | 汇总本地时间线趋势和风险信号 | Local Timeline、Moderations API |
+| [Iincho](iincho.md) | 汇总本地时间线趋势和风险信号 | Local Timeline、Moderations API 或 Workers AI |
 | [KeyAct](keyact.md) | 精确关键词直接回复 | 提及或聊天 |
 | [Radar](radar.md) | 对天线帖子反应、回复、转帖或引用 | Misskey 天线 |
 | [Topics](topics.md) | 为自动发帖提供 TXT 主题或 RSS | 自动发帖 |

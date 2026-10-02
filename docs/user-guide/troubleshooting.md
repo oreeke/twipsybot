@@ -93,6 +93,7 @@ Docker 镜像会在启动配置错误时保持容器存活，方便查看日志�
 
 - 必须开启 `bot.timeline.local`。
 - 周期内有效文本少于 `min_notes` 时会正常跳过。
-- 服务端必须同时支持文本生成、JSON 输出和 `/moderations`。
-- 自定义兼容端点缺少 `omni-moderation-latest` 时无法完成报告。
+- 配置 `admin_ids` 且发现违规时，服务端必须支持文本生成和 JSON 输出。
+- `moderation.provider: openai` 时，主配置端点缺少 `/moderations` 或 `omni-moderation-latest` 无法完成报告，可改用 `cloudflare`。
+- `moderation.provider: cloudflare` 时，401/403 检查账户 ID 和令牌的 Workers AI 权限，429 可调小 `concurrency` 或 `sample_size`。
 - Iincho 不补采启动前的帖子，也不会补发失败周期。

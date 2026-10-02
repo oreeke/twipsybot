@@ -52,7 +52,7 @@ TwipsyBot 使用 OpenAI Python SDK 连接兼容接口：
 - 普通回复和自动发帖使用 `model`。
 - `/img` 需要设置 `image_model`。
 - Vision 需要 `model` 支持图片输入。
-- Iincho 还需要服务端支持 `/moderations`。
+- Iincho 默认还需要服务端支持 `/moderations`，也可改用 Cloudflare Workers AI 审查。
 
 ## 系统提示词
 

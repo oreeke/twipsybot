@@ -5,11 +5,12 @@ import re
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
+import aiohttp
 import durationpy
 from loguru import logger
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 
 from twipsybot.plugin import (
     PluginBase,
@@ -24,18 +25,41 @@ _RISK_TYPES = {
     "harassment": ("💢", "骚扰攻击"),
     "hate": ("🚫", "仇恨歧视"),
     "sexual": ("🔞", "色情内容"),
+    "minors": ("🚸", "涉未成年"),
     "violence": ("⚔️", "暴力威胁"),
     "self_harm": ("🆘", "自伤风险"),
     "illegal": ("⚖️", "违法活动"),
+    "privacy": ("🕵️", "诽谤隐私"),
 }
-_MODERATION_RISKS = {
+_OPENAI_RISKS = {
     "harassment": "harassment",
     "hate": "hate",
     "sexual": "sexual",
+    "sexual/minors": "minors",
     "violence": "violence",
     "self-harm": "self_harm",
     "illicit": "illegal",
 }
+_LLAMA_GUARD_RISKS = {
+    "S1": "violence",
+    "S2": "illegal",
+    "S3": "minors",
+    "S4": "minors",
+    "S5": "privacy",
+    "S7": "privacy",
+    "S9": "violence",
+    "S10": "hate",
+    "S11": "self_harm",
+    "S12": "sexual",
+}
+_LLAMA_GUARD_CODE = re.compile(r"S\d+")
+_CF_API = "https://api.cloudflare.com/client/v4"
+_CF_MODEL = "@cf/meta/llama-guard-3-8b"
+_MODERATION_MODELS = {
+    "openai": "omni-moderation-latest",
+    "cloudflare": "llama-guard-3-8b",
+}
+_CF_TIMEOUT = aiohttp.ClientTimeout(total=60)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +75,23 @@ class _Window:
     samples: list[_Sample] = field(default_factory=list)
 
 
+class _ModerationConfig(PluginConfig):
+    provider: Literal["openai", "cloudflare"] = "openai"
+    cf_account_id: str = Field(default="", pattern=r"^(?:[0-9a-fA-F]{32})?$")
+    cf_api_token: SecretStr = SecretStr("")
+    concurrency: int = Field(default=4, strict=True, ge=1, le=16)
+
+    @model_validator(mode="after")
+    def _validate_cloudflare(self) -> "_ModerationConfig":
+        if self.provider == "cloudflare" and not (
+            self.cf_account_id and self.cf_api_token.get_secret_value()
+        ):
+            raise ValueError(
+                "cloudflare moderation requires cf_account_id and cf_api_token"
+            )
+        return self
+
+
 class _Config(PluginConfig):
     prompt: str = ""
     system_prompt: str = ""
@@ -62,6 +103,7 @@ class _Config(PluginConfig):
     temperature: float = Field(0.2, strict=True, ge=0, le=2)
     local_only: bool = Field(True, strict=True)
     admin_ids: tuple[str, ...] = ()
+    moderation: _ModerationConfig = Field(default_factory=_ModerationConfig)
 
     @field_validator("interval_seconds", mode="before")
     @classmethod
@@ -103,12 +145,25 @@ class IinchoPlugin(PluginBase):
         self._window = _Window()
         self._task: asyncio.Task[None] | None = None
         self._rng = random.Random()
+        self._cf_session: aiohttp.ClientSession | None = None
+        self._moderate = self._moderate_openai
 
     async def initialize(self) -> bool:
+        moderation = self.settings.moderation
+        if moderation.provider == "cloudflare":
+            self._cf_session = aiohttp.ClientSession(
+                timeout=_CF_TIMEOUT,
+                headers={
+                    "Authorization": f"Bearer {moderation.cf_api_token.get_secret_value()}"
+                },
+            )
+            self._register_resource(self._cf_session)
+            self._moderate = self._moderate_cloudflare
         self._log_plugin_action(
             "initialized",
             f"interval={timedelta(seconds=self.settings.interval_seconds)} "
-            f"sample_size={self.settings.sample_size}",
+            f"sample_size={self.settings.sample_size} "
+            f"moderation={moderation.provider}",
         )
         return True
 
@@ -179,23 +234,66 @@ class IinchoPlugin(PluginBase):
 
     async def _generate(self, samples: list[_Sample]) -> dict[str, Any]:
         payload, selected = self._serialize_samples(samples)
-        texts = [sample.text for sample in selected]
-        if not self.settings.admin_ids:
-            moderation = await self.context.openai.moderate_texts(texts)
-            return self._build_result([], selected, moderation)
-        prompt = f"{self.settings.prompt.rstrip()}\nDATA={payload}"
-        response, moderation = await asyncio.gather(
-            self.context.openai.generate_text(
-                prompt,
+        moderation = await self._moderate([sample.text for sample in selected])
+        trends: list[str] = []
+        if self.settings.admin_ids and any(moderation):
+            response = await self.context.openai.generate_text(
+                f"{self.settings.prompt.rstrip()}\nDATA={payload}",
                 self.settings.system_prompt or None,
                 max_tokens=self.settings.max_tokens,
                 temperature=self.settings.temperature,
                 json_output=True,
-            ),
-            self.context.openai.moderate_texts(texts),
-        )
-        trends = self._validate_trends(json.loads(response))
+            )
+            trends = self._validate_trends(json.loads(response))
         return self._build_result(trends, selected, moderation)
+
+    async def _moderate_openai(self, texts: list[str]) -> list[frozenset[str]]:
+        results = await self.context.openai.moderate_texts(texts)
+        return [
+            frozenset(
+                risk
+                for flag in flags
+                if (
+                    risk := _OPENAI_RISKS.get(flag)
+                    or _OPENAI_RISKS.get(flag.partition("/")[0])
+                )
+            )
+            for flags in results
+        ]
+
+    async def _moderate_cloudflare(self, texts: list[str]) -> list[frozenset[str]]:
+        session = self._cf_session
+        if session is None:
+            raise RuntimeError("Cloudflare moderation is not initialized")
+        url = f"{_CF_API}/accounts/{self.settings.moderation.cf_account_id}/ai/run/{_CF_MODEL}"
+        semaphore = asyncio.Semaphore(self.settings.moderation.concurrency)
+
+        async def classify(text: str) -> frozenset[str]:
+            body = {
+                "messages": [{"role": "user", "content": text}],
+                "response_format": {"type": "json_object"},
+                "temperature": 0,
+            }
+            async with semaphore, session.post(url, json=body) as resp:
+                data = await resp.json(content_type=None)
+                if not resp.ok or not data.get("success"):
+                    raise RuntimeError(
+                        f"Cloudflare moderation failed: status={resp.status} "
+                        f"errors={data.get('errors')!r}"
+                    )
+            response = data["result"]["response"]
+            codes = (
+                response.get("categories") or []
+                if isinstance(response, dict)
+                else _LLAMA_GUARD_CODE.findall(response)
+            )
+            return frozenset(
+                risk for code in codes if (risk := _LLAMA_GUARD_RISKS.get(code))
+            )
+
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(classify(text)) for text in texts]
+        return [task.result() for task in tasks]
 
     def _serialize_samples(self, samples: list[_Sample]) -> tuple[str, list[_Sample]]:
         items: list[str] = []
@@ -251,12 +349,7 @@ class IinchoPlugin(PluginBase):
             raise ValueError("moderation result count mismatch")
         risks = dict.fromkeys(_RISK_TYPES, 0)
         violations: list[dict[str, Any]] = []
-        for sample, flags in zip(samples, moderation, strict=True):
-            matched = {
-                risk
-                for flag in flags
-                if (risk := _MODERATION_RISKS.get(flag.partition("/")[0]))
-            }
+        for sample, matched in zip(samples, moderation, strict=True):
             categories = [category for category in _RISK_TYPES if category in matched]
             if not categories:
                 continue
@@ -273,15 +366,14 @@ class IinchoPlugin(PluginBase):
     async def _notify_admins(
         self, result: dict[str, Any], samples: list[_Sample]
     ) -> None:
-        if not self.settings.admin_ids:
+        if not self.settings.admin_ids or not result["violations"]:
             return
-        alert_lines = self._build_alert_lines(result["violations"], samples)
         lines = [
             "🔥 热点",
             *(f"• {self._sanitize(trend, 180)}" for trend in result["trends"]),
             "",
             "🚨 违规审查：",
-            *(alert_lines or ["✅ 未发现明显违规"]),
+            *self._build_alert_lines(result["violations"], samples),
         ]
         messages = self._batch_alerts(lines)
         for admin_id in self.settings.admin_ids:
@@ -319,7 +411,7 @@ class IinchoPlugin(PluginBase):
 
     @staticmethod
     def _batch_alerts(lines: list[str]) -> list[str]:
-        header = "🚨 Iincho 近期小报告\n\n"
+        header = "💡 Iincho 近期小报告\n\n"
         messages: list[str] = []
         current = header
         for line in lines:
@@ -340,10 +432,14 @@ class IinchoPlugin(PluginBase):
             for key, (emoji, label) in _RISK_TYPES.items()
             if result["risks"][key]
         ]
+        started_at = window.started_at.astimezone()
+        ended_at = ended_at.astimezone()
+        model = _MODERATION_MODELS[self.settings.moderation.provider]
         sections = [
-            "📊 Iincho 时间线观察\n",
-            f"🕒 {window.started_at:%m-%d %H:%M} - {ended_at:%m-%d %H:%M} UTC",
+            "💡 Iincho 时间线观察\n",
+            f"🕒 {started_at:%Y-%m-%d %H:%M} 至 {ended_at:%Y-%m-%d %H:%M %z}",
             f"📚 覆盖 {window.eligible} 篇有效帖子，AI 均匀抽样 {result['sample_count']} 篇。",
+            f"\n🧪 送检模型：\n🤖 {model}",
             "\n🚨 违规审查：\n" + ("\n".join(risks) if risks else "✅ 未发现明显违规"),
         ]
         return "\n".join(sections)

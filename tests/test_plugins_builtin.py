@@ -10,6 +10,8 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 
 from plugins.iincho.plugin import IinchoPlugin, _Sample
 from plugins.keyact.plugin import KeyActPlugin
@@ -870,6 +872,12 @@ def _iincho_result() -> str:
     return json.dumps({"trends": ["新功能体验", "部署问题"]}, ensure_ascii=False)
 
 
+def _iincho_flag_all(context: Any) -> None:
+    context.openai.moderate_texts.side_effect = lambda texts: [
+        frozenset({"hate"}) for _ in texts
+    ]
+
+
 @pytest.mark.parametrize("interval", ("4m", "nope", 0))
 def test_iincho_rejects_invalid_interval(interval: Any) -> None:
     context = _iincho_context({"interval": interval})
@@ -960,7 +968,12 @@ async def test_iincho_publishes_formatted_summary() -> None:
     assert created["visibility"] == "public"
     assert created["local_only"] is True
     assert "validate_reply" not in created
-    assert created["text"].startswith("📊 Iincho 时间线观察\n\n🕒")
+    assert created["text"].startswith("💡 Iincho 时间线观察\n\n🕒")
+    assert " 至 " in created["text"]
+    assert (
+        "\n\n\N{TEST TUBE} 送检模型：\n\N{ROBOT FACE} omni-moderation-latest\n"
+        in created["text"]
+    )
     assert "本地时间线观察" not in created["text"]
     assert "概览" not in created["text"]
     assert "热点" not in created["text"]
@@ -975,6 +988,7 @@ async def test_iincho_limits_serialized_input() -> None:
         {"min_notes": 1, "max_input_chars": 1000, "admin_ids": ["admin-1"]}
     )
     context.openai.generate_text.return_value = _iincho_result()
+    _iincho_flag_all(context)
     plugin = IinchoPlugin(context)
     await plugin.on_timeline_note(_iincho_event("\\" * 2000, event_id="1"))
     await plugin.on_timeline_note(_iincho_event("第二条", event_id="2"))
@@ -1006,6 +1020,7 @@ async def test_iincho_keeps_notes_arriving_during_generation() -> None:
     context = _iincho_context(
         {"sample_size": 2, "min_notes": 1, "admin_ids": ["admin-1"]}
     )
+    _iincho_flag_all(context)
     plugin = IinchoPlugin(context)
     await plugin.on_timeline_note(_iincho_event("旧窗口"))
 
@@ -1037,7 +1052,9 @@ async def test_iincho_notifies_all_admins_with_verified_note_link() -> None:
     assert context.misskey.send_message.await_count == 2
     for call in context.misskey.send_message.await_args_list:
         message = call.args[1]
-        assert message.startswith("🚨 Iincho 近期小报告\n\n🔥 热点")
+        assert message.startswith(
+            "\N{ELECTRIC LIGHT BULB} Iincho 近期小报告\n\n🔥 热点"
+        )
         assert "💢 骚扰攻击、⚖️ 违法活动: note-1" in message
         assert "https://misskey.example" not in message
         assert "• 新功能体验" in message
@@ -1065,17 +1082,16 @@ async def test_iincho_admin_failure_does_not_block_others_or_summary() -> None:
     context.misskey.create_note.assert_awaited_once()
 
 
-async def test_iincho_sends_trends_to_admin_without_violations() -> None:
+async def test_iincho_skips_trends_and_admins_without_violations() -> None:
     context = _iincho_context({"min_notes": 1, "admin_ids": ["admin-1"]})
-    context.openai.generate_text.return_value = _iincho_result()
     plugin = IinchoPlugin(context)
     await plugin.on_timeline_note(_iincho_event())
 
     await plugin._process_window()
 
-    message = context.misskey.send_message.await_args.args[1]
-    assert "🔥 热点\n• 新功能体验\n• 部署问题" in message
-    assert "🚨 违规审查：\n✅ 未发现明显违规" in message
+    context.openai.generate_text.assert_not_awaited()
+    context.misskey.send_message.assert_not_awaited()
+    context.misskey.create_note.assert_awaited_once()
 
 
 async def test_iincho_skips_trends_without_admins() -> None:
@@ -1093,6 +1109,7 @@ async def test_iincho_skips_trends_without_admins() -> None:
 async def test_iincho_discards_invalid_ai_result_without_retry() -> None:
     context = _iincho_context({"min_notes": 1, "admin_ids": ["admin-1"]})
     context.openai.generate_text.return_value = "not json"
+    _iincho_flag_all(context)
     plugin = IinchoPlugin(context)
     await plugin.on_timeline_note(_iincho_event())
 
@@ -1138,3 +1155,145 @@ async def test_iincho_stops_background_task() -> None:
     await plugin.on_shutdown()
 
     assert plugin._task is None
+
+
+async def test_iincho_maps_openai_minors_category() -> None:
+    context = _iincho_context({"min_notes": 1})
+    context.openai.moderate_texts.side_effect = None
+    context.openai.moderate_texts.return_value = [
+        frozenset({"sexual", "sexual/minors", "violence/graphic"})
+    ]
+    plugin = IinchoPlugin(context)
+
+    assert await plugin._moderate(["x"]) == [
+        frozenset({"sexual", "minors", "violence"})
+    ]
+
+
+_CF_ID = "0123456789abcdef0123456789abcdef"
+
+
+def _cloudflare_config(**overrides: Any) -> dict[str, Any]:
+    return {
+        "min_notes": 1,
+        "moderation": {
+            "provider": "cloudflare",
+            "cf_account_id": _CF_ID,
+            "cf_api_token": "cf-token",
+            **overrides,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "moderation",
+    (
+        {"provider": "cloudflare"},
+        {"provider": "cloudflare", "cf_account_id": _CF_ID},
+        {"provider": "cloudflare", "cf_account_id": "../x", "cf_api_token": "t"},
+        {"provider": "other"},
+    ),
+)
+def test_iincho_rejects_invalid_moderation_config(moderation: dict[str, Any]) -> None:
+    context = _iincho_context({"moderation": moderation})
+
+    with pytest.raises(ValueError):
+        IinchoPlugin(context)
+
+
+@asynccontextmanager
+async def _cloudflare_server(
+    monkeypatch: pytest.MonkeyPatch, replies: dict[str, Any], status: int = 200
+):
+    calls: list[dict[str, Any]] = []
+
+    async def run(request: web.Request) -> web.Response:
+        body = await request.json()
+        calls.append({"auth": request.headers.get("Authorization"), "body": body})
+        response = replies[body["messages"][0]["content"]]
+        return web.json_response(
+            {"success": status == 200, "errors": [], "result": {"response": response}},
+            status=status,
+        )
+
+    app = web.Application()
+    app.router.add_post(f"/accounts/{_CF_ID}/ai/run/@cf/meta/llama-guard-3-8b", run)
+    server = TestServer(app)
+    await server.start_server()
+    monkeypatch.setattr(
+        "plugins.iincho.plugin._CF_API", str(server.make_url("")).rstrip("/")
+    )
+    try:
+        yield calls
+    finally:
+        await server.close()
+
+
+async def test_iincho_cloudflare_moderation_maps_categories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    replies = {
+        "safe": {"safe": True, "categories": []},
+        "bad": {"safe": False, "categories": ["S1", "S4", "S6", "S10"]},
+        "text": "unsafe\nS12,S7",
+    }
+    context = _iincho_context(_cloudflare_config())
+    plugin = IinchoPlugin(context)
+    async with _cloudflare_server(monkeypatch, replies) as calls:
+        await plugin.initialize()
+        result = await plugin._moderate(list(replies))
+        await plugin.cleanup()
+
+    assert result == [
+        frozenset(),
+        frozenset({"violence", "minors", "hate"}),
+        frozenset({"sexual", "privacy"}),
+    ]
+    assert {call["auth"] for call in calls} == {"Bearer cf-token"}
+    assert calls[0]["body"]["response_format"] == {"type": "json_object"}
+    context.openai.moderate_texts.assert_not_awaited()
+
+
+async def test_iincho_cloudflare_failure_skips_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _iincho_context(_cloudflare_config())
+    plugin = IinchoPlugin(context)
+    async with _cloudflare_server(monkeypatch, {"本地帖子": ""}, status=429):
+        await plugin.initialize()
+        await plugin.on_timeline_note(_iincho_event())
+        with pytest.raises(ExceptionGroup) as exc_info:
+            await plugin._process_window()
+        await plugin.cleanup()
+
+    assert exc_info.group_contains(RuntimeError, match="status=429")
+    context.misskey.create_note.assert_not_awaited()
+
+
+async def test_iincho_cloudflare_limits_concurrency() -> None:
+    plugin = IinchoPlugin(_iincho_context(_cloudflare_config(concurrency=2)))
+    active = peak = 0
+
+    class _Response:
+        ok = True
+        status = 200
+
+        async def __aenter__(self) -> _Response:
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            return self
+
+        async def __aexit__(self, *_: Any) -> None:
+            nonlocal active
+            active -= 1
+
+        async def json(self, **_: Any) -> dict[str, Any]:
+            return {"success": True, "result": {"response": {"safe": True}}}
+
+    plugin._cf_session = SimpleNamespace(post=lambda *_, **__: _Response())  # type: ignore[assignment]
+    plugin._moderate = plugin._moderate_cloudflare
+
+    assert await plugin._moderate(["a"] * 6) == [frozenset()] * 6
+    assert peak == 2

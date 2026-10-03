@@ -1,5 +1,9 @@
 <div align="center">
 
+<p>
+    <img src="assets/twipsybot.png" alt="TwipsyBot" width="200" height="200">
+</p>
+
 <h1>TwipsyBot</h1>
 
 <br>**一只轻量、可扩展的 Misskey AI 机器人**<br><br>
@@ -15,8 +19,22 @@
 <br>它有时是抽象气氛组，有时是靠谱小帮手。它把所看所想寄向联邦宇宙，也把星尘里的帖子带回家。
 
 ··· [使用手册](https://twipsybot.oreeke.com/) ··· [开发指南](https://twipsybot.oreeke.com/dev-guide/) ··· [变更日志](./CHANGELOG.md) ···
-<br><br>❤️
+<br><br>❤️<br><br>
 
-![Screenshot](./assets/connect.png)
+<div align="left">
+
+```bash
+# copy docker-compose.yaml
+
+docker compose pull
+docker compose up -d
+docker compose exec twipsybot twipsybot cfg
+
+# done
+```
+
+</div>
+
+![Screenshot](assets/connect.png)
 
 </div>

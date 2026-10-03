@@ -18,7 +18,7 @@ from conftest import (
 from httpx2 import Request, Response
 from openai import APIStatusError
 
-from twipsybot import MisskeyBot
+from twipsybot import Neuro
 from twipsybot.app import main as app_main
 from twipsybot.clients.misskey.api import MisskeyAPI
 from twipsybot.clients.misskey.payloads import (
@@ -908,7 +908,7 @@ async def test_streaming_startup_failure_closes_initialized_services(
     monkeypatch: pytest.MonkeyPatch, write_config: WriteConfig
 ) -> None:
     config = write_config()
-    bot = MisskeyBot(config)
+    bot = Neuro(config)
     monkeypatch.setattr(bot, "_initialize_services", AsyncMock())
     monkeypatch.setattr(bot, "_setup_scheduler", Mock())
     monkeypatch.setattr(
@@ -925,7 +925,7 @@ async def test_streaming_startup_failure_closes_initialized_services(
     monkeypatch.setattr(bot.db, "close", AsyncMock())
     bot.scheduler = SimpleNamespace(running=True, shutdown=Mock())
     monkeypatch.setattr(app_main, "Config", lambda: config)
-    monkeypatch.setattr(app_main, "MisskeyBot", lambda _: bot)
+    monkeypatch.setattr(app_main, "Neuro", lambda _: bot)
     runner = app_main.BotRunner()
 
     with pytest.raises(RuntimeError, match="streaming failed"):

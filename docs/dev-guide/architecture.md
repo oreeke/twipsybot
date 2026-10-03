@@ -15,7 +15,7 @@ TwipsyBot 是单进程异步应用。
 %%{init: {"flowchart": {"curve": "linear", "nodeSpacing": 32, "rankSpacing": 44}}}%%
 flowchart TB
 	CLI[CLI] --> Runner[BotRunner]
-	Runner --> Core[MisskeyBot]
+	Runner --> Core[Neuro]
 	Core --> Reloader[SettingsReloader]
 
 	Core --> Connector[StreamingConnector]
@@ -65,6 +65,8 @@ twipsybot/
 └── pyproject.toml          项目元数据与工具配置
 ```
 
+`Neuro`（`twipsybot/bot/engine/core.py`）是对象图的根：装配 `engine/` 内各组件与业务流程，按序编排启动与停止，并作为 `bot` 供业务流程回调；插件仅经 `BotControlAdapter` 受限访问。
+
 关键配置模块：
 
 - `twipsybot/shared/config.py`：Settings 与 Secrets Pydantic 模型，以及合并设置文件、连接信息和环境变量覆盖的 Config loader。
@@ -79,7 +81,7 @@ twipsybot/
 
 1. 初始化日志，加载 `data/settings.yaml`、`data/secrets.yaml` 与可选环境变量覆盖。
 2. 配置缺失、无效、鉴权或连接失败时记录 `Startup blocked`，等待设置文件变更后重试；连接失败另每 60 秒重试。
-3. 创建 `MisskeyBot`，初始化 SQLite、自动发帖状态和机器人身份。
+3. 创建 `Neuro`，初始化 SQLite、自动发帖状态和机器人身份。
 4. 加载插件与管理命令，执行插件 `on_startup()`。
 5. 启动设置轮询器、定时任务并连接 Streaming API。
 6. 等待终止信号，并按生命周期关闭轮询器、插件、客户端和数据库。

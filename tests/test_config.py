@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from conftest import WriteConfig
 
-from twipsybot import MisskeyBot
+from twipsybot import Neuro
 from twipsybot.shared.config import Config, Settings, needs_restart
 from twipsybot.shared.config_keys import ConfigKeys
 from twipsybot.shared.exceptions import ConfigurationError
@@ -131,7 +131,7 @@ def test_prompt_files_resolve_from_root(
 
 def test_timeline_channels_are_independently_enabled(write_config: WriteConfig) -> None:
     config = write_config(timeline={"home": True, "local": False})
-    bot = MisskeyBot(config)
+    bot = Neuro(config)
 
     assert bot.connect._timeline_channels == {"homeTimeline"}
     assert config.data["timeline"]["global"] is False

@@ -6,13 +6,13 @@ from loguru import logger
 from ..engine.pipeline import AIResponse
 
 if TYPE_CHECKING:
-    from ..engine.core import MisskeyBot
+    from ..engine.core import Neuro
 
 
 class ImageGenerationService:
     _MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024
 
-    def __init__(self, bot: "MisskeyBot"):
+    def __init__(self, bot: "Neuro"):
         self.bot = bot
 
     async def generate_and_upload(self, prompt: str) -> str:

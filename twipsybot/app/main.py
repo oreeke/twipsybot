@@ -9,7 +9,7 @@ from io import TextIOWrapper
 from dotenv import load_dotenv
 from loguru import logger
 
-from ..bot.engine.core import MisskeyBot
+from ..bot.engine.core import Neuro
 from ..shared.banner import BANNER
 from ..shared.config import Config
 from ..shared.config_keys import ConfigKeys
@@ -54,7 +54,7 @@ def _set_termination_handlers(
 
 class BotRunner:
     def __init__(self):
-        self.bot: MisskeyBot | None = None
+        self.bot: Neuro | None = None
         self.shutdown_event = asyncio.Event()
         self._shutdown_called = False
 
@@ -83,7 +83,7 @@ class BotRunner:
                 config.load()
                 set_log_level(config.get(ConfigKeys.SYSTEM_LOG_LEVEL))
                 logger.info("Starting bot...")
-                self.bot = MisskeyBot(config)
+                self.bot = Neuro(config)
                 await self.bot.start()
                 return True
             except (*_BLOCKING_ERRORS, *_CONNECTION_ERRORS) as e:

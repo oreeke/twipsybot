@@ -2,7 +2,7 @@ from importlib import import_module
 from typing import Any
 
 _EXPORTS: dict[str, tuple[str, str]] = {
-    "MisskeyBot": (".bot.engine.core", "MisskeyBot"),
+    "Neuro": (".bot.engine.core", "Neuro"),
     "Config": (".shared.config", "Config"),
 }
 

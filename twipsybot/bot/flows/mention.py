@@ -15,7 +15,7 @@ from ...shared.config_keys import ConfigKeys
 from ...shared.utils import format_log_text, maybe_log_event_dump
 
 if TYPE_CHECKING:
-    from ..engine.core import MisskeyBot
+    from ..engine.core import Neuro
 
 
 @dataclass(slots=True)
@@ -29,7 +29,7 @@ class MentionContext:
 
 
 class MentionHandler:
-    def __init__(self, bot: "MisskeyBot"):
+    def __init__(self, bot: "Neuro"):
         self.bot = bot
 
     def _is_self_mention(self, mention: MentionContext) -> bool:

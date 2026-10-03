@@ -6,11 +6,11 @@ from urllib.parse import urlparse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
-from ...admin import AdminCommandService
+from ...admin.service import AdminCommandService
 from ...clients.misskey.api import MisskeyAPI
 from ...clients.misskey.streaming import StreamingClient
 from ...clients.misskey.transport import TCPClient
-from ...clients.openai import OpenAIAPI
+from ...clients.openai.api import OpenAIAPI
 from ...db.sqlite import DBManager
 from ...plugin.manager import PluginManager
 from ...shared.config import Config
@@ -27,12 +27,12 @@ from .pipeline import ResponsePipeline
 from .reload import SettingsReloader
 from .runtime import BotRuntime
 
-__all__ = ("MisskeyBot",)
+__all__ = ("Neuro",)
 
 _SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 
-class MisskeyBot:
+class Neuro:
     def __init__(self, config: Config):
         self.config = config
         try:

@@ -13,7 +13,7 @@ from ...shared.utils import format_log_text
 from ..engine.pipeline import AIResponse
 
 if TYPE_CHECKING:
-    from ..engine.core import MisskeyBot
+    from ..engine.core import Neuro
 
 
 JOB_ID = "auto_post"
@@ -23,7 +23,7 @@ class AutoPostService:
     _PLUGIN_POST_INTERVAL_SECONDS = 10
     _MISFIRE_GRACE_SECONDS = 300
 
-    def __init__(self, bot: "MisskeyBot"):
+    def __init__(self, bot: "Neuro"):
         self.bot = bot
         self._counter_lock = asyncio.Lock()
         self._post_date = self._today()

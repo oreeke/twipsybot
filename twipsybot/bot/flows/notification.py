@@ -7,11 +7,11 @@ from ...shared.config_keys import ConfigKeys
 from ...shared.utils import maybe_log_event_dump
 
 if TYPE_CHECKING:
-    from ..engine.core import MisskeyBot
+    from ..engine.core import Neuro
 
 
 class NotificationHandler:
-    def __init__(self, bot: "MisskeyBot"):
+    def __init__(self, bot: "Neuro"):
         self.bot = bot
 
     async def handle(self, notification: dict[str, Any]) -> None:

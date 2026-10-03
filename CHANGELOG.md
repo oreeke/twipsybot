@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.0 - 2026-10-04
+
+统一核心类与异常基类命名
+
+### Changed
+
+- 核心编排类 `MisskeyBot` 更名为 `Neuro`，根包公共导出改为 `Config` 与 `Neuro`
+- 异常基类 `MisskeyBotError` 更名为 `TwipsyBotError`，其余异常名不变
+
+<br>
+
 ## 0.10.0 - 2026-10-03
 
 新增终端配置界面（TUI）与热重载，重构配置体系

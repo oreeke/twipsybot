@@ -8,21 +8,21 @@ __all__ = (
     "APIResponseError",
     "AuthenticationError",
     "ConfigurationError",
-    "MisskeyBotError",
+    "TwipsyBotError",
     "WebSocketConnectionError",
     "WebSocketReconnectError",
 )
 
 
-class MisskeyBotError(Exception):
+class TwipsyBotError(Exception):
     pass
 
 
-class ConfigurationError(MisskeyBotError):
+class ConfigurationError(TwipsyBotError):
     pass
 
 
-class APIResponseError(MisskeyBotError):
+class APIResponseError(TwipsyBotError):
     def __init__(
         self,
         message: str = "",
@@ -71,7 +71,7 @@ class APIFileTooLargeError(APIResponseError):
     pass
 
 
-class WebSocketConnectionError(MisskeyBotError):
+class WebSocketConnectionError(TwipsyBotError):
     pass
 
 

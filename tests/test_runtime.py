@@ -14,7 +14,7 @@ from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from conftest import MakeBot, MakePluginDir, WriteConfig, set_plugin_config
 
-from twipsybot import MisskeyBot
+from twipsybot import Neuro
 from twipsybot.admin.service import AdminCommandService
 from twipsybot.app import cli as app_cli
 from twipsybot.app import main as app_main
@@ -243,7 +243,7 @@ def test_auto_post_status_does_not_show_previous_day_count() -> None:
     ],
 )
 def test_bot_mention_matches_complete_local_account(text: str, expected: bool) -> None:
-    bot = cast(Any, object.__new__(MisskeyBot))
+    bot = cast(Any, object.__new__(Neuro))
     bot.bot_username = "testbot"
     bot.misskey = SimpleNamespace(instance_url="https://example.com")
 
@@ -352,7 +352,7 @@ async def test_startup_waits_for_settings_then_retries(
     for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "OPENAI_API_KEY"):
         monkeypatch.delenv(env, raising=False)
     bot = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
-    monkeypatch.setattr(app_main, "MisskeyBot", lambda _: bot)
+    monkeypatch.setattr(app_main, "Neuro", lambda _: bot)
     monkeypatch.setattr(app_main, "_RETRY_POLL_SECONDS", 0.01)
     config = app_main.Config(tmp_path)
     runner = app_main.BotRunner()
@@ -382,7 +382,7 @@ async def test_startup_retries_after_connection_error(
     bot = SimpleNamespace(
         start=AsyncMock(side_effect=[APIConnectionError(), None]), stop=AsyncMock()
     )
-    monkeypatch.setattr(app_main, "MisskeyBot", lambda _: bot)
+    monkeypatch.setattr(app_main, "Neuro", lambda _: bot)
     monkeypatch.setattr(app_main, "_RETRY_POLL_SECONDS", 0.01)
     monkeypatch.setattr(app_main, "_RETRY_CONNECT_SECONDS", 0.05)
     error_log = Mock()
@@ -404,7 +404,7 @@ async def test_startup_waits_on_token_permission_error(
     bot = SimpleNamespace(
         start=AsyncMock(side_effect=APIPermissionError()), stop=AsyncMock()
     )
-    monkeypatch.setattr(app_main, "MisskeyBot", lambda _: bot)
+    monkeypatch.setattr(app_main, "Neuro", lambda _: bot)
     monkeypatch.setattr(app_main, "_RETRY_POLL_SECONDS", 0.01)
     monkeypatch.setattr(app_main, "_RETRY_CONNECT_SECONDS", 0.01)
     runner = app_main.BotRunner()
@@ -894,7 +894,7 @@ async def test_admin_can_reenable_chat(
 
 
 async def test_stop_continues_after_cleanup_failure() -> None:
-    bot = object.__new__(MisskeyBot)
+    bot = object.__new__(Neuro)
     bot.runtime = SimpleNamespace(running=True, cleanup_tasks=AsyncMock())
     bot.plugin_manager = SimpleNamespace(
         shutdown_plugins=AsyncMock(side_effect=RuntimeError("shutdown failed")),
@@ -931,7 +931,7 @@ async def test_stop_cancels_remaining_cleanup_after_timeout(
             close_cancelled.set()
             raise
 
-    bot = object.__new__(MisskeyBot)
+    bot = object.__new__(Neuro)
     bot.runtime = SimpleNamespace(running=True, cleanup_tasks=AsyncMock())
     bot.plugin_manager = SimpleNamespace(
         shutdown_plugins=AsyncMock(), cleanup_plugins=AsyncMock()

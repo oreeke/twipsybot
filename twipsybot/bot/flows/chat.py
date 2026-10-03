@@ -19,7 +19,7 @@ from ...shared.constants import CHAT_CACHE_MAX_USERS, CHAT_CACHE_TTL
 from ...shared.utils import format_log_text, maybe_log_event_dump
 
 if TYPE_CHECKING:
-    from ..engine.core import MisskeyBot
+    from ..engine.core import Neuro
 
 
 @dataclass(slots=True)
@@ -37,7 +37,7 @@ class _ChatContext:
 
 
 class ChatHandler:
-    def __init__(self, bot: "MisskeyBot"):
+    def __init__(self, bot: "Neuro"):
         self.bot = bot
         self._histories: TTLCache[str, list[dict[str, str]]] = TTLCache(
             maxsize=CHAT_CACHE_MAX_USERS,

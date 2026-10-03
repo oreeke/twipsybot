@@ -12,7 +12,7 @@ import yaml
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from twipsybot import Config, MisskeyBot
+from twipsybot import Config, Neuro
 from twipsybot.shared.settings import read_settings, write_settings
 
 __all__ = (
@@ -35,7 +35,7 @@ class WriteConfig(Protocol):
 class MakeBot(Protocol):
     async def __call__(
         self, config: Config, *, plugins_dir: Path | None = None
-    ) -> MisskeyBot: ...
+    ) -> Neuro: ...
 
 
 class MakePluginDir(Protocol):
@@ -268,11 +268,11 @@ def echo_plugin_dir(make_plugin_dir: MakePluginDir) -> Path:
 
 @pytest_asyncio.fixture
 async def make_bot(tmp_path: Path) -> AsyncIterator[MakeBot]:
-    created: list[MisskeyBot] = []
+    created: list[Neuro] = []
 
-    async def _make(config: Config, *, plugins_dir: Path | None = None) -> MisskeyBot:
+    async def _make(config: Config, *, plugins_dir: Path | None = None) -> Neuro:
         config.load()
-        bot = MisskeyBot(config)
+        bot = Neuro(config)
         bot.plugin_manager.plugins_dir = plugins_dir or (tmp_path / "no-plugins")
         await bot.db.initialize()
         await bot.auto_post.start()

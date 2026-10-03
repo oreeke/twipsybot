@@ -20,15 +20,11 @@ uv sync --python 3.11 --extra dev --locked
 
 ## 准备配置
 
+在配置界面的 `connect` 中填写测试账号与模型服务凭据，然后检查并从源码环境启动：
+
 ```bash
-cp config.yaml.example config.yaml
-cp plugins/config.yaml.example plugins/config.yaml
+uv run --locked twipsybot cfg
 uv run --locked twipsybot config-check
-```
-
-填写测试账号与模型服务凭据后，可以从源码环境启动：
-
-```bash
 uv run --locked twipsybot run
 ```
 

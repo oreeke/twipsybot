@@ -13,6 +13,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from twipsybot import Config, MisskeyBot
+from twipsybot.shared.settings import read_settings, write_settings
 
 __all__ = (
     "DEFAULT_AI_REPLY",
@@ -21,6 +22,7 @@ __all__ = (
     "MakeBot",
     "MakePluginDir",
     "WriteConfig",
+    "set_plugin_config",
 )
 
 DEFAULT_AI_REPLY = "这是 AI 生成的回复"
@@ -167,48 +169,55 @@ async def openai_server() -> AsyncIterator[FakeOpenAIServer]:
         await server.close()
 
 
+def _merge(target: dict[str, Any], updates: dict[str, Any]) -> None:
+    for key, value in updates.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _merge(target[key], value)
+        else:
+            target[key] = value
+
+
 @pytest.fixture
 def write_config(
-    tmp_path: Path, misskey_server: FakeMisskeyServer, openai_server: FakeOpenAIServer
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
 ) -> WriteConfig:
-    def merge(target: dict[str, Any], updates: dict[str, Any]) -> None:
-        for key, value in updates.items():
-            if isinstance(value, dict) and isinstance(target.get(key), dict):
-                merge(target[key], value)
-            else:
-                target[key] = value
+    monkeypatch.setenv("MISSKEY_INSTANCE_URL", misskey_server.url)
+    monkeypatch.setenv("MISSKEY_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", openai_server.url)
+    settings_path = tmp_path / "data" / "settings.yaml"
 
     def _write(*, load: bool = True, **overrides: Any) -> Config:
         data: dict[str, Any] = {
-            "misskey": {
-                "instance_url": misskey_server.url,
-                "access_token": "test-token",
-            },
-            "openai": {
-                "api_key": "test-key",
-                "api_base": openai_server.url,
-                "api_mode": "chat",
-            },
-            "bot": {
-                "system_prompt": "你是测试机器人",
-                "auto_post": {"prompt": "写一条随笔"},
-            },
-            "db": {"path": str(tmp_path / "test.db")},
-            "log": {"path": str(tmp_path / "test.log")},
+            "bot": {"system_prompt": "你是测试机器人", "api_mode": "chat"},
+            "autopost": {"prompt": "写一条随笔", "rotation": True},
         }
+        if plugins := read_settings(settings_path).get("plugins"):
+            data["plugins"] = plugins
         if blacklist := overrides.pop("blacklist", None):
-            data["bot"]["response"] = {"blacklist": blacklist}
-        merge(data, overrides)
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text(
-            yaml.safe_dump(data, allow_unicode=True), encoding="utf-8"
-        )
-        config = Config(config_path=str(config_path))
+            data["reply"] = {"blacklist": blacklist}
+        _merge(data, overrides)
+        write_settings(settings_path, data)
+        config = Config(tmp_path)
         if load:
             config.load()
         return config
 
     return _write
+
+
+def set_plugin_config(root: Path, name: str, config: dict[str, Any] | None) -> None:
+    settings_path = root / "data" / "settings.yaml"
+    data = read_settings(settings_path)
+    plugins = data.setdefault("plugins", {})
+    if config is None:
+        plugins.pop(name, None)
+    else:
+        plugins[name] = config
+    write_settings(settings_path, data)
 
 
 @pytest.fixture
@@ -224,7 +233,7 @@ def make_plugin_dir(tmp_path: Path) -> MakePluginDir:
     ) -> Path:
         plugin_dir = plugins_dir / name
         plugin_dir.mkdir(parents=True, exist_ok=True)
-        (plugin_dir / "config.yaml").write_text(config, encoding="utf-8")
+        set_plugin_config(tmp_path, name, yaml.safe_load(config) or {})
         if source is None:
             source = (
                 "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
@@ -262,6 +271,7 @@ async def make_bot(tmp_path: Path) -> AsyncIterator[MakeBot]:
     created: list[MisskeyBot] = []
 
     async def _make(config: Config, *, plugins_dir: Path | None = None) -> MisskeyBot:
+        config.load()
         bot = MisskeyBot(config)
         bot.plugin_manager.plugins_dir = plugins_dir or (tmp_path / "no-plugins")
         await bot.db.initialize()
@@ -270,7 +280,7 @@ async def make_bot(tmp_path: Path) -> AsyncIterator[MakeBot]:
         bot.bot_user_id = current_user.get("id")
         bot.bot_username = current_user.get("username")
         await bot.plugin_manager.load_plugins()
-        await bot.admin.start()
+        bot.admin.start()
         await bot.plugin_manager.startup_plugins()
         created.append(bot)
         return bot

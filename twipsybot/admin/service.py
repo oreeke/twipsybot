@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,25 +27,17 @@ class _SlashCommand:
 
 
 class AdminCommandService(CmdHandlersMixin):
-    def __init__(self, bot: Any, config: Mapping[str, Any]):
+    def __init__(self, bot: Any):
         self.bot = bot
-        self.config = dict(config)
         self.name = "Admin"
         self.global_config = bot.config
         self.db = bot.db
         self.plugin_manager = bot.plugin_manager
         self.misskey = bot.misskey
         self.openai = bot.openai
-        self._default_model = self.openai.model
-        self.allowed_users = frozenset(
-            normalize_tokens(self.config.get("allowed_users", []))
-        )
-        self._allowed_users_lower = frozenset(
-            value.lower() for value in self.allowed_users
-        )
-        self.commands = self.config.get("commands", {})
+        self.refresh()
+        self.commands: dict[str, Any] = {}
         self._setup_default_commands()
-        self._init_baselines()
         self._command_alias_index = self._build_command_alias_index()
         self._command_handlers = self._build_command_handlers()
         self._slash_commands = {
@@ -69,12 +61,12 @@ class AdminCommandService(CmdHandlersMixin):
         ]
         return "\n\n".join((super()._get_help_text(), "\n".join(slash_commands)))
 
-    def _init_baselines(self) -> None:
-        self._baseline_response_whitelist = normalize_tokens(
-            self.global_config.get(ConfigKeys.BOT_RESPONSE_WHITELIST), lower=True
+    def refresh(self) -> None:
+        self.allowed_users = frozenset(
+            normalize_tokens(self.global_config.get(ConfigKeys.BOT_ADMINS))
         )
-        self._baseline_response_blacklist = normalize_tokens(
-            self.global_config.get(ConfigKeys.BOT_RESPONSE_BLACKLIST), lower=True
+        self._allowed_users_lower = frozenset(
+            value.lower() for value in self.allowed_users
         )
 
     def _build_command_alias_index(self) -> dict[str, str]:
@@ -97,22 +89,16 @@ class AdminCommandService(CmdHandlersMixin):
             "clean": self._handle_clean,
             "reload": self._handle_reload,
             "mention": lambda args: self._handle_set_bool(
-                "mention", ConfigKeys.BOT_RESPONSE_MENTION, args
+                "mention", ConfigKeys.REPLY_MENTION, args
             ),
             "chat": lambda args: self._handle_set_bool(
-                "chat", ConfigKeys.BOT_RESPONSE_CHAT, args
+                "chat", ConfigKeys.REPLY_CHAT, args
             ),
             "whitelist": lambda args: self._handle_response_user_list(
-                "whitelist",
-                ConfigKeys.BOT_RESPONSE_WHITELIST,
-                args,
-                self._baseline_response_whitelist,
+                "whitelist", ConfigKeys.REPLY_WHITELIST, args
             ),
             "blacklist": lambda args: self._handle_response_user_list(
-                "blacklist",
-                ConfigKeys.BOT_RESPONSE_BLACKLIST,
-                args,
-                self._baseline_response_blacklist,
+                "blacklist", ConfigKeys.REPLY_BLACKLIST, args
             ),
         }
 
@@ -126,7 +112,7 @@ class AdminCommandService(CmdHandlersMixin):
                     "aliases": [],
                 },
                 "autopost": {
-                    "description": "自动发帖 (用法: ^autopost on|off|reset)",
+                    "description": "自动发帖 (用法: ^autopost rotation|schedule|off|reset)",
                     "aliases": [],
                 },
                 "clean": {
@@ -146,37 +132,42 @@ class AdminCommandService(CmdHandlersMixin):
                     "aliases": [],
                 },
                 "whitelist": {
-                    "description": "查看/修改白名单 (用法: ^whitelist [list|add|del|set|clear|reset])",
+                    "description": "查看/修改白名单 (用法: ^whitelist [list|add|del|set|clear])",
                     "aliases": [],
                 },
                 "blacklist": {
-                    "description": "查看/修改黑名单 (用法: ^blacklist [list|add|del|set|clear|reset])",
+                    "description": "查看/修改黑名单 (用法: ^blacklist [list|add|del|set|clear])",
                     "aliases": [],
                 },
             }
 
-    async def start(self) -> None:
+    def start(self) -> None:
         self._log_plugin_action("initialized", f"Command groups: {len(self.commands)}")
-        model = await self.db.get_plugin_data(self.name, ConfigKeys.OPENAI_MODEL)
-        if model:
-            self.openai.model = model
-            self._set_global_config_value(ConfigKeys.OPENAI_MODEL, model)
-            self._log_plugin_action("applied model override", model)
-        await self._apply_saved_response_user_list(ConfigKeys.BOT_RESPONSE_WHITELIST)
-        await self._apply_saved_response_user_list(ConfigKeys.BOT_RESPONSE_BLACKLIST)
 
     async def _handle_autopost(self, args: str) -> str:
         if args.strip().lower() == "reset":
             await self.bot.auto_post.reset_daily_counters()
             return "自动发帖计数器已重置"
-        return self._handle_set_bool("autopost", ConfigKeys.BOT_AUTO_POST_ENABLED, args)
+        mode = args.strip().lower()
+        if mode not in {"rotation", "schedule", "off"}:
+            return "用法: ^autopost rotation|schedule|off|reset"
+        if mode == "schedule" and not self.global_config.get(ConfigKeys.POST_TIMES):
+            return "定时发帖需要先在 twipsybot cfg 中添加时间点"
+        await self.bot.settings.update(
+            {
+                ConfigKeys.POST_ROTATION: mode == "rotation",
+                ConfigKeys.POST_SCHEDULE: mode == "schedule",
+            }
+        )
+        return f"autopost: {mode}"
 
     async def _handle_reload(self, args: str) -> str:
         parts = args.split()
         if len(parts) != 1:
             return "用法: ^reload <插件名>"
         name = parts[0]
-        match await self.plugin_manager.reload_plugin(name):
+        statuses = await self.bot.settings.reload()
+        match statuses.get(name) or await self.plugin_manager.reload_plugin(name):
             case "enabled":
                 return f"插件 {name} 已重载"
             case "disabled":
@@ -190,25 +181,16 @@ class AdminCommandService(CmdHandlersMixin):
 
     async def blacklist_response_user(self, user_id: str) -> None:
         blacklist = normalize_tokens(
-            self.global_config.get(ConfigKeys.BOT_RESPONSE_BLACKLIST), lower=True
+            self.global_config.get(ConfigKeys.REPLY_BLACKLIST), lower=True
         )
         normalized = user_id.strip().lower()
         if normalized and normalized not in blacklist:
-            await self._save_response_user_list(
-                ConfigKeys.BOT_RESPONSE_BLACKLIST, [*blacklist, normalized]
+            await self.bot.settings.update(
+                {ConfigKeys.REPLY_BLACKLIST: [*blacklist, normalized]}
             )
 
     def _log_plugin_action(self, action: str, details: str = "") -> None:
         logger.info(f"Admin {action}{': ' + details if details else ''}")
-
-    def _set_global_config_value(self, path: str, value: Any) -> None:
-        keys = path.split(".")
-        config = self.global_config.data
-        for key in keys[:-1]:
-            if not isinstance(config.get(key), dict):
-                config[key] = {}
-            config = config[key]
-        config[keys[-1]] = value
 
     def _is_authorized(self, user_id: str, handle: str | None) -> bool:
         return user_id in self.allowed_users or (

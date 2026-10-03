@@ -8,7 +8,6 @@ Plugin API v3。只从 `twipsybot.plugin` 导入公共接口。
 
 ```text
 plugins/echo/
-├── config.yaml
 └── plugin.py
 ```
 
@@ -18,6 +17,7 @@ from twipsybot.plugin import MessageEvent, PluginBase
 
 class EchoPlugin(PluginBase):
     api_version = 3
+    priority = 100
 
     async def on_message(self, event: MessageEvent):
         return self.handled(f"echo: {event.text}")
@@ -26,9 +26,12 @@ class EchoPlugin(PluginBase):
 plugin = EchoPlugin
 ```
 
+在 `data/settings.yaml` 中启用，或使用 `twipsybot cfg`：
+
 ```yaml
-enabled: true
-priority: 100
+plugins:
+  echo:
+    enabled: true
 ```
 
 本地插件使用 `plugin.py`，并通过模块级 `plugin` 导出插件类。入口按单文件加载，不支持相对导入；多模块插件应使用 Entry Points。
@@ -50,8 +53,18 @@ class EchoConfig(PluginConfig):
 
 class EchoPlugin(PluginBase):
     api_version = 3
+    priority = 100
     config_class = EchoConfig
     settings: EchoConfig
+```
+
+配置写在 `plugins.<name>`：
+
+```yaml
+plugins:
+  echo:
+    enabled: true
+    prefix: "echo"
 ```
 
 ### 第三方包
@@ -63,15 +76,15 @@ class EchoPlugin(PluginBase):
 echo = "twipsybot_echo:plugin"
 ```
 
-入口名称是集中配置中的插件键，入口值必须指向 `PluginBase` 子类。安装后仍需在 `plugins/config.yaml` 中显式启用：
+入口名称是插件键，入口值必须指向 `PluginBase` 子类。安装后仍需在 `data/settings.yaml` 中显式启用：
 
 ```yaml
-echo:
+plugins:
+  echo:
     enabled: true
-    priority: 100
 ```
 
-第三方包自行声明依赖和版本。
+第三方包自行声明依赖和版本。插件作者可以在 `PluginBase` 子类上声明 `priority = <int>` 提供默认优先级；用户仍可在设置中覆盖。
 
 验证后的配置通过 `self.settings` 读取，配置实例只读。简单插件无需定义配置类；复杂格式可使用 Pydantic 的字段或模型验证器集中处理。
 
@@ -82,7 +95,7 @@ echo:
 | 字段 | 内容 |
 | --- | --- |
 | `name` | 稳定插件 ID（本地目录名或 Entry Point 名称） |
-| `config` | 原始插件配置的只读映射 |
+| `config` | `plugins.<name>` 原始配置的只读映射 |
 | `storage` | 插件私有存储 |
 | `misskey` | Misskey 服务 |
 | `openai` | AI 服务 |
@@ -132,8 +145,7 @@ deleted = await self.context.storage.delete("key")
 | `bot.load_antenna_selectors()` | 读取天线选择器 |
 | `bot.resolve_antenna_ids(selectors)` | 将选择器解析为天线 ID |
 
-`moderate_texts` 使用 `omni-moderation-latest`。自定义 OpenAI 兼容端点需要支持
-`/moderations`。
+`moderate_texts` 使用 `omni-moderation-latest`。自定义 OpenAI 兼容端点需要支持 `/moderations`。
 
 事件字段：
 
@@ -179,7 +191,7 @@ return {"prompt": "以天气为主题，"}
 - `prompt`：放在全局自动发帖提示词之前，由 AI 生成内容。
 - `timestamp`：可选的分钟级时间戳，用于稳定生成输入。
 
-返回字典必须严格符合对应 Result 类型，不能添加其他字段。自动发帖仍受全局每日限额限制。
+返回字典必须严格符合对应 Result 类型，不能添加其他字段。轮转模式下自动发帖受 `autopost.daily_max` 限制，定时模式不受限。
 
 ### 生命周期
 
@@ -195,7 +207,7 @@ __init__ -> initialize -> on_startup -> hooks -> on_shutdown -> cleanup
 
 通过 `_register_resource(resource)` 注册带 `close()` 的资源，基类会在 `cleanup` 时关闭。插件自行创建的任务应在 `on_shutdown()` 中停止，并在 `cleanup()` 中完成最终释放。不要吞掉 `asyncio.CancelledError`，长时间 I/O 应设置自身超时。
 
-`context.config` 是原始配置的只读映射。集中配置 `plugins/config.yaml` 中存在同名条目时，会完整取代插件目录的 `config.yaml`，两处不会合并。修改配置后可由管理员发送 `^reload <插件名>` 重载。关闭时最多等待 Hook 3 秒。
+`context.config` 是 `plugins.<name>` 原始配置的只读映射。修改 `data/settings.yaml` 后，运行中的机器人会自动热重载对应插件；管理员也可发送 `^reload <插件名>` 立即重载。关闭时最多等待 Hook 3 秒。
 
 ### API 边界
 

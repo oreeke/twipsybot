@@ -64,7 +64,7 @@ class ResponseLimiter:
 
     def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
         return self._in_user_list(
-            ConfigKeys.BOT_RESPONSE_BLACKLIST, user_id=user_id, handle=handle
+            ConfigKeys.REPLY_BLACKLIST, user_id=user_id, handle=handle
         )
 
     def _duration_config_seconds(self, key: str) -> int:
@@ -107,8 +107,9 @@ class ResponseLimiter:
     async def get_response_block_reply(
         self, *, user_id: str, handle: str | None
     ) -> tuple[bool, str]:
-        if self._in_user_list(
-            ConfigKeys.BOT_RESPONSE_WHITELIST, user_id=user_id, handle=handle
+        if any(
+            self._in_user_list(key, user_id=user_id, handle=handle)
+            for key in (ConfigKeys.REPLY_WHITELIST, ConfigKeys.BOT_ADMINS)
         ):
             return False, ""
         now = time.time()
@@ -118,19 +119,17 @@ class ResponseLimiter:
             state.blocked_until_ts = None
             await self._save_response_limit_state(user_id, state)
         if state.blocked_until_ts is not None and now < state.blocked_until_ts:
-            return True, self._config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY)
-        interval = self._duration_config_seconds(ConfigKeys.BOT_RESPONSE_RATE_LIMIT)
+            return True, self._config.get(ConfigKeys.REPLY_MAX_TURNS_MSG)
+        interval = self._duration_config_seconds(ConfigKeys.REPLY_RATE_LIMIT)
         if (
             interval > 0
             and state.last_reply_ts is not None
             and now - state.last_reply_ts < interval
         ):
-            return True, self._config.get(ConfigKeys.BOT_RESPONSE_RATE_LIMIT_REPLY)
-        max_turns = self._config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS)
-        if isinstance(max_turns, int) and max_turns >= 0 and state.turns >= max_turns:
-            release = self._duration_config_seconds(
-                ConfigKeys.BOT_RESPONSE_MAX_TURNS_RELEASE
-            )
+            return True, self._config.get(ConfigKeys.REPLY_RATE_LIMIT_MSG)
+        max_turns = self._config.get(ConfigKeys.REPLY_MAX_TURNS)
+        if self._turns_limited() and state.turns >= max_turns:
+            release = self._duration_config_seconds(ConfigKeys.REPLY_TURNS_RELEASE)
             if release < 0:
                 await self._blacklist_user(user_id)
                 state.turns = 0
@@ -138,7 +137,7 @@ class ResponseLimiter:
             else:
                 state.blocked_until_ts = now + release
             await self._save_response_limit_state(user_id, state)
-            return True, self._config.get(ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY)
+            return True, self._config.get(ConfigKeys.REPLY_MAX_TURNS_MSG)
         return False, ""
 
     async def maybe_send_blocked_reply(
@@ -158,9 +157,13 @@ class ResponseLimiter:
             await self.record_response(user_id, count_turn=False)
         return True
 
+    def _turns_limited(self) -> bool:
+        max_turns = self._config.get(ConfigKeys.REPLY_MAX_TURNS)
+        return isinstance(max_turns, int) and max_turns >= 0
+
     async def record_response(self, user_id: str, *, count_turn: bool) -> None:
         state = await self._get_response_limit_state(user_id)
         state.last_reply_ts = time.time()
-        if count_turn:
+        if count_turn and self._turns_limited():
             state.turns += 1
         await self._save_response_limit_state(user_id, state)

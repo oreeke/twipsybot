@@ -3,14 +3,24 @@ import inspect
 from typing import Any, ClassVar
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, BeforeValidator, ConfigDict
 
 from .contracts import PluginContext
 from .events import HandledResult
 
-__all__ = ("PLUGIN_API_VERSION", "PluginBase", "PluginConfig")
+__all__ = ("PLUGIN_API_VERSION", "LineText", "PluginBase", "PluginConfig")
 
 PLUGIN_API_VERSION = 3
+
+
+def _split_lines(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    lines = (line.strip() for line in value.splitlines())
+    return [line for line in lines if line and not line.startswith("#")]
+
+
+LineText = BeforeValidator(_split_lines)
 
 
 class PluginConfig(BaseModel):
@@ -19,6 +29,7 @@ class PluginConfig(BaseModel):
 
 class PluginBase:
     api_version: ClassVar[int]
+    priority: ClassVar[int] = 0
     config_class: ClassVar[type[PluginConfig]] = PluginConfig
     settings: PluginConfig
 
@@ -26,7 +37,7 @@ class PluginBase:
         self.context = context
         self.settings = self.config_class.model_validate(context.config)
         self._enabled = self._parse_bool(context.config.get("enabled"), False)
-        self._priority = int(context.config.get("priority", 0))
+        self._priority = int(context.config.get("priority", type(self).priority))
         self._initialized = False
         self._started = False
         self._resources_to_cleanup = []

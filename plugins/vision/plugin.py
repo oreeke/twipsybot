@@ -18,7 +18,7 @@ class _Config(PluginConfig):
     max_images: int = Field(3, ge=1)
     max_bytes: ByteSize = ByteSize(6 * 1024 * 1024)
     use_thumbnail: bool = True
-    default_prompt: str = ""
+    default_prompt: str = "请描述图片内容。"
 
     @field_validator("max_bytes", mode="before")
     @classmethod
@@ -30,6 +30,7 @@ class _Config(PluginConfig):
 
 class VisionPlugin(PluginBase):
     api_version = 3
+    priority = 900
     config_class = _Config
     settings: _Config
 

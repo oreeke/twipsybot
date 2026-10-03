@@ -91,11 +91,11 @@ class OpenAIServiceAdapter:
 
     @property
     def max_tokens(self) -> int | None:
-        return self._config.get(ConfigKeys.OPENAI_MAX_TOKENS)
+        return self._config.get(ConfigKeys.BOT_MAX_TOKENS)
 
     @property
     def temperature(self) -> float | None:
-        return self._config.get(ConfigKeys.OPENAI_TEMPERATURE)
+        return self._config.get(ConfigKeys.BOT_TEMPERATURE)
 
     async def generate_text(
         self,

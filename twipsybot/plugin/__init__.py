@@ -1,4 +1,4 @@
-from .base import PLUGIN_API_VERSION, PluginBase, PluginConfig
+from .base import PLUGIN_API_VERSION, LineText, PluginBase, PluginConfig
 from .contracts import (
     BotControl,
     DriveService,
@@ -28,6 +28,7 @@ __all__ = (
     "DriveService",
     "FileRef",
     "HandledResult",
+    "LineText",
     "MisskeyService",
     "MentionEvent",
     "MessageEvent",

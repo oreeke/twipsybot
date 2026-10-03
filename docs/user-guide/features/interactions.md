@@ -7,29 +7,29 @@ description: 配置 TwipsyBot 的 Misskey 提及、聊天上下文、回复限�
 
 ## 提及和聊天
 
-`bot.response.mention` 控制公开或半公开帖子中的 `@提及`，`bot.response.chat` 控制 Misskey 私聊和群聊。两项可以独立关闭。
+`reply.mention` 控制公开或半公开帖子中的 `@提及`，`reply.chat` 控制 Misskey 私聊和群聊。两项可以独立关闭。
 
 群聊消息必须提及机器人，否则不会触发普通回复、插件或 `/img`。
 
 处理提及时，机器人会在生成前和发送回复前确认原帖仍可读取。原帖已删除或无法确认时，跳过本次回复。
 
-聊天支持有限的历史上下文，`chat_memory` 控制最多读取的历史消息条数，取值范围为 `0` 到 `100`；`chat_context_tokens` 控制其中实际提交给模型的 token 数。私聊上下文按用户区分，群聊上下文由房间成员共享。两项限制同时生效，较大的值能保留更多上下文，也会增加模型输入和调用成本。
+聊天支持有限的历史上下文，`reply.memory` 控制最多读取的历史消息条数，取值范围为 `0` 到 `100`；`reply.ctx_tokens` 控制其中实际提交给模型的 token 数。私聊上下文按用户区分，群聊上下文由房间成员共享。两项限制同时生效，较大的值能保留更多上下文，也会增加模型输入和调用成本。
 
 ## 回复限制
 
 限制以 Misskey 用户 ID 为单位持久化到 SQLite：
 
-- `rate_limit` 防止同一用户过于频繁地触发回复。
-- `max_turns` 限制累计机器人回复次数。
-- `max_turns_release` 设置轮数限制后的恢复时间。
+- `reply.rate_limit` 防止同一用户过于频繁地触发回复。
+- `reply.max_turns` 限制累计机器人回复次数，只在开启（不为 `-1`）期间计数。
+- `reply.turns_release` 设置轮数限制后的恢复时间。
 
-被限流时，机器人发送 `rate_limit_reply`；达到轮数上限时发送 `max_turns_reply`。限制提示本身不会增加对话轮数，但会更新最近回复时间。
+被限流时，机器人发送 `reply.rate_limit_msg`（默认“我需要休息一下...”）；达到轮数上限时发送 `reply.max_turns_msg`（默认“我要回家了...”），留空则不回复。限制提示本身不会增加对话轮数，但会更新最近回复时间。
 
-如果 `max_turns_release: -1`，达到上限的用户会被加入持久化黑名单。需要管理员通过 `^blacklist del <用户>` 或 `^blacklist reset` 解除。
+如果 `reply.turns_release: -1`，达到上限的用户会被加入黑名单并写入 `data/settings.yaml`。需要管理员通过 `^blacklist del <用户>` 或 `^blacklist clear` 解除。
 
 ## 白名单与黑名单
 
-白名单用于信任的用户或管理员，使其不受回复间隔和轮数限制。黑名单完全阻止普通 AI 回复。两者都支持：
+白名单用于信任的用户，使其不受回复间隔和轮数限制；`bot.admins` 中的管理员自动享有同样豁免。黑名单完全阻止普通 AI 回复。两者都支持：
 
 - Misskey 用户 ID
 - `username@host`
@@ -37,7 +37,7 @@ description: 配置 TwipsyBot 的 Misskey 提及、聊天上下文、回复限�
 
 推荐优先使用用户 ID。用户名匹配不区分大小写。
 
-管理员命令权限由独立的 `bot.admin.allowed_users` 控制。进入回复白名单不会自动获得管理权限。
+管理员命令权限由独立的 `bot.admins` 控制。进入回复白名单不会自动获得管理权限。
 
 ## 插件处理顺序
 
@@ -48,18 +48,17 @@ KeyAct 和 Vision 可以在默认 AI 之前处理提及或聊天。插件返回�
 公开机器人可以从以下策略开始：
 
 ```yaml
-bot:
-  response:
-    mention: true
-    chat: true
-    chat_memory: 10
-    chat_context_tokens: 2000
-    rate_limit: 30s
-    max_turns: 30
-    max_turns_release: 1d
-    whitelist:
-      - "your-admin-user-id"
-    blacklist: []
+reply:
+  mention: true
+  chat: true
+  memory: 10
+  ctx_tokens: 2000
+  rate_limit: 30s
+  max_turns: 30
+  turns_release: 1d
+  whitelist:
+    - "trusted-user-id"
+  blacklist: []
 ```
 
-先观察实际调用量和社区使用方式，再调整间隔与轮数。
+`bot.admins` 中的管理员自动不受限制，无需加入白名单。先观察实际调用量和社区使用方式，再调整间隔与轮数。

@@ -1,6 +1,6 @@
 [project]
 name = "twipsybot"
-version = "0.9.2"
+version = "0.10.0"
 description = "AI-powered Misskey bot with OpenAI-compatible LLMs."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -16,10 +16,11 @@ dependencies = [
     "durationpy==0.11",
     "feedparser==6.0.14",
     "loguru==0.7.3",
-    "openai==3.6.0",
+    "openai==3.24.0",
     "pydantic==2.13.5",
     "pyyaml==6.0.3",
     "python-dotenv==1.2.3",
+    "textual==8.2.8",
     "tiktoken==0.14.0",
 ]
 

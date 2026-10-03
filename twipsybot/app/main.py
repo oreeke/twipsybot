@@ -1,10 +1,10 @@
 import asyncio
-import os
+import math
 import signal
 import sys
 from collections.abc import Callable
+from contextlib import suppress
 from io import TextIOWrapper
-from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -15,9 +15,17 @@ from ..shared.config import Config
 from ..shared.config_keys import ConfigKeys
 from ..shared.exceptions import (
     APIConnectionError,
+    APIPermissionError,
     AuthenticationError,
     ConfigurationError,
+    WebSocketConnectionError,
 )
+from ..shared.logs import set_log_level, setup_logging
+
+_RETRY_POLL_SECONDS = 2.0
+_RETRY_CONNECT_SECONDS = 60.0
+_BLOCKING_ERRORS = (ConfigurationError, AuthenticationError, APIPermissionError)
+_CONNECTION_ERRORS = (APIConnectionError, WebSocketConnectionError)
 
 
 def _termination_signals() -> tuple[signal.Signals, ...]:
@@ -44,44 +52,21 @@ def _set_termination_handlers(
             )
 
 
-async def _hold_until_terminated() -> None:
-    terminated = asyncio.Event()
-    _set_termination_handlers(lambda _: terminated.set())
-    await terminated.wait()
-
-
 class BotRunner:
     def __init__(self):
         self.bot: MisskeyBot | None = None
-        self.shutdown_event: asyncio.Event | None = None
+        self.shutdown_event = asyncio.Event()
         self._shutdown_called = False
 
     async def run(self) -> None:
-        self.shutdown_event = asyncio.Event()
         load_dotenv()
         config = Config()
-        config.load()
-        log_path = Path(config.get(ConfigKeys.LOG_PATH))
-        log_format = "{time:YYYY-MM-DD HH:mm:ss.SSS} | <level>{level: <8}</level> | <level>{message}</level>"
-        logger.remove()
-        logger.add(
-            sys.stderr, level=config.get(ConfigKeys.LOG_LEVEL), format=log_format
-        )
-        logger.add(
-            log_path,
-            level=config.get(ConfigKeys.LOG_LEVEL),
-            format=log_format,
-            rotation="10 MB",
-            compression="zip",
-            enqueue=True,
-        )
+        setup_logging(config.log_path, "INFO")
         print(BANNER)
-        logger.info("Starting bot...")
+        self._setup_monitoring_and_signals()
         try:
-            self.bot = MisskeyBot(config)
-            await self.bot.start()
-            self._setup_monitoring_and_signals()
-            await self.shutdown_event.wait()
+            if await self._start(config):
+                await self.shutdown_event.wait()
         finally:
             try:
                 await asyncio.shield(self.shutdown())
@@ -90,10 +75,45 @@ class BotRunner:
             except Exception:
                 logger.exception("Error during shutdown")
 
+    async def _start(self, config: Config) -> bool:
+        loop = asyncio.get_running_loop()
+        while not self.shutdown_event.is_set():
+            before = config.stat()
+            try:
+                config.load()
+                set_log_level(config.get(ConfigKeys.SYSTEM_LOG_LEVEL))
+                logger.info("Starting bot...")
+                self.bot = MisskeyBot(config)
+                await self.bot.start()
+                return True
+            except (*_BLOCKING_ERRORS, *_CONNECTION_ERRORS) as e:
+                logger.error(f"Startup blocked: {str(e) or type(e).__name__}")
+                retry = isinstance(e, _CONNECTION_ERRORS)
+                suffix = f" (retry in {_RETRY_CONNECT_SECONDS:g}s)" if retry else ""
+                logger.warning(
+                    f"Waiting for `twipsybot cfg` to update settings{suffix}"
+                )
+                deadline = loop.time() + _RETRY_CONNECT_SECONDS if retry else math.inf
+                await self._discard_bot()
+            while (
+                config.stat() == before
+                and loop.time() < deadline
+                and not self.shutdown_event.is_set()
+            ):
+                with suppress(TimeoutError):
+                    async with asyncio.timeout(_RETRY_POLL_SECONDS):
+                        await self.shutdown_event.wait()
+        return False
+
+    async def _discard_bot(self) -> None:
+        if self.bot:
+            await self.bot.stop()
+            self.bot = None
+
     def _setup_monitoring_and_signals(self) -> None:
         def signal_handler(sig: signal.Signals) -> None:
             logger.info(f"Received signal {sig.name}; preparing to shut down...")
-            if self.shutdown_event and not self.shutdown_event.is_set():
+            if not self.shutdown_event.is_set():
                 self.shutdown_event.set()
 
         _set_termination_handlers(signal_handler)
@@ -118,16 +138,6 @@ def main() -> int:
         return 0
     except KeyboardInterrupt:
         return 130
-    except (ConfigurationError, AuthenticationError) as e:
-        logger.error(f"FATAL startup error: {e}")
-        if os.environ.get("TWIPSYBOT_HOLD_ON_STARTUP_ERROR") == "1":
-            logger.error("Startup suspended until the container is stopped")
-            asyncio.run(_hold_until_terminated())
-            return 0
-        return 2
-    except APIConnectionError as e:
-        logger.error(f"Startup error: {e}")
-        return 4
     except Exception:
         logger.exception("Unhandled exception during startup")
         return 1

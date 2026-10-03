@@ -8,7 +8,13 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import FakeMisskeyServer, MakeBot, MakePluginDir, WriteConfig
+from conftest import (
+    FakeMisskeyServer,
+    MakeBot,
+    MakePluginDir,
+    WriteConfig,
+    set_plugin_config,
+)
 
 from twipsybot.plugin import (
     MentionEvent,
@@ -18,6 +24,7 @@ from twipsybot.plugin import (
 )
 from twipsybot.plugin.events import build_hook_event
 from twipsybot.plugin.services import DriveServiceAdapter, MisskeyServiceAdapter
+from twipsybot.shared.exceptions import ConfigurationError
 
 
 def _context(config: dict[str, Any], **services: Any) -> Any:
@@ -431,7 +438,7 @@ async def test_plugin_module_uses_explicit_export(
     plugins_dir = tmp_path / "plugins"
     plugin_dir = plugins_dir / "echo"
     plugin_dir.mkdir(parents=True)
-    (plugin_dir / "config.yaml").write_text("enabled: true\n", encoding="utf-8")
+    set_plugin_config(tmp_path, "echo", {"enabled": True})
     (plugin_dir / "plugin.py").write_text(
         "from twipsybot.plugin import PluginBase\n\n"
         "class Reply(PluginBase):\n"
@@ -455,7 +462,7 @@ async def test_legacy_named_module_is_not_loaded(
     plugins_dir = tmp_path / "plugins"
     plugin_dir = plugins_dir / "legacy"
     plugin_dir.mkdir(parents=True)
-    (plugin_dir / "config.yaml").write_text("enabled: true\n", encoding="utf-8")
+    set_plugin_config(tmp_path, "legacy", {"enabled": True})
     (plugin_dir / "legacy.py").write_text(
         "from twipsybot.plugin import PluginBase\n\n"
         "class LegacyPlugin(PluginBase):\n"
@@ -475,7 +482,7 @@ async def test_plugin_module_requires_explicit_export(
     plugins_dir = tmp_path / "plugins"
     plugin_dir = plugins_dir / "implicit"
     plugin_dir.mkdir(parents=True)
-    (plugin_dir / "config.yaml").write_text("enabled: true\n", encoding="utf-8")
+    set_plugin_config(tmp_path, "implicit", {"enabled": True})
     (plugin_dir / "plugin.py").write_text(
         "from twipsybot.plugin import PluginBase\n\n"
         "class ImplicitPlugin(PluginBase):\n"
@@ -529,9 +536,7 @@ async def test_entry_point_plugin_uses_central_config(
     )
     plugins_dir = tmp_path / "plugins"
     plugins_dir.mkdir()
-    (plugins_dir / "config.yaml").write_text(
-        "external:\n  enabled: true\n", encoding="utf-8"
-    )
+    set_plugin_config(tmp_path, "external", {"enabled": True})
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
@@ -558,25 +563,11 @@ async def test_unconfigured_entry_point_is_not_loaded(
     load.assert_not_called()
 
 
-async def test_invalid_central_plugin_config_does_not_fall_back_to_local_config(
-    tmp_path: Path, make_bot: MakeBot, write_config: WriteConfig
-) -> None:
-    plugins_dir = tmp_path / "plugins"
-    plugin_dir = plugins_dir / "invalid_config"
-    plugin_dir.mkdir(parents=True)
-    (plugins_dir / "config.yaml").write_text("invalid_config: true\n", encoding="utf-8")
-    (plugin_dir / "config.yaml").write_text("enabled: true\n", encoding="utf-8")
-    (plugin_dir / "plugin.py").write_text(
-        "from twipsybot.plugin import PluginBase\n\n"
-        "class InvalidConfigPlugin(PluginBase):\n"
-        "    api_version = 3\n\n"
-        "plugin = InvalidConfigPlugin\n",
-        encoding="utf-8",
-    )
+def test_invalid_plugin_entry_is_rejected(write_config: WriteConfig) -> None:
+    config = write_config(load=False, plugins={"invalid_config": True})
 
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-
-    assert bot.plugin_manager.get_plugin("invalid_config") is None
+    with pytest.raises(ConfigurationError, match="plugins.invalid_config"):
+        config.load()
 
 
 async def test_local_plugin_shadows_entry_point(
@@ -856,11 +847,9 @@ async def test_reload_plugin_replaces_instance_with_new_config(
     old = manager.get_plugin("reload")
     assert old is not None
     await old.context.storage.set("kept", "yes")
-    (plugins_dir / "reload" / "config.yaml").write_text(
-        "enabled: true\nreply: updated\n", encoding="utf-8"
-    )
+    set_plugin_config(bot.config.root, "reload", {"enabled": True, "reply": "updated"})
 
-    assert await manager.reload_plugin("reload") == "enabled"
+    assert await bot.settings.reload() == {"reload": "enabled"}
 
     new = manager.get_plugin("reload")
     assert new is not None
@@ -889,11 +878,11 @@ async def test_reload_plugin_failure_disables_only_that_plugin(
     manager = bot.plugin_manager
     old = manager.get_plugin("broken")
     assert old is not None
-    (plugins_dir / "broken" / "config.yaml").write_text(
-        "enabled: true\nreply: [1]\n", encoding="utf-8"
+    set_plugin_config(
+        bot.config.root, "broken", {"enabled": True, "priority": 20, "reply": [1]}
     )
 
-    assert await manager.reload_plugin("broken") == "failed"
+    assert await bot.settings.reload() == {"broken": "failed"}
 
     assert manager.get_plugin("broken") is old
     assert old.events[-2:] == ["shutdown", "cleanup"]
@@ -912,54 +901,41 @@ async def test_reload_plugin_follows_enabled_flag(
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     manager = bot.plugin_manager
-    config_file = plugins_dir / "toggle" / "config.yaml"
+    root = bot.config.root
     assert manager.get_plugin("toggle") is None
 
-    config_file.write_text("enabled: true\n", encoding="utf-8")
-    assert await manager.reload_plugin("toggle") == "enabled"
+    set_plugin_config(root, "toggle", {"enabled": True})
+    assert await bot.settings.reload() == {"toggle": "enabled"}
     plugin = manager.get_plugin("toggle")
     assert plugin is not None
     assert plugin._started
 
-    config_file.write_text("enabled: false\n", encoding="utf-8")
-    assert await manager.reload_plugin("toggle") == "disabled"
+    set_plugin_config(root, "toggle", None)
+    assert await bot.settings.reload() == {"toggle": "disabled"}
     assert plugin.events[-2:] == ["shutdown", "cleanup"]
     assert manager.get_plugin_info()[0]["enabled"] is False
     assert await manager.call_plugin_hook("on_message", _MESSAGE) == []
 
-    config_file.write_text("enabled: true\n", encoding="utf-8")
-    assert await manager.reload_plugin("toggle") == "enabled"
+    set_plugin_config(root, "toggle", {"enabled": True})
+    assert await bot.settings.reload() == {"toggle": "enabled"}
     reloaded = manager.get_plugin("toggle")
     assert reloaded is not None
     assert type(reloaded) is type(plugin)
 
 
-async def test_reload_plugin_reads_master_config_first(
+async def test_settings_reload_only_restarts_changed_plugins(
     make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
 ) -> None:
-    plugins_dir = make_plugin_dir(
-        "central", body=_RELOAD_BODY, config="enabled: true\nreply: local\n"
-    )
-    master_file = plugins_dir / "config.yaml"
-    master_file.write_text(
-        "central:\n  enabled: true\n  reply: master\n", encoding="utf-8"
-    )
+    plugins_dir = make_plugin_dir("first", body=_RELOAD_BODY)
+    make_plugin_dir("second", body=_RELOAD_BODY)
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     manager = bot.plugin_manager
-    master_file.write_text(
-        "central:\n  enabled: true\n  reply: updated\n", encoding="utf-8"
-    )
+    second = manager.get_plugin("second")
+    set_plugin_config(bot.config.root, "first", {"enabled": True, "reply": "new"})
 
-    assert await manager.reload_plugin("central") == "enabled"
-    assert (await manager.call_plugin_hook("on_message", _MESSAGE))[0][
-        "response"
-    ] == "updated"
-
-    master_file.write_text("{}\n", encoding="utf-8")
-    assert await manager.reload_plugin("central") == "enabled"
-    assert (await manager.call_plugin_hook("on_message", _MESSAGE))[0][
-        "response"
-    ] == "local"
+    assert await bot.settings.reload() == {"first": "enabled"}
+    assert manager.get_plugin("second") is second
+    assert await bot.settings.reload() == {}
 
 
 @pytest.mark.parametrize("name", ("missing", "../toggle", "."))

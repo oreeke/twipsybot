@@ -3,7 +3,7 @@ import calendar
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import aiohttp
 import feedparser
@@ -14,6 +14,7 @@ from pydantic import Field, model_validator
 from twipsybot.plugin import (
     AutoPostEvent,
     AutoPostResult,
+    LineText,
     PluginBase,
     PluginConfig,
     PromptModificationResult,
@@ -26,12 +27,14 @@ _RSS_RECENT_KEYS_LIMIT = 2000
 
 class _Config(PluginConfig):
     source: Literal["txt", "rss"] = "txt"
-    txt_ai_prefix: str = ""
+    txt_ai_prefix: str = "以{topic}为主题，"
     txt_start_line: int = Field(1, ge=1)
-    rss_list: tuple[str, ...] = ()
+    rss_list: Annotated[tuple[str, ...], LineText] = Field(
+        default=(), description="https://example.com/feed.xml"
+    )
     rss_ai: bool = False
-    rss_post_mode: Literal["batch", "rotate"] = "batch"
-    rss_ai_prefix: str = ""
+    rss_post_mode: Literal["batch", "rotate"] = "rotate"
+    rss_ai_prefix: str = "发表一段感想和相关知识，不超过150字。\n不加链接，不加引号：\n\n{summary}\n\n{title}\n{link}"
 
     @model_validator(mode="after")
     def _validate_prompts(self) -> "_Config":
@@ -44,6 +47,7 @@ class _Config(PluginConfig):
 
 class TopicsPlugin(PluginBase):
     api_version = 3
+    priority = 100
     config_class = _Config
     settings: _Config
 

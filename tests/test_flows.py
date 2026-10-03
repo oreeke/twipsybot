@@ -16,7 +16,9 @@ from conftest import (
 )
 
 from twipsybot.bot.flows.post import AutoPostService
+from twipsybot.shared.config_keys import ConfigKeys
 from twipsybot.shared.exceptions import APIBadRequestError
+from twipsybot.shared.settings import read_settings
 
 _MENTION_NOTE = {
     "id": "note-mention-1",
@@ -47,20 +49,18 @@ async def test_streaming_channels_follow_timeline_and_antenna_config(
     )
     bot = await make_bot(
         write_config(
-            bot={
-                "timeline": {
-                    "home": True,
-                    "local": True,
-                    "hybrid": False,
-                    "global": False,
-                    "antenna_ids": [
-                        "antenna-1",
-                        "Unique",
-                        "Shared",
-                        "missing",
-                        "antenna-1",
-                    ],
-                }
+            timeline={
+                "home": True,
+                "local": True,
+                "hybrid": False,
+                "global": False,
+                "antennas": [
+                    "antenna-1",
+                    "Unique",
+                    "Shared",
+                    "missing",
+                    "antenna-1",
+                ],
             }
         )
     )
@@ -165,8 +165,7 @@ async def test_mention_generates_and_attaches_image(
 ) -> None:
     bot = await make_bot(
         write_config(
-            openai={"image_model": "gpt-image-1"},
-            bot={"admin": {"allowed_users": ["user-1"]}},
+            bot={"image_model": "gpt-image-1", "admins": ["user-1"]},
         )
     )
     bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
@@ -280,7 +279,7 @@ async def test_admin_command_takes_priority_over_plugins(
     echo_plugin_dir: Path,
 ) -> None:
     bot = await make_bot(
-        write_config(bot={"admin": {"allowed_users": ["user-2"]}}),
+        write_config(bot={"admins": ["user-2"]}),
         plugins_dir=echo_plugin_dir,
     )
 
@@ -307,10 +306,8 @@ async def test_admin_command_is_ignored_in_room_chat(
 ) -> None:
     bot = await make_bot(
         write_config(
-            bot={
-                "admin": {"allowed_users": ["user-2"]},
-                "response": {"chat": False},
-            }
+            bot={"admins": ["user-2"]},
+            reply={"chat": False},
         )
     )
     message = {
@@ -454,13 +451,8 @@ async def test_permanent_turn_limit_uses_manageable_blacklist(
 ) -> None:
     bot = await make_bot(
         write_config(
-            bot={
-                "admin": {"allowed_users": ["admin-id"]},
-                "response": {
-                    "max_turns": 1,
-                    "max_turns_release": -1,
-                },
-            }
+            bot={"admins": ["admin-id"]},
+            reply={"max_turns": 1, "turns_release": -1, "max_turns_msg": ""},
         )
     )
 
@@ -468,10 +460,8 @@ async def test_permanent_turn_limit_uses_manageable_blacklist(
     await bot.chat.handle({**_CHAT_MESSAGE, "id": "msg-2"})
     await bot.chat.handle({**_CHAT_MESSAGE, "id": "msg-3"})
 
-    assert bot.config.get("bot.response.blacklist") == ["user-2"]
-    assert (
-        await bot.db.get_plugin_data("Admin", "bot.response.blacklist") == '["user-2"]'
-    )
+    assert bot.config.get("reply.blacklist") == ["user-2"]
+    assert read_settings(bot.config.settings_path)["reply"]["blacklist"] == ["user-2"]
     assert len(openai_server.calls) == 1
 
     await bot.chat.handle(
@@ -483,7 +473,7 @@ async def test_permanent_turn_limit_uses_manageable_blacklist(
     )
     await bot.chat.handle({**_CHAT_MESSAGE, "id": "msg-4"})
 
-    assert bot.config.get("bot.response.blacklist") == []
+    assert bot.config.get("reply.blacklist") == []
     assert len(openai_server.calls) == 2
     replies = misskey_server.calls["chat/messages/create-to-user"]
     assert [reply["text"] for reply in replies] == [
@@ -530,7 +520,7 @@ async def test_chat_history_uses_same_message_limit_after_cache_warms(
     make_bot: MakeBot,
     write_config: WriteConfig,
 ) -> None:
-    bot = await make_bot(write_config(bot={"response": {"chat_memory": 2}}))
+    bot = await make_bot(write_config(reply={"memory": 2}))
     bot.chat._histories["user-2"] = [
         {"role": "user", "content": "旧问题"},
         {"role": "assistant", "content": "旧回答"},
@@ -563,7 +553,7 @@ async def test_chat_trims_oldest_history_to_token_budget(
             },
         ],
     )
-    bot = await make_bot(write_config(bot={"response": {"chat_context_tokens": 20}}))
+    bot = await make_bot(write_config(reply={"ctx_tokens": 20}))
 
     await bot.chat.handle(dict(_CHAT_MESSAGE))
 
@@ -579,7 +569,7 @@ async def test_chat_with_disabled_history_skips_misskey_timeline(
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
 ) -> None:
-    bot = await make_bot(write_config(bot={"response": {"chat_context_tokens": 0}}))
+    bot = await make_bot(write_config(reply={"ctx_tokens": 0}))
 
     await bot.chat.handle(dict(_CHAT_MESSAGE))
 
@@ -594,8 +584,7 @@ async def test_chat_generates_and_attaches_image(
 ) -> None:
     bot = await make_bot(
         write_config(
-            openai={"image_model": "gpt-image-1"},
-            bot={"admin": {"allowed_users": ["user-2"]}},
+            bot={"image_model": "gpt-image-1", "admins": ["user-2"]},
         )
     )
     bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
@@ -617,7 +606,7 @@ async def test_chat_can_publish_manual_post_without_counting(
     openai_server: FakeOpenAIServer,
 ) -> None:
     openai_server.set_reply("夏夜微风正好")
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
 
     await bot.chat.handle({**_CHAT_MESSAGE, "text": "/post 夏夜的风"})
 
@@ -657,10 +646,8 @@ async def test_chat_manual_post_publish_options(
 ) -> None:
     bot = await make_bot(
         write_config(
-            bot={
-                "admin": {"allowed_users": ["user-2"]},
-                "auto_post": auto_post,
-            }
+            bot={"admins": ["user-2"]},
+            autopost=auto_post,
         )
     )
 
@@ -683,7 +670,7 @@ def test_manual_post_options_preserve_prompt_whitespace() -> None:
 
 
 @pytest.mark.parametrize(
-    ("command", "openai_config"),
+    ("command", "bot_config"),
     [
         ("/post 夏夜的风", {}),
         ("/img 一只猫", {"image_model": "gpt-image-1"}),
@@ -696,9 +683,9 @@ async def test_chat_rejects_unauthorized_commands(
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
     command: str,
-    openai_config: dict[str, Any],
+    bot_config: dict[str, Any],
 ) -> None:
-    bot = await make_bot(write_config(openai=openai_config))
+    bot = await make_bot(write_config(bot=bot_config))
     bot.openai.generate_image = AsyncMock()
 
     await bot.chat.handle({**_CHAT_MESSAGE, "text": command})
@@ -731,14 +718,11 @@ async def test_admin_and_slash_commands_bypass_response_limits(
 ) -> None:
     bot = await make_bot(
         write_config(
-            openai={"image_model": "gpt-image-1"},
-            bot={
-                "admin": {"allowed_users": ["user-2"]},
-                "response": {
-                    "blacklist": ["user-2"],
-                    "rate_limit": "1h",
-                    "rate_limit_reply": "请求太频繁",
-                },
+            bot={"image_model": "gpt-image-1", "admins": ["user-2"]},
+            reply={
+                "blacklist": ["user-2"],
+                "rate_limit": "1h",
+                "rate_limit_msg": "请求太频繁",
             },
         )
     )
@@ -760,7 +744,7 @@ async def test_disabled_image_generation_replies_with_failure(
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
 
     await bot.chat.handle({**_CHAT_MESSAGE, "text": "/img 一只猫"})
 
@@ -775,8 +759,7 @@ async def test_image_send_failure_does_not_record_response(
 ) -> None:
     bot = await make_bot(
         write_config(
-            openai={"image_model": "gpt-image-1"},
-            bot={"admin": {"allowed_users": ["user-2"]}},
+            bot={"image_model": "gpt-image-1", "admins": ["user-2"]},
         )
     )
     bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
@@ -799,8 +782,7 @@ async def test_image_record_failure_does_not_send_failure_reply(
 ) -> None:
     bot = await make_bot(
         write_config(
-            openai={"image_model": "gpt-image-1"},
-            bot={"admin": {"allowed_users": ["user-2"]}},
+            bot={"image_model": "gpt-image-1", "admins": ["user-2"]},
         )
     )
     bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
@@ -842,9 +824,7 @@ async def test_room_chat_serializes_shared_history(
     write_config: WriteConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bot = await make_bot(
-        write_config(bot={"response": {"rate_limit": -1, "max_turns": -1}})
-    )
+    bot = await make_bot(write_config(reply={"rate_limit": -1, "max_turns": -1}))
     first_started = asyncio.Event()
     release_first = asyncio.Event()
     calls: list[list[dict[str, str]]] = []
@@ -924,8 +904,7 @@ async def test_room_chat_generates_and_attaches_image(
 ) -> None:
     bot = await make_bot(
         write_config(
-            openai={"image_model": "gpt-image-1"},
-            bot={"admin": {"allowed_users": ["user-2"]}},
+            bot={"image_model": "gpt-image-1", "admins": ["user-2"]},
         )
     )
     bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
@@ -1042,8 +1021,7 @@ async def test_image_command_reply_to_bot_does_not_mention_sender(
 ) -> None:
     bot = await make_bot(
         write_config(
-            openai={"image_model": "gpt-image-1"},
-            bot={"admin": {"allowed_users": ["user-1"]}},
+            bot={"image_model": "gpt-image-1", "admins": ["user-1"]},
         )
     )
     bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
@@ -1102,14 +1080,7 @@ async def test_rate_limit_returns_configured_reply_without_second_ai_call(
     openai_server: FakeOpenAIServer,
 ) -> None:
     bot = await make_bot(
-        write_config(
-            bot={
-                "response": {
-                    "rate_limit": "1h",
-                    "rate_limit_reply": "请稍后再试",
-                }
-            }
-        )
+        write_config(reply={"rate_limit": "1h", "rate_limit_msg": "请稍后再试"})
     )
 
     await bot.chat.handle(dict(_CHAT_MESSAGE))
@@ -1126,7 +1097,7 @@ async def test_rate_limit_silently_blocks_when_reply_is_empty(
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
 ) -> None:
-    bot = await make_bot(write_config(bot={"response": {"rate_limit": "1h"}}))
+    bot = await make_bot(write_config(reply={"rate_limit": "1h", "rate_limit_msg": ""}))
 
     await bot.chat.handle(dict(_CHAT_MESSAGE))
     await bot.chat.handle({**_CHAT_MESSAGE, "id": "msg-2"})
@@ -1166,7 +1137,7 @@ async def test_auto_post_stops_at_daily_limit(
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
 ) -> None:
-    bot = await make_bot(write_config(bot={"auto_post": {"max_posts_per_day": 1}}))
+    bot = await make_bot(write_config(autopost={"daily_max": 1}))
     bot.runtime.running = True
     bot.auto_post.posts_today = 1
 
@@ -1174,6 +1145,30 @@ async def test_auto_post_stops_at_daily_limit(
 
     assert openai_server.calls == []
     assert "notes/create" not in misskey_server.calls
+
+
+async def test_scheduled_auto_post_ignores_daily_limit(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    bot = await make_bot(
+        write_config(
+            autopost={
+                "rotation": False,
+                "schedule": True,
+                "times": ["09:00"],
+                "daily_max": 0,
+            }
+        )
+    )
+    bot.runtime.running = True
+
+    await bot.auto_post.run()
+    await bot.auto_post.run()
+
+    assert len(misskey_server.calls["notes/create"]) == 2
+    assert bot.auto_post.posts_today == 0
 
 
 async def test_plugin_can_modify_auto_post_prompt(
@@ -1217,3 +1212,31 @@ async def test_bot_ignores_its_own_events(
     assert openai_server.calls == []
     assert "notes/create" not in misskey_server.calls
     assert "chat/messages/create-to-user" not in misskey_server.calls
+
+
+async def test_admins_bypass_response_limits(
+    make_bot: MakeBot, write_config: WriteConfig, openai_server: FakeOpenAIServer
+) -> None:
+    bot = await make_bot(
+        write_config(
+            bot={"admins": ["user-2"]}, reply={"rate_limit": "1h", "max_turns": 1}
+        )
+    )
+
+    for index in range(3):
+        await bot.chat.handle({**_CHAT_MESSAGE, "id": f"msg-{index}"})
+
+    assert len(openai_server.calls) == 3
+
+
+async def test_turns_are_counted_only_when_turn_limit_is_enabled(
+    make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    bot = await make_bot(write_config())
+
+    await bot.limits.record_response("user-9", count_turn=True)
+    assert (await bot.db.get_response_limit_state("user-9"))[1] == 0
+
+    await bot.settings.update({ConfigKeys.REPLY_MAX_TURNS: 5})
+    await bot.limits.record_response("user-9", count_turn=True)
+    assert (await bot.db.get_response_limit_state("user-9"))[1] == 1

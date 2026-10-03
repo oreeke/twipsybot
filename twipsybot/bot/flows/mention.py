@@ -109,7 +109,7 @@ class MentionHandler:
         return f"Quote:\n{quoted_text}".strip()
 
     async def handle(self, note: dict[str, Any]) -> None:
-        if not self.bot.config.get(ConfigKeys.BOT_RESPONSE_MENTION):
+        if not self.bot.config.get(ConfigKeys.REPLY_MENTION):
             return
         mention = self._parse(note)
         if not mention.mention_id or self._is_self_mention(mention):
@@ -187,7 +187,7 @@ class MentionHandler:
     def _parse(self, note: dict[str, Any]) -> MentionContext:
         try:
             maybe_log_event_dump(
-                bool(self.bot.config.get(ConfigKeys.LOG_DUMP_EVENTS)),
+                bool(self.bot.config.get(ConfigKeys.SYSTEM_DUMP_EVENTS)),
                 kind="Mention",
                 payload=note,
             )

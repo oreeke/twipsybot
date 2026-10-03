@@ -826,7 +826,7 @@ async def test_streaming_warns_once_per_send_buffer_overflow(
 
 
 async def test_openai_generates_png_bytes() -> None:
-    api = OpenAIAPI("test", image_model="gpt-image-1")
+    api = OpenAIAPI("test", "m", image_model="gpt-image-2")
     generate = AsyncMock(
         return_value=SimpleNamespace(
             data=[SimpleNamespace(b64_json=base64.b64encode(b"png").decode())]
@@ -836,7 +836,7 @@ async def test_openai_generates_png_bytes() -> None:
 
     assert await api.generate_image("一只猫") == b"png"
     generate.assert_awaited_once_with(
-        model="gpt-image-1",
+        model="gpt-image-2",
         prompt="一只猫",
     )
 
@@ -844,7 +844,8 @@ async def test_openai_generates_png_bytes() -> None:
 async def test_openai_forwards_explicit_image_options() -> None:
     api = OpenAIAPI(
         "test",
-        image_model="gpt-image-2",
+        "m",
+        image_model="gpt-image-2.5-flare",
         image_size="2048x2048",
         image_quality="medium",
     )
@@ -857,7 +858,7 @@ async def test_openai_forwards_explicit_image_options() -> None:
 
     assert await api.generate_image("一只猫") == "https://example.com"
     generate.assert_awaited_once_with(
-        model="gpt-image-2",
+        model="gpt-image-2.5-flare",
         prompt="一只猫",
         size="2048x2048",
         quality="medium",
@@ -875,11 +876,11 @@ def test_openai_loads_token_encoding_lazily_into_data_directory(
         "twipsybot.clients.openai.api.tiktoken.encoding_for_model", load_encoding
     )
 
-    api = OpenAIAPI("test")
+    api = OpenAIAPI("test", "deepseek-flash")
 
     load_encoding.assert_not_called()
     assert api.trim_chat_history([{"role": "user", "content": "hello"}], 9)
-    load_encoding.assert_called_once_with("gpt-5-mini")
+    load_encoding.assert_called_once_with("deepseek-flash")
     assert os.environ["TIKTOKEN_CACHE_DIR"] == str(
         (tmp_path / "data" / "tiktoken").resolve()
     )
@@ -892,7 +893,7 @@ def test_openai_token_encoding_failure_uses_character_estimate(
     monkeypatch.setattr(
         "twipsybot.clients.openai.api.tiktoken.encoding_for_model", load_encoding
     )
-    api = OpenAIAPI("test")
+    api = OpenAIAPI("test", "deepseek-flash")
     history = [
         {"role": "user", "content": "123456"},
         {"role": "assistant", "content": "ok"},
@@ -900,7 +901,7 @@ def test_openai_token_encoding_failure_uses_character_estimate(
 
     assert api.trim_chat_history(history, 10) == [history[-1]]
     assert api.trim_chat_history(history, 10) == [history[-1]]
-    load_encoding.assert_called_once_with("gpt-5-mini")
+    load_encoding.assert_called_once_with("deepseek-flash")
 
 
 async def test_streaming_startup_failure_closes_initialized_services(
@@ -1056,7 +1057,6 @@ async def test_chat_completions_request_enables_json_output() -> None:
         client=cast(Any, client),
         semaphore=asyncio.Semaphore(1),
         model="test",
-        api_base="https://api.deepseek.com",
         messages=[],
         max_tokens=None,
         temperature=None,
@@ -1090,7 +1090,7 @@ async def test_http_405_falls_back_to_chat_completions(
     responses = AsyncMock(side_effect=error)
     fallback = AsyncMock(return_value="fallback")
     monkeypatch.setattr(module, "make_responses_request", responses)
-    api = OpenAIAPI("test", api_mode="auto")
+    api = OpenAIAPI("test", "m")
     monkeypatch.setattr(api, "_call_api_common", fallback)
 
     result = await api.generate_text("hello")
@@ -1101,9 +1101,28 @@ async def test_http_405_falls_back_to_chat_completions(
 
 
 async def test_openai_client_uses_sdk_retries() -> None:
-    api = OpenAIAPI("test", api_mode="auto")
+    api = OpenAIAPI("test", "m")
 
     assert api.client.max_retries == 2
+    await api.close()
+
+
+@pytest.mark.parametrize(
+    ("base_url", "host", "param"),
+    [
+        (None, "api.openai.com", "max_completion_tokens"),
+        ("https://eu.api.openai.com/v1", "eu.api.openai.com", "max_completion_tokens"),
+        ("https://api.deepseek.com", "api.deepseek.com", "max_tokens"),
+    ],
+)
+async def test_openai_base_url_defaults_to_sdk_and_picks_token_param(
+    monkeypatch: pytest.MonkeyPatch, base_url: str | None, host: str, param: str
+) -> None:
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    api = OpenAIAPI("test", "m", base_url=base_url)
+
+    assert api.client.base_url.host == host
+    assert api._token_param == param
     await api.close()
 
 
@@ -1114,7 +1133,7 @@ async def test_openai_moderates_texts_in_batch() -> None:
     create = AsyncMock(
         return_value=SimpleNamespace(results=[SimpleNamespace(categories=categories)])
     )
-    api = OpenAIAPI("test")
+    api = OpenAIAPI("test", "m")
     api.client = cast(Any, SimpleNamespace(moderations=SimpleNamespace(create=create)))
 
     result = await api.moderate_texts(["text"])

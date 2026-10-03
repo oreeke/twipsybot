@@ -20,17 +20,17 @@ class _Config(PluginConfig):
     reply_enabled: bool = Field(False, validation_alias="reply")
     reply_text: str | None = None
     reply_ai: bool = False
-    reply_ai_prompt: str = ""
+    reply_ai_prompt: str = "根据帖子内容写一句自然回复。\n不要复述原文，不要加引号。\n不超过30字：\n{content}"
     reply_local_only: bool = False
-    quote_enabled: bool = Field(False, validation_alias="quote")
-    quote_text: str | None = None
-    quote_ai: bool = False
-    quote_ai_prompt: str = ""
-    quote_visibility: Literal["public", "home", "followers"] | None = None
-    quote_local_only: bool = False
     renote_enabled: bool = Field(False, validation_alias="renote")
     renote_visibility: Literal["public", "home", "followers"] | None = None
     renote_local_only: bool = False
+    quote_enabled: bool = Field(False, validation_alias="quote")
+    quote_text: str | None = None
+    quote_ai: bool = False
+    quote_ai_prompt: str = "根据帖子内容写一句简短感想。\n不要复述原文，不要加引号。\n不超过30字：\n{content}"
+    quote_visibility: Literal["public", "home", "followers"] | None = None
+    quote_local_only: bool = False
 
     @model_validator(mode="after")
     def _validate_ai_prompts(self) -> "_Config":
@@ -53,6 +53,7 @@ class _Config(PluginConfig):
 
 class RadarPlugin(PluginBase):
     api_version = 3
+    priority = 50
     config_class = _Config
     settings: _Config
 

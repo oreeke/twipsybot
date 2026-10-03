@@ -11,7 +11,6 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, get_args
 
-import yaml
 from loguru import logger
 
 from ..shared.config import Config
@@ -25,11 +24,10 @@ from .services import (
     OpenAIServiceAdapter,
 )
 
-__all__ = ("PluginManager",)
+__all__ = ("PluginManager", "discover_plugin_classes")
 
 PluginReloadStatus = Literal["enabled", "disabled", "failed", "unknown", "unavailable"]
 
-_PLUGIN_CONFIG_FILENAME = "config.yaml"
 _PLUGIN_ENTRY_POINT_GROUP = "twipsybot.plugins"
 _PLUGIN_HOOK_TIMEOUT_SECONDS = 180.0
 _PLUGIN_LIFECYCLE_TIMEOUT_SECONDS = 30.0
@@ -51,6 +49,70 @@ _ASYNC_PLUGIN_METHODS = {
     "on_shutdown",
     "cleanup",
 }
+
+
+def _iter_plugin_dirs(plugins_dir: Path):
+    for plugin_dir in sorted(plugins_dir.iterdir()):
+        if (
+            plugin_dir.is_dir()
+            and not plugin_dir.name.startswith(".")
+            and plugin_dir.name != "__pycache__"
+        ):
+            yield plugin_dir
+
+
+def _load_plugin_module(plugin_dir: Path, plugin_file: Path):
+    digest = hashlib.sha256(str(plugin_file.resolve()).encode()).hexdigest()[:12]
+    spec = importlib.util.spec_from_file_location(
+        f"_twipsybot_plugin_{plugin_dir.name}_{digest}", plugin_file
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError("failed to load plugin spec")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(spec.name, None)
+        raise
+    return module
+
+
+def _load_plugin_class(source: Path | EntryPoint) -> Any:
+    if isinstance(source, EntryPoint):
+        return source.load()
+    plugin_file = source / "plugin.py"
+    if not plugin_file.exists():
+        raise FileNotFoundError("missing plugin.py")
+    return getattr(_load_plugin_module(source, plugin_file), "plugin", None)
+
+
+def _is_plugin_class(value: Any) -> bool:
+    return (
+        isinstance(value, type)
+        and issubclass(value, PluginBase)
+        and value is not PluginBase
+    )
+
+
+def discover_plugin_classes(
+    plugins_dir: Path,
+) -> tuple[dict[str, type[PluginBase]], dict[str, str]]:
+    sources: dict[str, Path | EntryPoint] = {}
+    if plugins_dir.exists():
+        sources |= {d.name: d for d in _iter_plugin_dirs(plugins_dir)}
+    for entry_point in entry_points(group=_PLUGIN_ENTRY_POINT_GROUP):
+        sources.setdefault(entry_point.name, entry_point)
+    found: dict[str, type[PluginBase]] = {}
+    errors: dict[str, str] = {}
+    for name, source in sources.items():
+        try:
+            if not _is_plugin_class(plugin_class := _load_plugin_class(source)):
+                raise TypeError("expected PluginBase subclass")
+            found[name] = plugin_class
+        except Exception as e:
+            errors[name] = str(e) or type(e).__name__
+    return found, errors
 
 
 class PluginManager:
@@ -83,26 +145,11 @@ class PluginManager:
         self._plugin_idle: dict[str, asyncio.Event] = {}
 
     def _iter_plugin_dirs(self):
-        for plugin_dir in self.plugins_dir.iterdir():
-            if (
-                plugin_dir.is_dir()
-                and not plugin_dir.name.startswith(".")
-                and plugin_dir.name != "__pycache__"
-            ):
-                yield plugin_dir
+        yield from _iter_plugin_dirs(self.plugins_dir)
 
-    def _discover_plugin_dir(
-        self, plugin_dir: Path, plugin_config: dict[str, Any]
-    ) -> tuple[bool, bool]:
-        return self._discover_plugin(
-            plugin_dir.name,
-            plugin_config,
-            configured=self._is_plugin_configured(plugin_dir),
-        )
-
-    def _discover_plugin(
-        self, key: str, plugin_config: dict[str, Any], *, configured: bool
-    ) -> tuple[bool, bool]:
+    def _discover_plugin(self, key: str) -> dict[str, Any] | None:
+        configured = key in self._master_config
+        plugin_config = dict(self._master_config.get(key) or {})
         try:
             enabled = PluginBase._parse_bool(plugin_config.get("enabled"), False)
         except ValueError as e:
@@ -117,17 +164,15 @@ class PluginManager:
         if configured:
             status = "enabled" if enabled else "disabled"
             logger.debug(f"Discovered plugin: {key} (status: {status})")
-        return configured, enabled
+        return plugin_config if configured and enabled else None
 
     async def load_plugins(self) -> None:
         self._master_config = self._load_master_config()
         if self.plugins_dir.exists():
             for plugin_dir in self._iter_plugin_dirs():
-                plugin_config = self._load_plugin_config(plugin_dir)
-                configured, enabled = self._discover_plugin_dir(
-                    plugin_dir, plugin_config
-                )
-                if configured and enabled:
+                if (
+                    plugin_config := self._discover_plugin(plugin_dir.name)
+                ) is not None:
                     self._load_plugin(plugin_dir, plugin_config)
         else:
             logger.info(f"Plugins directory not found: {self.plugins_dir}")
@@ -139,76 +184,16 @@ class PluginManager:
         )
 
     def _load_master_config(self) -> dict[str, Any]:
-        master_file = self.plugins_dir / _PLUGIN_CONFIG_FILENAME
-        if not master_file.exists():
-            return {}
-        try:
-            with open(master_file, encoding="utf-8") as f:
-                loaded = yaml.safe_load(f) or {}
-            if not isinstance(loaded, dict):
-                logger.error(
-                    "Error loading plugins config: root node must be an object"
-                )
-                return {}
-            return loaded
-        except Exception as e:
-            logger.error(f"Error loading plugins config: {e}")
-            return {}
-
-    def _is_plugin_configured(self, plugin_dir: Path) -> bool:
-        return (
-            plugin_dir.name in self._master_config
-            or (plugin_dir / _PLUGIN_CONFIG_FILENAME).exists()
-        )
-
-    def _load_plugin_config(self, plugin_dir: Path) -> dict[str, Any]:
-        master_entry = self._master_config.get(plugin_dir.name)
-        if isinstance(master_entry, dict):
-            return master_entry
-        if plugin_dir.name in self._master_config:
-            logger.error(
-                f"Invalid plugin config for {plugin_dir.name}: entry must be an object"
-            )
-            return {"enabled": False}
-        config_file = plugin_dir / _PLUGIN_CONFIG_FILENAME
-        if not config_file.exists():
-            return {"enabled": False}
-        try:
-            with open(config_file, encoding="utf-8") as f:
-                loaded = yaml.safe_load(f) or {}
-            if not isinstance(loaded, dict):
-                logger.error(
-                    f"Error loading plugin config for {plugin_dir.name}: root node must be an object"
-                )
-                return {"enabled": False}
-            return loaded
-        except Exception as e:
-            logger.error(f"Error loading plugin config for {plugin_dir.name}: {e}")
-            return {"enabled": False}
+        plugins = self.config.get("plugins")
+        return plugins if isinstance(plugins, dict) else {}
 
     def _load_plugin(self, plugin_dir: Path, plugin_config: dict[str, Any]) -> None:
         try:
             self._register_plugin(
-                plugin_dir.name, self._load_plugin_class(plugin_dir), plugin_config
+                plugin_dir.name, _load_plugin_class(plugin_dir), plugin_config
             )
         except Exception as e:
             logger.error(f"Failed to load plugin {plugin_dir.name}: {e}")
-
-    def _load_plugin_class(self, source: Path | EntryPoint) -> Any:
-        if isinstance(source, EntryPoint):
-            return source.load()
-        plugin_file = source / "plugin.py"
-        if not plugin_file.exists():
-            raise FileNotFoundError("missing plugin.py")
-        return getattr(self._load_plugin_module(source, plugin_file), "plugin", None)
-
-    def _entry_point_config(self, name: str) -> tuple[bool, dict[str, Any]]:
-        plugin_config = self._master_config.get(name)
-        configured = name in self._master_config
-        if configured and not isinstance(plugin_config, dict):
-            logger.error(f"Invalid plugin config for {name}: entry must be an object")
-            return True, {"enabled": False}
-        return configured, plugin_config if isinstance(plugin_config, dict) else {}
 
     def _load_entry_point_plugins(self) -> None:
         for entry_point in entry_points(group=_PLUGIN_ENTRY_POINT_GROUP):
@@ -218,9 +203,7 @@ class PluginManager:
                     f"Ignoring entry point plugin shadowed by local plugin: {name}"
                 )
                 continue
-            configured, config = self._entry_point_config(name)
-            _, enabled = self._discover_plugin(name, config, configured=configured)
-            if not configured or not enabled:
+            if (config := self._discover_plugin(name)) is None:
                 continue
             try:
                 self._register_plugin(name, entry_point.load(), config)
@@ -233,11 +216,7 @@ class PluginManager:
         plugin_class: Any,
         plugin_config: dict[str, Any],
     ) -> PluginBase | None:
-        if not (
-            isinstance(plugin_class, type)
-            and issubclass(plugin_class, PluginBase)
-            and plugin_class is not PluginBase
-        ):
+        if not _is_plugin_class(plugin_class):
             logger.warning(
                 f"Invalid plugin export in {plugin_name}: expected PluginBase subclass"
             )
@@ -266,23 +245,6 @@ class PluginManager:
         )
         self.plugins[plugin_name] = plugin_instance
         return plugin_instance
-
-    @staticmethod
-    def _load_plugin_module(plugin_dir: Path, plugin_file: Path):
-        digest = hashlib.sha256(str(plugin_file.resolve()).encode()).hexdigest()[:12]
-        spec = importlib.util.spec_from_file_location(
-            f"_twipsybot_plugin_{plugin_dir.name}_{digest}", plugin_file
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("failed to load plugin spec")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        try:
-            spec.loader.exec_module(module)
-        except BaseException:
-            sys.modules.pop(spec.name, None)
-            raise
-        return module
 
     @staticmethod
     def _find_sync_plugin_method(plugin_class: type[PluginBase]) -> str | None:
@@ -413,16 +375,10 @@ class PluginManager:
         self, name: str, source: Path | EntryPoint, old: PluginBase | None
     ) -> PluginReloadStatus:
         self._master_config = self._load_master_config()
-        if isinstance(source, Path):
-            config = self._load_plugin_config(source)
-            configured, enabled = self._discover_plugin_dir(source, config)
-        else:
-            configured, config = self._entry_point_config(name)
-            _, enabled = self._discover_plugin(name, config, configured=configured)
-        if not (configured and enabled):
+        if (config := self._discover_plugin(name)) is None:
             return "disabled"
         try:
-            plugin_class = type(old) if old else self._load_plugin_class(source)
+            plugin_class = type(old) if old else _load_plugin_class(source)
             plugin = self._register_plugin(name, plugin_class, config)
         except Exception as e:
             logger.error(f"Failed to reload plugin {name}: {e}")

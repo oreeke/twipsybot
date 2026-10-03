@@ -16,6 +16,7 @@ from openai import (
 )
 
 from ...shared.constants import (
+    API_MAX_RETRIES,
     API_TIMEOUT,
     OPENAI_MAX_CONCURRENCY,
     REQUEST_TIMEOUT,
@@ -26,6 +27,7 @@ from .extract import (
     process_chat_completions_response,
 )
 from .requests import (
+    TokenParam,
     make_chat_completions_request,
     make_responses_request,
 )
@@ -48,18 +50,17 @@ class OpenAIAPI:
     def __init__(
         self,
         api_key: str,
-        model: str | None = None,
-        api_base: str | None = None,
-        api_mode: str | None = None,
+        model: str,
+        *,
+        base_url: str | None = None,
+        api_mode: str = "auto",
         image_model: str | None = None,
         image_size: str | None = None,
         image_quality: str | None = None,
     ):
-        self.api_key = api_key
-        self.model = model or "gpt-5-mini"
-        self.api_base = (api_base or "https://api.openai.com/v1").strip().strip("`")
-        self.api_mode = (api_mode or "auto").strip().lower()
-        self.image_model = image_model.strip() if image_model else None
+        self.model = model
+        self.api_mode = api_mode
+        self.image_model = image_model
         self.image_size = image_size
         self.image_quality = image_quality
         self._responses_disabled = False
@@ -68,14 +69,37 @@ class OpenAIAPI:
         self._token_encoding_unavailable = False
         try:
             self.client = openai.AsyncOpenAI(
-                api_key=self.api_key,
-                base_url=self.api_base,
+                api_key=api_key,
+                base_url=base_url or None,
                 timeout=API_TIMEOUT,
-                max_retries=2,
+                max_retries=API_MAX_RETRIES,
             )
         except Exception as e:
             logger.error(f"Failed to create OpenAI API client: {e}")
             raise APIConnectionError(self._safe_error_message(e)) from e
+        host = self.client.base_url.host
+        self._token_param: TokenParam = (
+            "max_completion_tokens"
+            if host == "openai.com" or host.endswith(".openai.com")
+            else "max_tokens"
+        )
+
+    def update(
+        self,
+        *,
+        model: str,
+        api_mode: str,
+        image_model: str | None,
+        image_size: str | None,
+        image_quality: str | None,
+    ) -> None:
+        if api_mode != self.api_mode:
+            self.api_mode = api_mode
+            self._responses_disabled = False
+        self.model = model
+        self.image_model = image_model
+        self.image_size = image_size
+        self.image_quality = image_quality
 
     async def _call_api_common(
         self,
@@ -91,7 +115,7 @@ class OpenAIAPI:
                 client=self.client,
                 semaphore=self._semaphore,
                 model=self.model,
-                api_base=self.api_base,
+                token_param=self._token_param,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -287,12 +311,9 @@ class OpenAIAPI:
         )
 
     async def moderate_texts(self, texts: list[str]) -> list[frozenset[str]]:
-        async with self._semaphore:
-            response = await asyncio.wait_for(
-                self.client.moderations.create(
-                    model="omni-moderation-latest", input=texts
-                ),
-                timeout=REQUEST_TIMEOUT,
+        async with self._semaphore, asyncio.timeout(REQUEST_TIMEOUT):
+            response = await self.client.moderations.create(
+                model="omni-moderation-latest", input=texts
             )
         return [
             frozenset(

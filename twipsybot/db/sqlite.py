@@ -17,16 +17,11 @@ Row = Sequence[Any]
 class DBManager:
     def __init__(
         self,
-        db_path: str | None = None,
+        db_path: str | Path | None = None,
         config: Config | None = None,
     ):
         self.config = config or Config()
-        resolved_db_path = (
-            db_path if db_path is not None else self.config.get(ConfigKeys.DB_PATH)
-        )
-        if not isinstance(resolved_db_path, str) or not resolved_db_path.strip():
-            resolved_db_path = "data/twipsybot.db"
-        self.db_path = Path(resolved_db_path)
+        self.db_path = Path(db_path) if db_path else self.config.db_path
         self._connection: aiosqlite.Connection | None = None
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -210,7 +205,7 @@ class DBManager:
         self, *, max_age_days: int | None = None
     ) -> int:
         if max_age_days is None:
-            max_age_days = self.config.get(ConfigKeys.DB_CLEAR)
+            max_age_days = self.config.get(ConfigKeys.SYSTEM_DB_CLEAR_DAYS)
         if not isinstance(max_age_days, int):
             max_age_days = -1
         if max_age_days < 0:

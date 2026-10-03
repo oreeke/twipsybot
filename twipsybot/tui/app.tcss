@@ -1,0 +1,185 @@
+Screen {
+    background: $background;
+}
+
+#top {
+    height: 1;
+    padding: 0 2;
+    background: $panel;
+}
+
+#brand {
+    width: auto;
+    color: $accent;
+}
+
+#env {
+    width: 1fr;
+    text-align: right;
+    color: $text-muted;
+}
+
+#body {
+    height: 1fr;
+}
+
+#nav {
+    width: 22;
+    height: 1fr;
+    padding: 1 1;
+    border: none;
+    border-right: tall $panel;
+    background: $surface;
+}
+
+#nav:focus {
+    border-right: tall $accent;
+}
+
+#pages {
+    width: 1fr;
+    height: 1fr;
+}
+
+.page {
+    padding: 1 3 1 2;
+    scrollbar-size-vertical: 1;
+}
+
+.title {
+    margin-bottom: 1;
+    color: $accent;
+}
+
+.group {
+    margin: 1 0 1 2;
+    color: $secondary;
+    text-style: italic;
+}
+
+.section-error {
+    display: none;
+    margin-bottom: 1;
+    padding: 0 1;
+    color: $error;
+    background: $error 10%;
+}
+
+.row {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.label {
+    width: 22;
+    color: $text-muted;
+}
+
+.label.-invalid {
+    color: $error;
+}
+
+.cell {
+    width: 1fr;
+    height: auto;
+}
+
+.cell Input,
+.cell Select {
+    width: 1fr;
+    max-width: 64;
+}
+
+.cell TextArea {
+    height: auto;
+    min-height: 2;
+    max-height: 12;
+    max-width: 96;
+}
+
+.cell TextArea.list {
+    max-height: 8;
+    max-width: 64;
+}
+
+.cell Switch {
+    width: auto;
+    height: 1;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+.cell Switch:focus {
+    border: none;
+    background: $accent 15%;
+}
+
+.error {
+    display: none;
+    color: $error;
+}
+
+#status {
+    height: 1;
+    padding: 0 2;
+    background: $panel;
+    color: $text-muted;
+}
+
+Confirm {
+    align: center middle;
+    background: $background 60%;
+}
+
+#dialog {
+    width: 46;
+    height: auto;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+#dialog-buttons {
+    height: auto;
+    margin-top: 1;
+    align-horizontal: right;
+}
+
+#dialog Button {
+    margin-left: 2;
+}
+
+TimesField {
+    width: auto;
+    height: auto;
+}
+
+TimesField .rows {
+    width: auto;
+    height: auto;
+}
+
+TimesField .time-row {
+    width: auto;
+    height: 1;
+}
+
+TimesField .time-row Select {
+    width: 7;
+}
+
+TimesField .sep {
+    width: 1;
+    color: $text-muted;
+}
+
+TimesField Button {
+    min-width: 3;
+    width: 3;
+    margin-left: 1;
+}
+
+TimesField .add {
+    margin-left: 0;
+}

@@ -2,14 +2,20 @@
 
 ### 功能描述
 
-理解 @提及或聊天中的图片并生成回复
+理解 @提及或聊天中的图片并生成回复。
 
 ### 使用方法
 
-复制 `config.yaml.example` 为 `config.yaml` 并修改配置
+在 `twipsybot cfg` 中启用 Vision，或编辑 `data/settings.yaml`：
 
-在提及或聊天中发送图片，可附带问题或要求（例如：翻译图片文本 / 识别图片人物）
+```yaml
+plugins:
+  vision:
+    enabled: true
+```
 
-仅发送图片时，将使用 `default_prompt` 作为提问内容
+在提及或聊天中发送图片，可附带问题或要求（例如：翻译图片文本 / 识别图片人物）。
 
-依赖配置的 OpenAI 兼容接口与所选模型支持多模态输入
+仅发送图片时，将使用 `default_prompt` 作为提问内容。
+
+依赖配置的 OpenAI 兼容接口与所选模型支持多模态输入。

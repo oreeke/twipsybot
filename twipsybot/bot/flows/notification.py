@@ -16,7 +16,7 @@ class NotificationHandler:
 
     async def handle(self, notification: dict[str, Any]) -> None:
         maybe_log_event_dump(
-            bool(self.bot.config.get(ConfigKeys.LOG_DUMP_EVENTS)),
+            bool(self.bot.config.get(ConfigKeys.SYSTEM_DUMP_EVENTS)),
             kind="Notification",
             payload=notification,
         )

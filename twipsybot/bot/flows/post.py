@@ -1,7 +1,11 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from apscheduler.triggers.base import BaseTrigger
+from apscheduler.triggers.combining import OrTrigger
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
 from ...shared.config_keys import ConfigKeys
@@ -12,8 +16,12 @@ if TYPE_CHECKING:
     from ..engine.core import MisskeyBot
 
 
+JOB_ID = "auto_post"
+
+
 class AutoPostService:
     _PLUGIN_POST_INTERVAL_SECONDS = 10
+    _MISFIRE_GRACE_SECONDS = 300
 
     def __init__(self, bot: "MisskeyBot"):
         self.bot = bot
@@ -24,6 +32,49 @@ class AutoPostService:
     @staticmethod
     def _today() -> str:
         return datetime.now().astimezone().date().isoformat()
+
+    @property
+    def mode(self) -> str:
+        get = self.bot.config.get
+        if get(ConfigKeys.POST_ROTATION):
+            return "rotation"
+        return "schedule" if get(ConfigKeys.POST_SCHEDULE) else "off"
+
+    def _trigger(self) -> BaseTrigger | None:
+        get = self.bot.config.get
+        match self.mode:
+            case "rotation":
+                return IntervalTrigger(
+                    seconds=get(ConfigKeys.POST_INTERVAL).total_seconds()
+                )
+            case "schedule":
+                return OrTrigger(
+                    [
+                        CronTrigger(hour=int(t[:2]), minute=int(t[3:]))
+                        for t in get(ConfigKeys.POST_TIMES)
+                    ]
+                )
+        return None
+
+    def apply_schedule(self, *, initial: bool = False) -> None:
+        scheduler = self.bot.scheduler
+        if scheduler.get_job(JOB_ID):
+            scheduler.remove_job(JOB_ID)
+        if (trigger := self._trigger()) is None:
+            logger.info("Auto-post off")
+            return
+        options: dict[str, Any] = {}
+        if initial and self.mode == "rotation":
+            options["next_run_time"] = datetime.now(UTC) + timedelta(minutes=1)
+        scheduler.add_job(
+            self.run,
+            trigger,
+            id=JOB_ID,
+            coalesce=True,
+            misfire_grace_time=self._MISFIRE_GRACE_SECONDS,
+            **options,
+        )
+        logger.info(f"Auto-post {self.mode}: {trigger}")
 
     @property
     def daily_post_count(self) -> int:
@@ -108,12 +159,26 @@ class AutoPostService:
                 local_only = local_only or False
         return remaining, visibility, local_only
 
+    async def _allowed(self, limit: int | None) -> bool:
+        return self.bot.runtime.running and (
+            limit is None or await self.check_post_counter(limit)
+        )
+
+    async def _record(self, limit: int | None) -> None:
+        if limit is not None:
+            await self.post_count()
+            logger.info(f"Daily post count: {self.posts_today}/{limit}")
+
     async def run(self) -> None:
-        if not self.bot.config.get(ConfigKeys.BOT_AUTO_POST_ENABLED):
+        if (mode := self.mode) == "off":
             return
-        max_posts = self.bot.config.get(ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY)
-        local_only = self.bot.config.get(ConfigKeys.BOT_AUTO_POST_LOCAL_ONLY)
-        if not self.bot.runtime.running or not await self.check_post_counter(max_posts):
+        max_posts = (
+            self.bot.config.get(ConfigKeys.POST_DAILY_MAX)
+            if mode == "rotation"
+            else None
+        )
+        local_only = self.bot.config.get(ConfigKeys.POST_LOCAL_ONLY)
+        if not await self._allowed(max_posts):
             return
         try:
             plugin_results = await self.bot.plugin_manager.call_plugin_hook(
@@ -130,9 +195,9 @@ class AutoPostService:
             logger.error(f"Error during auto-post: {e}")
 
     async def _try_plugin_post(
-        self, plugin_results: list[Any], max_posts: int, local_only: bool | None
+        self, plugin_results: list[Any], max_posts: int | None, local_only: bool | None
     ) -> bool:
-        default_visibility = self.bot.config.get(ConfigKeys.BOT_AUTO_POST_VISIBILITY)
+        default_visibility = self.bot.config.get(ConfigKeys.POST_VISIBILITY)
         for result in plugin_results:
             if "contents" in result and await self._post_plugin_contents(
                 result,
@@ -149,29 +214,26 @@ class AutoPostService:
         result: dict[str, Any],
         contents: list[str],
         visibility: str | None,
-        max_posts: int,
+        max_posts: int | None,
         local_only: bool | None,
     ) -> bool:
         posted_any = False
         for i, content in enumerate(contents):
-            if not self.bot.runtime.running or not await self.check_post_counter(
-                max_posts
-            ):
+            if not await self._allowed(max_posts):
                 return posted_any
             await self.bot.misskey.create_note(
                 content, visibility=visibility, local_only=local_only
             )
             await self.bot.plugin_manager.confirm_auto_post_published(result, content)
-            await self.post_count()
             posted_any = True
             logger.info(f"Auto-post succeeded: {format_log_text(content)}")
-            logger.info(f"Daily post count: {self.posts_today}/{max_posts}")
+            await self._record(max_posts)
             if i < len(contents) - 1:
                 await asyncio.sleep(self._PLUGIN_POST_INTERVAL_SECONDS)
         return posted_any
 
     async def _generate_ai_post(
-        self, plugin_results: list[Any], max_posts: int
+        self, plugin_results: list[Any], max_posts: int | None
     ) -> None:
         result = next((item for item in plugin_results if "prompt" in item), None)
         plugin_prompt = result["prompt"] if result else ""
@@ -182,16 +244,15 @@ class AutoPostService:
             )
         try:
             content = await self._create_ai_post(
-                self.bot.config.get(ConfigKeys.BOT_AUTO_POST_PROMPT, ""),
+                self.bot.config.get(ConfigKeys.POST_PROMPT, ""),
                 plugin_prompt,
                 timestamp_override,
             )
         except ValueError as e:
             logger.warning(f"Auto-post failed; skipping this run: {e}")
             return
-        await self.post_count()
         logger.info(f"Auto-post succeeded: {format_log_text(content)}")
-        logger.info(f"Daily post count: {self.posts_today}/{max_posts}")
+        await self._record(max_posts)
 
     async def _create_ai_post(
         self,
@@ -213,12 +274,12 @@ class AutoPostService:
             visibility=(
                 visibility
                 if visibility is not None
-                else self.bot.config.get(ConfigKeys.BOT_AUTO_POST_VISIBILITY)
+                else self.bot.config.get(ConfigKeys.POST_VISIBILITY)
             ),
             local_only=(
                 local_only
                 if local_only is not None
-                else self.bot.config.get(ConfigKeys.BOT_AUTO_POST_LOCAL_ONLY)
+                else self.bot.config.get(ConfigKeys.POST_LOCAL_ONLY)
             ),
         )
         return content

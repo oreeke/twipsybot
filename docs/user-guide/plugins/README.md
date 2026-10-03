@@ -5,7 +5,7 @@ description: 配置 TwipsyBot 的关键词回复、天线互动、RSS 发帖、�
 
 # 插件
 
-TwipsyBot 自带几个可选插件。插件默认关闭，可以在 `plugins/config.yaml` 中集中管理。
+TwipsyBot 自带几个可选插件。插件默认关闭，可以在 `twipsybot cfg` 的 `PLUGINS` 区域启用，也可以编辑 `data/settings.yaml` 的 `plugins.<name>`。
 
 | 插件 | 用途 | 依赖 |
 | --- | --- | --- |
@@ -20,15 +20,18 @@ TwipsyBot 自带几个可选插件。插件默认关闭，可以在 `plugins/con
 每个插件都包含通用字段：
 
 ```yaml
-plugin_name:
-  enabled: true
-  priority: 100
+plugins:
+  plugin_name:
+    enabled: true
+    priority: 100
 ```
 
 - `enabled` 决定是否加载。
-- `priority` 越大越先执行。
-- 修改插件配置后，管理员可发送 `^reload <插件名>` 重载，无需重启机器人。
-- `plugins/config.yaml` 中的条目会完整取代插件目录配置，不会合并。
+- `priority` 越大越先执行；省略时使用插件类默认值。
+- 修改 `plugins.<name>` 后会自动热重载该插件；也可由管理员发送 `^reload <插件名>` 立即重新读取设置并重载。
+- 插件字段名保持各插件文档中的名称不变。
+
+内置插件默认优先级：KeyAct `990`，Vision `900`，Topics `100`，Radar `50`，Iincho `40`。
 
 KeyAct 和 Vision 会处理消息或提及。一个插件返回结果后，后续插件和默认 AI 不再处理同一事件。Radar 和 Iincho 观察时间线事件，不会互相截断。Topics 只在自动发帖任务中运行。
 

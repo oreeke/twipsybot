@@ -7,7 +7,7 @@ description: 查询 TwipsyBot 的状态、模型、功能开关、用户访问�
 
 管理命令在与机器人的聊天页面中使用。
 
-只有 `bot.admin.allowed_users` 中的用户 ID 或账号可以执行。
+只有 `bot.admins` 中的用户 ID 或账号可以执行。
 
 ## 本地管理命令
 
@@ -18,13 +18,13 @@ description: 查询 TwipsyBot 的状态、模型、功能开关、用户访问�
 | `^help` | 查看可用命令 |
 | `^status` | 机器人状态 |
 | `^model` | 查看当前模型 |
-| `^model <模型名>` | 切换模型（相同 `api_base`） |
-| `^model reset` | 恢复默认模型 |
-| `^autopost on\|off` | 自动发帖开关 |
-| `^autopost reset` | 重置当天发帖计数 |
+| `^model <模型名>` | 切换模型（相同 `openai_base_url`） |
+| `^model reset` | 删除自定义模型，恢复默认 `deepseek-flash` |
+| `^autopost <rotation\|schedule\|off>` | 切换轮转、定时或关闭自动发帖 |
+| `^autopost reset` | 重置当天轮转发帖计数 |
 | `^clean posts <天数>` | 预览超过指定时间未被互动的帖子 |
 | `^clean posts <天数> -y` | 确认删除预览范围内符合条件的帖子 |
-| `^reload <插件名>` | 重载指定插件配置 |
+| `^reload <插件名>` | 重新读取设置并重载指定插件 |
 | `^mention on\|off` | 响应提及开关 |
 | `^chat on\|off` | 响应聊天开关 |
 | `^whitelist ...` | 查看/修改白名单 |
@@ -38,18 +38,17 @@ description: 查询 TwipsyBot 的状态、模型、功能开关、用户访问�
 ^whitelist del user-id
 ^whitelist set user-a user-b
 ^whitelist clear
-^whitelist reset
 ```
 
-`blacklist` 使用相同语法。`set` 会替换整个名单，`clear` 保存空名单，`reset` 删除运行时覆盖并恢复启动配置。
+`blacklist` 使用相同语法。`set` 会替换整个名单，`clear` 保存空名单。
 
 `clean posts` 只处理机器人的独立普通帖子，排除回复、转帖、提及、频道、投票、置顶、Clip 及已有回复、转帖或反应的帖子。确认删除前会重新检查互动状态，并按从旧到新的顺序删除。Misskey API 每小时最多接受 300 次删除请求，且请求间隔至少 1 秒。命令每次最多处理 300 条。只有 `-y` 参数会执行删除，删除后无法恢复。
 
-模型和名单修改保存在 SQLite 中。功能开关只在当前进程中有效，重启后恢复 YAML 或环境变量配置。
+`^model` 写入 `bot.model`；`^mention`、`^chat` 和 `^autopost` 分别写入 `reply.mention`、`reply.chat` 和 `autopost.rotation` / `autopost.schedule`；名单命令写入 `reply.whitelist` 与 `reply.blacklist`。这些修改都会持久化到 `data/settings.yaml`，并作为单一事实来源。`^model reset` 会移除 `bot.model`，回到默认模型。
 
-`^reload <插件名>` 重新读取插件配置：`plugins/config.yaml` 中有该插件条目时使用该条目，否则读取插件目录下的 `config.yaml`。重载失败时该插件被禁用并返回提示，详情记录在日志中，其他插件不受影响。
+`^reload <插件名>` 会先重新读取 `data/settings.yaml`，再用 `plugins.<插件名>` 重载插件。重载失败时该插件被禁用并返回提示，详情记录在日志中，其他插件不受影响。
 
-插件代码、机器人主配置不支持热重载，修改后需要重启机器人。
+除 `connect` 和全部 `timeline.*` 外，设置变更会被运行中的机器人热更新；需要重启的字段会在 TUI 中用 `↻` 标记，并在日志中提示。
 
 ## 内容操作命令
 
@@ -66,10 +65,9 @@ description: 查询 TwipsyBot 的状态、模型、功能开关、用户访问�
 
 ```yaml
 bot:
-  admin:
-    allowed_users:
-      - "9abcdef012345678"
-      - "operator@example.com"
+  admins:
+    - "9abcdef012345678"
+    - "operator@example.com"
 ```
 
-用户 ID 最稳定。跨实例账号应使用完整的 `username@host`。管理员名单与普通回复白名单相互独立。
+用户 ID 最稳定。跨实例账号应使用完整的 `username@host`。管理员自动不受回复间隔和轮数限制；加入回复白名单则不会获得管理权限。

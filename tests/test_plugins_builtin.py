@@ -100,8 +100,8 @@ def test_iincho_requires_prompts(field: str) -> None:
 @pytest.mark.parametrize(
     ("config", "field"),
     [
-        ({"reply": True, "reply_ai": True}, "reply_ai_prompt"),
-        ({"quote": True, "quote_ai": True}, "quote_ai_prompt"),
+        ({"reply": True, "reply_ai": True, "reply_ai_prompt": ""}, "reply_ai_prompt"),
+        ({"quote": True, "quote_ai": True, "quote_ai_prompt": ""}, "quote_ai_prompt"),
     ],
 )
 def test_radar_requires_enabled_ai_prompt(config: dict[str, Any], field: str) -> None:
@@ -114,8 +114,8 @@ def test_radar_requires_enabled_ai_prompt(config: dict[str, Any], field: str) ->
 @pytest.mark.parametrize(
     ("config", "field"),
     [
-        ({"source": "txt"}, "txt_ai_prefix"),
-        ({"source": "rss", "rss_ai": True}, "rss_ai_prefix"),
+        ({"source": "txt", "txt_ai_prefix": ""}, "txt_ai_prefix"),
+        ({"source": "rss", "rss_ai": True, "rss_ai_prefix": ""}, "rss_ai_prefix"),
     ],
 )
 def test_topics_requires_active_prompt(config: dict[str, Any], field: str) -> None:
@@ -167,6 +167,39 @@ async def test_keyact_normalizes_case_once_when_loading_rules() -> None:
     )
 
     assert await plugin.on_message(event) == {"handled": True, "response": "pong"}
+
+
+async def test_keyact_reads_line_rules() -> None:
+    plugin = KeyActPlugin(
+        _context(
+            {
+                "enabled": True,
+                "rules": "# 问候\nping, hi = pong\n帮助，help | ? = 看文档\\n#话题\n",
+            }
+        )
+    )
+    await plugin.initialize()
+
+    assert [(rule.keywords, rule.response) for rule in plugin.rules] == [
+        (("ping", "hi"), "pong"),
+        (("帮助", "help", "?"), "看文档\n#话题"),
+    ]
+
+
+def test_keyact_rejects_rule_without_response() -> None:
+    with pytest.raises(ValueError, match="keywords = response"):
+        KeyActPlugin(_context({"enabled": True, "rules": "ping"}))
+
+
+def test_topics_rss_list_accepts_lines_with_comments() -> None:
+    plugin = TopicsPlugin(
+        _context(
+            {"enabled": True, "rss_list": "# 科技\nhttps://a/rss\n\nhttps://b/rss#x"}
+        )
+    )
+
+    assert plugin.settings.rss_list == ("https://a/rss", "https://b/rss#x")
+    assert plugin.settings.rss_post_mode == "rotate"
 
 
 async def test_topics_rss_ai_uses_public_openai_service() -> None:
@@ -280,6 +313,7 @@ async def test_topics_rss_batch_selects_latest_unpublished_entry_per_feed() -> N
                 "enabled": True,
                 "source": "rss",
                 "rss_list": ["feed-a", "feed-b"],
+                "rss_post_mode": "batch",
             }
         )
     )
@@ -412,7 +446,12 @@ async def test_topics_rss_is_recorded_only_after_publish() -> None:
     storage = SimpleNamespace()
     plugin = TopicsPlugin(
         _context(
-            {"enabled": True, "source": "rss", "rss_list": ["feed"]},
+            {
+                "enabled": True,
+                "source": "rss",
+                "rss_list": ["feed"],
+                "rss_post_mode": "batch",
+            },
             storage=storage,
         )
     )
@@ -582,7 +621,7 @@ async def test_vision_handles_image_only_without_default_prompt(
     )
     plugin = VisionPlugin(
         _context(
-            {"enabled": True, "max_images": 1},
+            {"enabled": True, "max_images": 1, "default_prompt": ""},
             misskey=misskey,
             openai=openai,
         )

@@ -1,6 +1,5 @@
 import asyncio
 import re
-from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -25,6 +24,7 @@ from ..flows.post import AutoPostService
 from .connect import StreamingConnector
 from .limits import ResponseLimiter
 from .pipeline import ResponsePipeline
+from .reload import SettingsReloader
 from .runtime import BotRuntime
 
 __all__ = ("MisskeyBot",)
@@ -36,8 +36,8 @@ class MisskeyBot:
     def __init__(self, config: Config):
         self.config = config
         try:
-            instance_url = config.get_required(ConfigKeys.MISSKEY_INSTANCE_URL)
-            access_token = config.get_required(ConfigKeys.MISSKEY_ACCESS_TOKEN)
+            instance_url = config.get_required(ConfigKeys.MISSKEY_URL)
+            access_token = config.get_required(ConfigKeys.MISSKEY_TOKEN)
             self._misskey_transport = TCPClient()
             self.misskey = MisskeyAPI(
                 instance_url, access_token, transport=self._misskey_transport
@@ -45,23 +45,23 @@ class MisskeyBot:
             self.streaming = StreamingClient(
                 instance_url,
                 access_token,
-                log_dump_events=bool(config.get(ConfigKeys.LOG_DUMP_EVENTS)),
+                log_dump_events=bool(config.get(ConfigKeys.SYSTEM_DUMP_EVENTS)),
                 transport=self._misskey_transport,
             )
             self.openai = OpenAIAPI(
                 config.get_required(ConfigKeys.OPENAI_API_KEY),
-                config.get(ConfigKeys.OPENAI_MODEL),
-                config.get(ConfigKeys.OPENAI_API_BASE),
-                config.get(ConfigKeys.OPENAI_API_MODE),
-                config.get(ConfigKeys.OPENAI_IMAGE_MODEL),
-                config.get(ConfigKeys.OPENAI_IMAGE_SIZE),
-                config.get(ConfigKeys.OPENAI_IMAGE_QUALITY),
+                config.get(ConfigKeys.BOT_MODEL),
+                base_url=config.get(ConfigKeys.OPENAI_BASE_URL),
+                api_mode=config.get(ConfigKeys.BOT_API_MODE),
+                image_model=config.get(ConfigKeys.BOT_IMAGE_MODEL),
+                image_size=config.get(ConfigKeys.BOT_IMAGE_SIZE),
+                image_quality=config.get(ConfigKeys.BOT_IMAGE_QUALITY),
             )
             self.scheduler = AsyncIOScheduler()
         except (ValueError, TypeError, KeyError) as e:
             logger.error(f"Initialization failed: {e}")
             raise ConfigurationError() from e
-        self.db = DBManager(config.get(ConfigKeys.DB_PATH), config=config)
+        self.db = DBManager(config.db_path, config=config)
         self.runtime = BotRuntime()
         self.limits = ResponseLimiter(
             config=config,
@@ -77,7 +77,6 @@ class MisskeyBot:
             bot=self,
         )
         self.pipeline = ResponsePipeline(limits=self.limits)
-        self.system_prompt = config.get(ConfigKeys.BOT_SYSTEM_PROMPT, "")
         self.bot_user_id = None
         self.bot_username = None
         self.chat = ChatHandler(self)
@@ -97,10 +96,8 @@ class MisskeyBot:
                 "on_timeline_note", note
             ),
         )
-        admin_config = config.get("bot.admin", {})
-        self.admin = AdminCommandService(
-            self, admin_config if isinstance(admin_config, dict) else {}
-        )
+        self.admin = AdminCommandService(self)
+        self.settings = SettingsReloader(self)
         logger.info("Bot initialized")
 
     def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
@@ -115,6 +112,7 @@ class MisskeyBot:
         await self._initialize_services()
         self._setup_scheduler()
         await self.connect.setup_streaming()
+        self.runtime.add_task("settings", self.settings.watch())
         logger.info("Services ready; awaiting new tasks...")
 
     async def _initialize_services(self) -> None:
@@ -127,7 +125,7 @@ class MisskeyBot:
             f"Connected to Misskey instance: bot_id={self.bot_user_id}, @{self.bot_username}"
         )
         await self.plugin_manager.load_plugins()
-        await self.admin.start()
+        self.admin.start()
         await self.plugin_manager.startup_plugins()
 
     def _setup_scheduler(self) -> None:
@@ -138,19 +136,7 @@ class MisskeyBot:
         ]
         for func, hour in cron_jobs:
             self.scheduler.add_job(func, "cron", hour=hour, minute=0, second=0)
-        interval = self.config.get(ConfigKeys.BOT_AUTO_POST_INTERVAL)
-        enabled = bool(self.config.get(ConfigKeys.BOT_AUTO_POST_ENABLED))
-        logger.info(
-            f"Auto-post scheduler ready; enabled={enabled}; interval: {interval}"
-        )
-        self.scheduler.add_job(
-            self.auto_post.run,
-            "interval",
-            seconds=interval.total_seconds(),
-            next_run_time=datetime.now(UTC) + timedelta(minutes=1),
-            id="auto_post",
-            replace_existing=True,
-        )
+        self.auto_post.apply_schedule(initial=True)
         self.scheduler.start()
 
     @staticmethod
@@ -218,8 +204,12 @@ class MisskeyBot:
         )
 
     @property
+    def system_prompt(self) -> str:
+        return self.config.get(ConfigKeys.BOT_SYSTEM_PROMPT, "")
+
+    @property
     def ai_config(self) -> dict[str, Any]:
         return {
-            "max_tokens": self.config.get(ConfigKeys.OPENAI_MAX_TOKENS),
-            "temperature": self.config.get(ConfigKeys.OPENAI_TEMPERATURE),
+            "max_tokens": self.config.get(ConfigKeys.BOT_MAX_TOKENS),
+            "temperature": self.config.get(ConfigKeys.BOT_TEMPERATURE),
         }

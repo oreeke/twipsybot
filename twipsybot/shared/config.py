@@ -1,410 +1,330 @@
 import os
 import re
 from datetime import timedelta
+from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal, TypeVar
 
 import durationpy
-import yaml
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
+    SecretStr,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from .config_keys import ConfigKeys
 from .exceptions import ConfigurationError
+from .settings import get_dotted, read_settings, set_dotted
 
-__all__ = ("Config",)
+__all__ = (
+    "EXCLUSIVE",
+    "POST_MAX_TIMES",
+    "POST_MIN_GAP",
+    "PROMPT_KEYS",
+    "SECONDS",
+    "SECRETS",
+    "ClockTime",
+    "Config",
+    "Secrets",
+    "Settings",
+    "needs_restart",
+    "parse_clock",
+    "parse_seconds",
+)
+
+SECRETS = {
+    "misskey_url": "MISSKEY_INSTANCE_URL",
+    "misskey_token": "MISSKEY_ACCESS_TOKEN",
+    "openai_base_url": "OPENAI_BASE_URL",
+    "openai_api_key": "OPENAI_API_KEY",
+}
+_REQUIRED_SECRETS = ("misskey_url", "misskey_token", "openai_api_key")
+PROMPT_KEYS = (ConfigKeys.BOT_SYSTEM_PROMPT, ConfigKeys.POST_PROMPT)
+_RESTART_PREFIXES = ("connect.", "timeline.")
+EXCLUSIVE = {
+    ConfigKeys.POST_ROTATION: ConfigKeys.POST_SCHEDULE,
+    ConfigKeys.POST_SCHEDULE: ConfigKeys.POST_ROTATION,
+}
+POST_MIN_GAP = timedelta(minutes=5)
+POST_MAX_TIMES = 24
 
 _MISSING = object()
-_AUTO_POST_INTERVAL_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?[mhd]\s*)+")
+_INTERVAL_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?[mhd]\s*)+")
 _MINUTES_PATTERN = re.compile(r"\d+(?:\.\d+)?")
-_AUTO_POST_INTERVAL_ERROR = "auto-post interval must use minutes, hours, or days"
-_RESPONSE_DURATION_PATTERN = re.compile(r"(?:\d+[smhd]\s*)+")
-_RESPONSE_DURATION_ERROR = "limits must use whole seconds, minutes, hours, or days"
-
-_ENV_TO_KEY = {
-    "MISSKEY_INSTANCE_URL": ConfigKeys.MISSKEY_INSTANCE_URL,
-    "MISSKEY_ACCESS_TOKEN": ConfigKeys.MISSKEY_ACCESS_TOKEN,
-    "OPENAI_API_KEY": ConfigKeys.OPENAI_API_KEY,
-    "OPENAI_MODEL": ConfigKeys.OPENAI_MODEL,
-    "OPENAI_API_BASE": ConfigKeys.OPENAI_API_BASE,
-    "OPENAI_API_MODE": ConfigKeys.OPENAI_API_MODE,
-    "OPENAI_IMAGE_MODEL": ConfigKeys.OPENAI_IMAGE_MODEL,
-    "OPENAI_IMAGE_SIZE": ConfigKeys.OPENAI_IMAGE_SIZE,
-    "OPENAI_IMAGE_QUALITY": ConfigKeys.OPENAI_IMAGE_QUALITY,
-    "OPENAI_MAX_TOKENS": ConfigKeys.OPENAI_MAX_TOKENS,
-    "OPENAI_TEMPERATURE": ConfigKeys.OPENAI_TEMPERATURE,
-    "BOT_SYSTEM_PROMPT": ConfigKeys.BOT_SYSTEM_PROMPT,
-    "BOT_ADMIN_ALLOWED_USERS": ConfigKeys.BOT_ADMIN_ALLOWED_USERS,
-    "BOT_AUTO_POST_ENABLED": ConfigKeys.BOT_AUTO_POST_ENABLED,
-    "BOT_AUTO_POST_INTERVAL": ConfigKeys.BOT_AUTO_POST_INTERVAL,
-    "BOT_AUTO_POST_MAX_PER_DAY": ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY,
-    "BOT_AUTO_POST_VISIBILITY": ConfigKeys.BOT_AUTO_POST_VISIBILITY,
-    "BOT_AUTO_POST_LOCAL_ONLY": ConfigKeys.BOT_AUTO_POST_LOCAL_ONLY,
-    "BOT_AUTO_POST_PROMPT": ConfigKeys.BOT_AUTO_POST_PROMPT,
-    "BOT_RESPONSE_MENTION": ConfigKeys.BOT_RESPONSE_MENTION,
-    "BOT_RESPONSE_CHAT": ConfigKeys.BOT_RESPONSE_CHAT,
-    "BOT_RESPONSE_CHAT_MEMORY": ConfigKeys.BOT_RESPONSE_CHAT_MEMORY,
-    "BOT_RESPONSE_CHAT_CONTEXT_TOKENS": ConfigKeys.BOT_RESPONSE_CHAT_CONTEXT_TOKENS,
-    "BOT_RESPONSE_RATE_LIMIT": ConfigKeys.BOT_RESPONSE_RATE_LIMIT,
-    "BOT_RESPONSE_RATE_LIMIT_REPLY": ConfigKeys.BOT_RESPONSE_RATE_LIMIT_REPLY,
-    "BOT_RESPONSE_MAX_TURNS": ConfigKeys.BOT_RESPONSE_MAX_TURNS,
-    "BOT_RESPONSE_MAX_TURNS_REPLY": ConfigKeys.BOT_RESPONSE_MAX_TURNS_REPLY,
-    "BOT_RESPONSE_MAX_TURNS_RELEASE": ConfigKeys.BOT_RESPONSE_MAX_TURNS_RELEASE,
-    "BOT_RESPONSE_WHITELIST": ConfigKeys.BOT_RESPONSE_WHITELIST,
-    "BOT_RESPONSE_BLACKLIST": ConfigKeys.BOT_RESPONSE_BLACKLIST,
-    "BOT_TIMELINE_HOME": ConfigKeys.BOT_TIMELINE_HOME,
-    "BOT_TIMELINE_LOCAL": ConfigKeys.BOT_TIMELINE_LOCAL,
-    "BOT_TIMELINE_HYBRID": ConfigKeys.BOT_TIMELINE_HYBRID,
-    "BOT_TIMELINE_GLOBAL": ConfigKeys.BOT_TIMELINE_GLOBAL,
-    "BOT_TIMELINE_ANTENNA_IDS": ConfigKeys.BOT_TIMELINE_ANTENNA_IDS,
-    "DB_PATH": ConfigKeys.DB_PATH,
-    "DB_CLEAR": ConfigKeys.DB_CLEAR,
-    "LOG_PATH": ConfigKeys.LOG_PATH,
-    "LOG_LEVEL": ConfigKeys.LOG_LEVEL,
-    "LOG_DUMP_EVENTS": ConfigKeys.LOG_DUMP_EVENTS,
-}
+_INTERVAL_ERROR = "auto-post interval must use minutes, hours, or days"
+_SECONDS_PATTERN = re.compile(r"(?:\d+[smhd]\s*)+")
+_SECONDS_ERROR = "limits must use whole seconds, minutes, hours, or days"
+_CLOCK_PATTERN = re.compile(r"(\d{1,2}):(\d{2})")
+_CLOCK_ERROR = "times must use HH:MM"
 
 
-def _set_dotted(config: dict[str, Any], dotted: str, value: Any) -> None:
-    cur: dict[str, Any] = config
-    parts = dotted.split(".")
-    for key in parts[:-1]:
-        nxt = cur.get(key)
-        if not isinstance(nxt, dict):
-            nxt = {}
-            cur[key] = nxt
-        cur = nxt
-    cur[parts[-1]] = value
+def needs_restart(key: str) -> bool:
+    return key.startswith(_RESTART_PREFIXES)
 
 
-def _get_dotted(config: dict[str, Any], dotted: str) -> Any:
-    cur: Any = config
-    for key in dotted.split("."):
-        if not isinstance(cur, dict):
-            return None
-        cur = cur.get(key)
-    return cur
+def _parse_interval(value: Any) -> timedelta:
+    match value:
+        case bool():
+            raise ValueError(_INTERVAL_ERROR)
+        case timedelta():
+            interval = value
+        case int() | float():
+            interval = timedelta(minutes=value)
+        case str() if _MINUTES_PATTERN.fullmatch(s := value.strip().lower()):
+            interval = timedelta(minutes=float(s))
+        case str() if _INTERVAL_PATTERN.fullmatch(s := value.strip().lower()):
+            interval = durationpy.from_str(s)
+        case _:
+            raise ValueError(_INTERVAL_ERROR)
+    if interval < POST_MIN_GAP:
+        raise ValueError(f"auto-post interval must be at least {_MIN_GAP_TEXT}")
+    return interval
 
 
-def _maybe_load_text_file(
-    value: str,
-    *,
-    project_root: Path,
-) -> str:
-    s = value.strip()
-    if not s:
-        return ""
-    path = Path(s)
-    if path.is_absolute() or path.suffix.lower() != ".txt" or ".." in path.parts:
-        return value
-    if not path.parts or path.parts[0] != "prompts":
-        return value
-    resolved = (project_root / path).resolve()
-    if not resolved.is_file() or not resolved.is_relative_to(project_root / "prompts"):
-        return value
-    return resolved.read_text(encoding="utf-8").strip()
+def parse_seconds(value: Any) -> int:
+    match value:
+        case False:
+            return -1
+        case int() if not isinstance(value, bool) and value >= -1:
+            return value
+        case str():
+            s = value.strip().lower()
+            if s in {"-1", "off", "none", "unlimited"}:
+                return -1
+            if s.isdigit():
+                return int(s)
+            if _SECONDS_PATTERN.fullmatch(s):
+                return int(durationpy.from_str(s).total_seconds())
+    raise ValueError(_SECONDS_ERROR)
 
 
-class _ConfigModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+def parse_clock(value: Any) -> str:
+    match value:
+        case bool():
+            raise ValueError(_CLOCK_ERROR)
+        case int():
+            hour, minute = divmod(value, 60)
+        case str() if match := _CLOCK_PATTERN.fullmatch(value.strip()):
+            hour, minute = int(match[1]), int(match[2])
+        case _:
+            raise ValueError(_CLOCK_ERROR)
+    if not (0 <= hour < 24 and 0 <= minute < 60):
+        raise ValueError(_CLOCK_ERROR)
+    return f"{hour:02d}:{minute:02d}"
 
 
-class MisskeyConfig(_ConfigModel):
-    instance_url: str
-    access_token: str
+def _minutes(clock: str) -> int:
+    hour, minute = clock.split(":")
+    return int(hour) * 60 + int(minute)
 
 
-class OpenAIConfig(_ConfigModel):
-    api_key: str
-    model: str = "deepseek-chat"
-    api_base: str = "https://api.deepseek.com/v1"
-    api_mode: str = "auto"
-    image_model: str | None = None
-    image_size: str | None = None
-    image_quality: str | None = None
-    max_tokens: int = 1000
-    temperature: float = 0.8
-
-    @field_validator("api_mode")
-    @classmethod
-    def _validate_api_mode(cls, v: str) -> str:
-        s = v.strip().lower()
-        if s not in {"auto", "chat", "responses"}:
-            raise ValueError("OpenAI API mode must be auto/chat/responses")
-        return s
-
-    @field_validator("image_model", "image_size", "image_quality", mode="before")
-    @classmethod
-    def _normalize_optional_string(cls, v: Any) -> str | None:
-        if v is None:
-            return None
-        value = str(v).strip()
-        return value or None
-
-    @field_validator("max_tokens")
-    @classmethod
-    def _validate_max_tokens(cls, v: int) -> int:
-        if v <= 0:
-            raise ValueError("max tokens must be > 0")
-        return v
-
-    @field_validator("temperature")
-    @classmethod
-    def _validate_temperature(cls, v: float) -> float:
-        if not (0 <= float(v) <= 2):
-            raise ValueError("temperature must be between 0 and 2")
-        return float(v)
+def _blank_to_none(value: Any) -> Any:
+    return None if value is None or str(value).strip() == "" else str(value).strip()
 
 
-class TimelineConfig(_ConfigModel):
+Interval = Annotated[timedelta, BeforeValidator(_parse_interval)]
+SECONDS = BeforeValidator(parse_seconds)
+Seconds = Annotated[int, SECONDS]
+OptionalText = Annotated[str | None, BeforeValidator(_blank_to_none)]
+ClockTime = Annotated[str, BeforeValidator(parse_clock)]
+Visibility = Literal["public", "home", "followers"]
+_MIN_GAP_TEXT = f"{POST_MIN_GAP.seconds // 60}m"
+
+
+class _Section(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+
+
+class BotConfig(_Section):
+    system_prompt: str = (
+        "你是一个可爱的AI助手，运行在Misskey平台上。\n"
+        "请用简短、友好的方式发帖和回答问题。"
+    )
+    admins: list[str] = []
+    model: str = Field(default="deepseek-flash", min_length=1)
+    api_mode: Literal["auto", "chat", "responses"] = "auto"
+    max_tokens: int = Field(default=2000, gt=0)
+    temperature: float = Field(default=0.8, ge=0, le=2)
+    image_model: OptionalText = None
+    image_size: OptionalText = None
+    image_quality: OptionalText = None
+
+
+class TimelineConfig(_Section):
     home: bool = False
     local: bool = False
     hybrid: bool = False
     global_: bool = Field(default=False, alias="global")
-    antenna_ids: list[str] | str = []
-
-    @field_validator("antenna_ids", mode="before")
-    @classmethod
-    def _normalize_antenna_ids(cls, v: Any) -> Any:
-        if v is None:
-            return []
-        return v
+    antennas: list[str] = []
 
 
-class AutoPostConfig(_ConfigModel):
-    enabled: bool = True
-    interval: timedelta = timedelta(minutes=180)
-    max_posts_per_day: int = 8
-    visibility: str = "public"
+class PostConfig(_Section):
+    rotation: bool = False
+    interval: Interval = timedelta(hours=3)
+    daily_max: int = Field(default=8, ge=0)
+    schedule: bool = False
+    times: list[ClockTime] = []
+    visibility: Visibility = "public"
     local_only: bool = False
-    prompt: str = ""
+    prompt: str = "生成一篇有趣、有见解的社交媒体帖子。"
 
-    @field_validator("interval", mode="before")
+    @field_validator("times")
     @classmethod
-    def _validate_interval(cls, value: Any) -> timedelta:
-        if isinstance(value, bool):
-            raise ValueError(_AUTO_POST_INTERVAL_ERROR)
-        if isinstance(value, int | float):
-            interval = timedelta(minutes=value)
-        elif isinstance(value, str):
-            normalized = value.strip().lower()
-            if _MINUTES_PATTERN.fullmatch(normalized):
-                interval = timedelta(minutes=float(normalized))
-            elif _AUTO_POST_INTERVAL_PATTERN.fullmatch(normalized):
-                interval = durationpy.from_str(normalized)
-            else:
-                raise ValueError(_AUTO_POST_INTERVAL_ERROR)
-        else:
-            raise ValueError(_AUTO_POST_INTERVAL_ERROR)
-        if interval <= timedelta(0):
-            raise ValueError("auto-post interval must be > 0")
-        return interval
+    def _validate_times(cls, value: list[str]) -> list[str]:
+        times = sorted(value)
+        if len(times) > POST_MAX_TIMES:
+            raise ValueError(f"at most {POST_MAX_TIMES} times")
+        minutes = [_minutes(t) for t in times]
+        if len(minutes) > 1:
+            gaps = [b - a for a, b in pairwise(minutes)]
+            gaps.append(minutes[0] + 1440 - minutes[-1])
+            if min(gaps) < POST_MIN_GAP.seconds // 60:
+                raise ValueError(f"times must be at least {_MIN_GAP_TEXT} apart")
+        return times
 
-    @field_validator("max_posts_per_day")
-    @classmethod
-    def _validate_max_posts_per_day(cls, v: int) -> int:
-        if v < 0:
-            raise ValueError("max auto-posts per day must be >= 0")
-        return v
-
-    @field_validator("visibility")
-    @classmethod
-    def _validate_visibility(cls, v: str) -> str:
-        s = v.strip()
-        if s not in {"public", "home", "followers"}:
-            raise ValueError("post visibility must be public/home/followers")
-        return s
+    @model_validator(mode="after")
+    def _validate_mode(self) -> "PostConfig":
+        if self.rotation and self.schedule:
+            raise ValueError("rotation and schedule cannot both be on")
+        if self.schedule and not self.times:
+            raise ValueError("schedule needs at least one time")
+        return self
 
 
-class ResponseConfig(_ConfigModel):
+class ReplyConfig(_Section):
     mention: bool = True
     chat: bool = True
-    chat_memory: int = 10
-    chat_context_tokens: int = 2000
-    rate_limit: int = -1
-    rate_limit_reply: str = ""
-    max_turns: int = -1
-    max_turns_reply: str = ""
-    max_turns_release: int = -1
-    whitelist: list[str] | str = []
-    blacklist: list[str] | str = []
-
-    @field_validator("rate_limit", "max_turns_release", mode="before")
-    @classmethod
-    def _validate_duration(cls, value: Any) -> int:
-        if isinstance(value, bool):
-            raise ValueError(_RESPONSE_DURATION_ERROR)
-        if isinstance(value, int):
-            if value < -1:
-                raise ValueError(_RESPONSE_DURATION_ERROR)
-            return value
-        if not isinstance(value, str):
-            raise ValueError(_RESPONSE_DURATION_ERROR)
-        normalized = value.strip().lower()
-        if normalized in {"-1", "off", "none", "unlimited"}:
-            return -1
-        if normalized.isdigit():
-            return int(normalized)
-        if _RESPONSE_DURATION_PATTERN.fullmatch(normalized):
-            try:
-                return int(durationpy.from_str(normalized).total_seconds())
-            except Exception:
-                pass
-        raise ValueError(_RESPONSE_DURATION_ERROR)
-
-    @field_validator("chat_memory")
-    @classmethod
-    def _validate_chat_memory(cls, v: int) -> int:
-        if not 0 <= v <= 100:
-            raise ValueError("chat memory must be between 0 and 100")
-        return v
-
-    @field_validator("chat_context_tokens")
-    @classmethod
-    def _validate_chat_context_tokens(cls, v: int) -> int:
-        if v < 0:
-            raise ValueError("chat context tokens must be >= 0")
-        return v
-
-    @field_validator("max_turns")
-    @classmethod
-    def _validate_max_turns(cls, v: int) -> int:
-        if v < -1:
-            raise ValueError("response max turns must be >= -1")
-        return v
+    memory: int = Field(default=10, ge=0, le=100)
+    ctx_tokens: int = Field(default=2000, ge=0)
+    rate_limit: Seconds = -1
+    rate_limit_msg: str = "我需要休息一下..."
+    max_turns: int = Field(default=-1, ge=-1)
+    max_turns_msg: str = "我要回家了..."
+    turns_release: Seconds = 3600
+    whitelist: list[str] = []
+    blacklist: list[str] = []
 
 
-class AdminConfig(_ConfigModel):
-    allowed_users: list[str] | str = []
-    commands: dict[str, Any] = Field(default_factory=dict)
-
-
-class BotConfig(_ConfigModel):
-    system_prompt: str = ""
-    admin: AdminConfig = AdminConfig()
-    timeline: TimelineConfig = TimelineConfig()
-    auto_post: AutoPostConfig = AutoPostConfig()
-    response: ResponseConfig = ResponseConfig()
-
-
-class DBConfig(_ConfigModel):
-    path: str = "data/twipsybot.db"
-    clear: int = -1
-
-    @field_validator("clear")
-    @classmethod
-    def _validate_clear(cls, v: int) -> int:
-        if v < -1:
-            raise ValueError("database clear days must be >= -1")
-        return v
-
-
-class LogConfig(_ConfigModel):
-    path: str = "data/logs/twipsybot.log"
-    level: str = "INFO"
+class SystemConfig(_Section):
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     dump_events: bool = False
+    db_clear_days: int = Field(default=-1, ge=-1)
 
 
-class AppConfig(_ConfigModel):
-    misskey: MisskeyConfig
-    openai: OpenAIConfig
-    bot: BotConfig = BotConfig()
-    db: DBConfig = DBConfig()
-    log: LogConfig = LogConfig()
+class Settings(_Section):
+    bot: BotConfig = Field(default_factory=BotConfig)
+    timeline: TimelineConfig = Field(default_factory=TimelineConfig)
+    autopost: PostConfig = Field(default_factory=PostConfig)
+    reply: ReplyConfig = Field(default_factory=ReplyConfig)
+    system: SystemConfig = Field(default_factory=SystemConfig)
+    plugins: dict[str, dict[str, Any]] = {}
+
+    @field_validator("plugins", mode="before")
+    @classmethod
+    def _plugins_default(cls, value: Any) -> Any:
+        return {} if value is None else value
+
+
+class Secrets(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    misskey_url: str = ""
+    misskey_token: SecretStr = SecretStr("")
+    openai_base_url: str = "https://api.deepseek.com"
+    openai_api_key: SecretStr = SecretStr("")
+
+    def resolve(self, field: str, env: str) -> str:
+        value = getattr(self, field)
+        if isinstance(value, SecretStr):
+            value = value.get_secret_value()
+        return os.environ.get(env, "").strip() or value.strip()
+
+
+_M = TypeVar("_M", bound=BaseModel)
+
+
+def _validate(model: type[_M], raw: dict[str, Any]) -> _M:
+    try:
+        return model.model_validate(raw)
+    except ValidationError as e:
+        raise ConfigurationError(str(e)) from e
+
+
+def _prompt_file(value: str, root: Path) -> Path | None:
+    path = Path(value.strip())
+    if (
+        path.is_absolute()
+        or path.suffix.lower() != ".txt"
+        or ".." in path.parts
+        or path.parts[:1] != ("prompts",)
+    ):
+        return None
+    resolved = (root / path).resolve()
+    prompts = (root / "prompts").resolve()
+    return resolved if resolved.is_file() and resolved.is_relative_to(prompts) else None
+
+
+def _stat(path: Path) -> tuple[int, int]:
+    try:
+        st = path.stat()
+    except OSError:
+        return 0, 0
+    return st.st_mtime_ns, st.st_size
 
 
 class Config:
-    def __init__(self, config_path: str | None = None):
-        self.config_path = config_path or os.environ.get("CONFIG_PATH", "config.yaml")
-        self._model: AppConfig | None = None
+    def __init__(self, root: str | Path = "."):
+        self.root = Path(root)
+        self.settings_path = self.root / "data" / "settings.yaml"
+        self.secrets_path = self.root / "data" / "secrets.yaml"
+        self.db_path = self.root / "data" / "twipsybot.db"
+        self.log_path = self.root / "data" / "logs" / "twipsybot.log"
         self.data: dict[str, Any] = {}
+        self.fingerprint: tuple[tuple[int, int], ...] = ()
+        self._watched: tuple[Path, ...] = (self.settings_path, self.secrets_path)
 
-    def load(self) -> None:
-        config_path = Path(self.config_path)
-        merged = self._load_yaml_config(config_path)
-        self._apply_env_overrides(merged)
-        self._expand_prompt_files(merged, project_root=config_path.resolve().parent)
-        self._model = self._validate_model(merged)
-        self.data = self._model.model_dump(by_alias=True)
-        self._ensure_paths()
-
-    @staticmethod
-    def _load_yaml_config(config_path: Path) -> dict[str, Any]:
-        if not config_path.exists():
-            return {}
-        if not config_path.is_file():
-            raise ConfigurationError(f"config path is not a file: {config_path}")
-        try:
-            raw = config_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError as e:
-            raise ConfigurationError(f"Config file decode error: {e}") from e
-        except OSError as e:
-            raise ConfigurationError(f"Config file read error: {e}") from e
-        try:
-            loaded = yaml.safe_load(raw) or {}
-        except yaml.YAMLError as e:
-            raise ConfigurationError(f"YAML config parse error: {e}") from e
-        if not isinstance(loaded, dict):
-            raise ConfigurationError("config file root node must be an object")
-        return loaded
-
-    @staticmethod
-    def _apply_env_overrides(config: dict[str, Any]) -> None:
-        for env_name, key in _ENV_TO_KEY.items():
-            if (env_value := os.environ.get(env_name)) is not None:
-                _set_dotted(config, key, env_value)
-
-    @staticmethod
-    def _expand_prompt_files(config: dict[str, Any], *, project_root: Path) -> None:
-        for key in (ConfigKeys.BOT_SYSTEM_PROMPT, ConfigKeys.BOT_AUTO_POST_PROMPT):
-            value = _get_dotted(config, key)
-            if not isinstance(value, str):
-                continue
-            _set_dotted(
-                config,
-                key,
-                _maybe_load_text_file(value, project_root=project_root),
+    def load(self) -> dict[str, Any]:
+        watched = [self.settings_path, self.secrets_path]
+        stats = [_stat(path) for path in watched]
+        raw = read_settings(self.settings_path)
+        for key in PROMPT_KEYS:
+            value = get_dotted(raw, key)
+            if isinstance(value, str) and (path := _prompt_file(value, self.root)):
+                watched.append(path)
+                stats.append(_stat(path))
+                set_dotted(raw, key, path.read_text(encoding="utf-8").strip())
+        data = _validate(Settings, raw).model_dump(by_alias=True)
+        secrets = _validate(Secrets, read_settings(self.secrets_path))
+        data["connect"] = {f: secrets.resolve(f, env) for f, env in SECRETS.items()}
+        if missing := [f for f in _REQUIRED_SECRETS if not data["connect"][f]]:
+            raise ConfigurationError(
+                f"missing {', '.join(missing)}; set them with `twipsybot cfg`"
             )
-
-    @staticmethod
-    def _validate_model(config: dict[str, Any]) -> AppConfig:
         try:
-            return AppConfig.model_validate(config)
-        except ValidationError as e:
-            raise ConfigurationError(str(e)) from e
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise ConfigurationError(f"cannot create {self.log_path.parent}") from e
+        old, self.data = self.data, data
+        self._watched = tuple(watched)
+        self.fingerprint = tuple(stats)
+        return old
 
-    def _ensure_paths(self) -> None:
-        for key, desc in (
-            (ConfigKeys.DB_PATH, "database directory"),
-            (ConfigKeys.LOG_PATH, "log directory"),
-        ):
-            path = self.get(key)
-            if not isinstance(path, str) or not path:
-                continue
-            try:
-                Path(path).parent.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                raise ConfigurationError(f"failed to create {desc}: {path}") from e
+    def stat(self) -> tuple[tuple[int, int], ...]:
+        return tuple(_stat(path) for path in self._watched)
 
     def get(self, key: str, default: Any = _MISSING) -> Any:
-        if self._model is None:
-            if default is not _MISSING:
-                return default
-            return None
-        value = _get_dotted(self.data, key)
+        value = get_dotted(self.data, key)
         if value is None and default is not _MISSING:
             return default
         return value
 
     def get_required(self, key: str, desc: str | None = None) -> Any:
         value = self.get(key)
-        if value is None:
-            raise ConfigurationError(f"missing required config: {desc or key}")
-        if isinstance(value, str) and not value.strip():
+        if value is None or (isinstance(value, str) and not value.strip()):
             raise ConfigurationError(f"missing required config: {desc or key}")
         return value

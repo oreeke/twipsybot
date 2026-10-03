@@ -21,12 +21,6 @@ htmlcov/
 *.swp
 *.swo
 
-# Config files
-config.yaml
-!config.yaml.example
-docker-compose.yaml
-!docker-compose.yaml.example
-
 # Text files
 *.txt
 

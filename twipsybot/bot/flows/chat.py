@@ -115,7 +115,7 @@ class ChatHandler:
         return handled
 
     async def handle(self, message: dict[str, Any]) -> None:
-        chat_enabled = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT)
+        chat_enabled = self.bot.config.get(ConfigKeys.REPLY_CHAT)
         admin_command = extract_chat_text(message).startswith("^")
         if not chat_enabled and not admin_command:
             return
@@ -125,7 +125,7 @@ class ChatHandler:
         if self.bot.bot_user_id and extract_user_id(message) == self.bot.bot_user_id:
             return
         maybe_log_event_dump(
-            bool(self.bot.config.get(ConfigKeys.LOG_DUMP_EVENTS)),
+            bool(self.bot.config.get(ConfigKeys.SYSTEM_DUMP_EVENTS)),
             kind="Chat",
             payload=message,
         )
@@ -170,7 +170,7 @@ class ChatHandler:
         ctx = self._parse_chat_context(message)
         if not ctx:
             return
-        limit: int = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_MEMORY)
+        limit: int = self.bot.config.get(ConfigKeys.REPLY_MEMORY)
         user_content_ai = f"{ctx.username}: {ctx.text}" if ctx.room_id else ctx.text
 
         def log_incoming() -> None:
@@ -345,7 +345,7 @@ class ChatHandler:
         room_id: str | None,
         limit: int,
     ) -> str:
-        token_budget = self.bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT_CONTEXT_TOKENS)
+        token_budget = self.bot.config.get(ConfigKeys.REPLY_CTX_TOKENS)
         history = (
             await self.get_or_load_history(
                 conversation_id, limit=limit, user_id=user_id, room_id=room_id

@@ -1,6 +1,7 @@
 from importlib.metadata import version as package_version
 
 import click
+from dotenv import load_dotenv
 
 from ..shared.config import Config
 from ..shared.exceptions import ConfigurationError
@@ -13,6 +14,7 @@ from . import main as app_main
 )
 @click.pass_context
 def app(ctx: click.Context) -> None:
+    load_dotenv()
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
@@ -20,6 +22,13 @@ def app(ctx: click.Context) -> None:
 @app.command("run")
 def run() -> int:
     return app_main.main()
+
+
+@app.command("cfg")
+def cfg() -> None:
+    from ..tui import run as run_tui
+
+    run_tui(Config())
 
 
 @app.command("config-check")

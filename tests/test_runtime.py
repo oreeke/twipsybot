@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import signal
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
-from conftest import MakeBot, MakePluginDir, WriteConfig
+from apscheduler.triggers.combining import OrTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+from conftest import MakeBot, MakePluginDir, WriteConfig, set_plugin_config
 
 from twipsybot import MisskeyBot
 from twipsybot.admin.service import AdminCommandService
@@ -26,8 +28,8 @@ from twipsybot.shared.exceptions import (
     APINotFoundError,
     APIPermissionError,
     APIRateLimitError,
-    ConfigurationError,
 )
+from twipsybot.shared.settings import read_settings, write_settings
 
 
 @pytest.mark.parametrize("plugin_count", (0, 5))
@@ -37,7 +39,7 @@ async def test_admin_status_preserves_code_block_layout(
     monkeypatch: pytest.MonkeyPatch,
     plugin_count: int,
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
     bot.runtime.startup_time = datetime.now(UTC)
     bot.bot_username = "testbot"
     bot.bot_user_id = "bot-id"
@@ -172,29 +174,34 @@ async def test_admin_status_reports_stream_task_state(
 
 
 @pytest.mark.parametrize(
-    ("enabled", "count", "scheduler_state", "has_job", "expected"),
+    ("autopost", "count", "scheduler_state", "has_job", "expected"),
     (
-        (False, 2, 1, True, "已关闭"),
-        (True, 5, 1, True, "今日已达上限"),
-        (True, 2, 0, True, "未调度"),
-        (True, 2, 2, True, "未调度"),
-        (True, 2, 1, False, "未调度"),
-        (True, 2, 1, True, "下次"),
+        ({"rotation": False}, 2, 1, True, "发帖  已关闭"),
+        ({}, 5, 1, True, "发帖  轮转 5/5 · 今日已达上限"),
+        ({}, 2, 0, True, "发帖  轮转 2/5 · 未调度"),
+        ({}, 2, 2, True, "发帖  轮转 2/5 · 未调度"),
+        ({}, 2, 1, False, "发帖  轮转 2/5 · 未调度"),
+        ({}, 2, 1, True, "发帖  轮转 2/5 · 下次"),
+        (
+            {"rotation": False, "schedule": True, "times": ["09:00", "21:00"]},
+            9,
+            1,
+            True,
+            "发帖  定时 2 个时间点 · 下次",
+        ),
     ),
 )
 async def test_admin_status_reports_auto_post_schedule(
     make_bot: MakeBot,
     write_config: WriteConfig,
     monkeypatch: pytest.MonkeyPatch,
-    enabled: bool,
+    autopost: dict[str, Any],
     count: int,
     scheduler_state: int,
     has_job: bool,
     expected: str,
 ) -> None:
-    bot = await make_bot(
-        write_config(bot={"auto_post": {"enabled": enabled, "max_posts_per_day": 5}})
-    )
+    bot = await make_bot(write_config(autopost={"daily_max": 5, **autopost}))
     bot.auto_post.posts_today = count
     next_run = datetime(2026, 9, 9, 14, 30, tzinfo=UTC)
     scheduler = SimpleNamespace(
@@ -205,8 +212,8 @@ async def test_admin_status_reports_auto_post_schedule(
     )
     monkeypatch.setattr(bot, "scheduler", scheduler)
     text = bot.admin._get_auto_post_status_text()
-    assert text.startswith(f"发帖  {count}/5 · {expected}")
-    if expected == "下次":
+    assert text.startswith(expected)
+    if expected.endswith("下次"):
         assert next_run.astimezone().strftime("%m-%d %H:%M %z") in text
     else:
         assert "下次" not in text
@@ -339,34 +346,90 @@ def test_cli_propagates_run_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     assert app_cli.main() == 4
 
 
-@pytest.mark.parametrize(("hold", "expected"), ((False, 2), (True, 0)))
-def test_startup_error_hold_is_container_only(
-    monkeypatch: pytest.MonkeyPatch, hold: bool, expected: int
+async def test_startup_waits_for_settings_then_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def fail_start(_: app_main.BotRunner) -> None:
-        raise ConfigurationError("invalid")
+    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "OPENAI_API_KEY"):
+        monkeypatch.delenv(env, raising=False)
+    bot = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
+    monkeypatch.setattr(app_main, "MisskeyBot", lambda _: bot)
+    monkeypatch.setattr(app_main, "_RETRY_POLL_SECONDS", 0.01)
+    config = app_main.Config(tmp_path)
+    runner = app_main.BotRunner()
+    started = asyncio.create_task(runner._start(config))
+    await asyncio.sleep(0.05)
+    assert not started.done()
 
-    wait = AsyncMock()
-    monkeypatch.setattr(app_main.BotRunner, "run", fail_start)
-    monkeypatch.setattr(app_main, "_hold_until_terminated", wait)
-    if hold:
-        monkeypatch.setenv("TWIPSYBOT_HOLD_ON_STARTUP_ERROR", "1")
-    else:
-        monkeypatch.delenv("TWIPSYBOT_HOLD_ON_STARTUP_ERROR", raising=False)
+    write_settings(
+        config.secrets_path,
+        {
+            "misskey_url": "https://m.example",
+            "misskey_token": "t",
+            "openai_api_key": "k",
+        },
+    )
 
-    assert app_main.main() == expected
-    assert wait.await_count == int(hold)
+    async with asyncio.timeout(1):
+        assert await started is True
+    bot.start.assert_awaited_once()
 
 
-async def test_startup_error_hold_stops_on_termination_signal(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_startup_retries_after_connection_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def terminate(handler: Any) -> None:
-        handler(signal.SIGTERM)
+    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "OPENAI_API_KEY"):
+        monkeypatch.setenv(env, "x")
+    bot = SimpleNamespace(
+        start=AsyncMock(side_effect=[APIConnectionError(), None]), stop=AsyncMock()
+    )
+    monkeypatch.setattr(app_main, "MisskeyBot", lambda _: bot)
+    monkeypatch.setattr(app_main, "_RETRY_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(app_main, "_RETRY_CONNECT_SECONDS", 0.05)
+    error_log = Mock()
+    monkeypatch.setattr(app_main.logger, "error", error_log)
+    runner = app_main.BotRunner()
 
-    monkeypatch.setattr(app_main, "_set_termination_handlers", terminate)
+    async with asyncio.timeout(1):
+        assert await runner._start(app_main.Config(tmp_path)) is True
+    assert bot.start.await_count == 2
+    bot.stop.assert_awaited_once()
+    error_log.assert_called_once_with("Startup blocked: APIConnectionError")
 
-    await app_main._hold_until_terminated()
+
+async def test_startup_waits_on_token_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "OPENAI_API_KEY"):
+        monkeypatch.setenv(env, "x")
+    bot = SimpleNamespace(
+        start=AsyncMock(side_effect=APIPermissionError()), stop=AsyncMock()
+    )
+    monkeypatch.setattr(app_main, "MisskeyBot", lambda _: bot)
+    monkeypatch.setattr(app_main, "_RETRY_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(app_main, "_RETRY_CONNECT_SECONDS", 0.01)
+    runner = app_main.BotRunner()
+    started = asyncio.create_task(runner._start(app_main.Config(tmp_path)))
+    await asyncio.sleep(0.1)
+
+    assert not started.done()
+    assert bot.start.await_count == 1
+    runner.shutdown_event.set()
+    async with asyncio.timeout(1):
+        assert await started is False
+
+
+async def test_startup_wait_stops_on_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "OPENAI_API_KEY"):
+        monkeypatch.delenv(env, raising=False)
+    runner = app_main.BotRunner()
+    started = asyncio.create_task(runner._start(app_main.Config(tmp_path)))
+    await asyncio.sleep(0.05)
+    runner.shutdown_event.set()
+
+    async with asyncio.timeout(1):
+        assert await started is False
 
 
 async def test_database_persists_updates_and_cleans_expired_state(
@@ -422,36 +485,73 @@ async def test_legacy_permanent_turn_block_migrates_to_blacklist(
     )
 
     assert blocked == (False, "")
-    assert bot.config.get(ConfigKeys.BOT_RESPONSE_BLACKLIST) == ["legacy-user"]
-    assert (
-        await bot.db.get_plugin_data("Admin", ConfigKeys.BOT_RESPONSE_BLACKLIST)
-        == '["legacy-user"]'
-    )
+    assert bot.config.get(ConfigKeys.REPLY_BLACKLIST) == ["legacy-user"]
+    assert read_settings(bot.config.settings_path)["reply"]["blacklist"] == [
+        "legacy-user"
+    ]
     assert await bot.db.get_response_limit_state("legacy-user") == (1.0, 0, None)
 
 
-async def test_model_reset_preserves_runtime_config(
+async def test_admin_commands_persist_to_settings(
     make_bot: MakeBot, write_config: WriteConfig
 ) -> None:
-    bot = await make_bot(
-        write_config(
-            openai={"model": "default-model"},
-        )
-    )
-    bot.admin._handle_set_bool("chat", ConfigKeys.BOT_RESPONSE_CHAT, "off")
+    bot = await make_bot(write_config())
+    await bot.admin._handle_set_bool("chat", ConfigKeys.REPLY_CHAT, "off")
     await bot.admin._handle_model("temporary-model")
+
+    assert bot.openai.model == "temporary-model"
+    assert read_settings(bot.config.settings_path)["bot"]["model"] == "temporary-model"
 
     response = await bot.admin._handle_model("reset")
 
-    assert response == "已恢复默认模型: default-model"
-    assert bot.openai.model == "default-model"
-    assert bot.config.get(ConfigKeys.BOT_RESPONSE_CHAT) is False
+    assert response == "已恢复默认模型: deepseek-flash"
+    assert bot.openai.model == "deepseek-flash"
+    assert "model" not in read_settings(bot.config.settings_path)["bot"]
+    assert bot.config.get(ConfigKeys.REPLY_CHAT) is False
+
+
+async def test_settings_reload_applies_live_and_flags_restart(
+    make_bot: MakeBot, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bot = await make_bot(write_config())
+    warning = Mock()
+    monkeypatch.setattr("twipsybot.bot.engine.reload.logger.warning", warning)
+    settings = read_settings(bot.config.settings_path)
+    settings["bot"] = {
+        "system_prompt": "新的人设",
+        "admins": ["user-9"],
+        "model": "live-model",
+        "api_mode": "responses",
+    }
+    settings["timeline"] = {"home": True}
+    settings["system"] = {"dump_events": True}
+    write_settings(bot.config.settings_path, settings)
+
+    assert await bot.settings.reload() == {}
+
+    assert bot.openai.model == "live-model"
+    assert bot.openai.api_mode == "responses"
+    assert bot.system_prompt == "新的人设"
+    assert bot.admin.allowed_users == {"user-9"}
+    assert bot.streaming.log_dump_events is True
+    warning.assert_called_once_with("Restart required for: timeline.home")
+
+
+async def test_settings_reload_keeps_current_on_invalid_file(
+    make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    bot = await make_bot(write_config())
+    bot.config.settings_path.write_text("reply: {memory: 999}\n", encoding="utf-8")
+
+    assert await bot.settings.reload() == {}
+    assert bot.config.get(ConfigKeys.REPLY_MEMORY) == 10
+    assert bot.config.fingerprint == bot.config.stat()
 
 
 async def test_admin_resets_auto_post_counter(
     make_bot: MakeBot, write_config: WriteConfig
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
     await bot.auto_post.post_count()
 
     response = await bot.admin.on_message(
@@ -472,7 +572,7 @@ async def test_admin_reloads_plugin_config(
 ) -> None:
     plugins_dir = make_plugin_dir("demo")
     bot = await make_bot(
-        write_config(bot={"admin": {"allowed_users": ["user-2"]}}),
+        write_config(bot={"admins": ["user-2"]}),
         plugins_dir=plugins_dir,
     )
     user = {"id": "user-2", "username": "bob"}
@@ -483,13 +583,9 @@ async def test_admin_reloads_plugin_config(
         return response
 
     assert "插件 demo 已重载" in await run("^reload demo")
-    (plugins_dir / "demo" / "config.yaml").write_text(
-        "enabled: false\n", encoding="utf-8"
-    )
+    set_plugin_config(bot.config.root, "demo", {"enabled": False})
     assert "插件 demo 已按配置禁用" in await run("^reload demo")
-    (plugins_dir / "demo" / "config.yaml").write_text(
-        "enabled: true\npriority: x\n", encoding="utf-8"
-    )
+    set_plugin_config(bot.config.root, "demo", {"enabled": True, "priority": "x"})
     assert "重载失败，已禁用" in await run("^reload demo")
     assert "未知插件: ghost" in await run("^reload ghost")
     assert "用法: ^reload <插件名>" in await run("^reload")
@@ -515,7 +611,7 @@ def _cleanable_note(note_id: str, created_at: str) -> dict[str, Any]:
 async def test_admin_clean_posts_preview_uses_requested_format(
     make_bot: MakeBot, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
     notes = [
         _cleanable_note("new-note", "2026-01-02T00:00:00Z"),
         _cleanable_note("old-note", "2025-01-02T00:00:00Z"),
@@ -540,7 +636,7 @@ async def test_admin_clean_posts_preview_uses_requested_format(
 async def test_admin_clean_posts_rechecks_and_deletes_oldest_first(
     make_bot: MakeBot, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
     new_note = _cleanable_note("new-note", "2026-01-02T00:00:00Z")
     old_note = _cleanable_note("old-note", "2025-01-02T00:00:00Z")
     delete_note = AsyncMock(return_value={})
@@ -571,7 +667,7 @@ async def test_admin_clean_posts_rechecks_and_deletes_oldest_first(
 async def test_admin_clean_posts_skips_note_interacted_with_before_delete(
     make_bot: MakeBot, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
     note = _cleanable_note("note-1", "2025-01-02T00:00:00Z")
     interacted = {**note, "reactionCount": 1, "reactions": {"👍": 1}}
     delete_note = AsyncMock(return_value={})
@@ -597,7 +693,7 @@ async def test_admin_clean_posts_skips_note_interacted_with_before_delete(
 async def test_admin_clean_posts_limits_each_batch_to_300(
     make_bot: MakeBot, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
     notes = [
         _cleanable_note(f"note-{index}", "2025-01-02T00:00:00Z") for index in range(301)
     ]
@@ -634,7 +730,7 @@ async def test_admin_clean_posts_stops_and_reports_transient_error(
     monkeypatch: pytest.MonkeyPatch,
     error: Exception,
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
     notes = [
         _cleanable_note(f"note-{index}", "2025-01-02T00:00:00Z") for index in range(3)
     ]
@@ -666,7 +762,7 @@ async def test_admin_clean_posts_stops_and_reports_transient_error(
 async def test_admin_clean_posts_skips_note_deleted_during_recheck(
     make_bot: MakeBot, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
     notes = [
         _cleanable_note(f"note-{index}", "2025-01-02T00:00:00Z") for index in range(2)
     ]
@@ -698,7 +794,7 @@ async def test_admin_clean_posts_skips_note_deleted_during_recheck(
 async def test_admin_clean_posts_only_skips_missing_resources(
     make_bot: MakeBot, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
     note = _cleanable_note("note-1", "2025-01-02T00:00:00Z")
     cutoff = datetime.now(UTC)
 
@@ -720,7 +816,7 @@ async def test_admin_clean_posts_only_accepts_exact_y_confirmation(
     monkeypatch: pytest.MonkeyPatch,
     confirmation: str,
 ) -> None:
-    bot = await make_bot(write_config(bot={"admin": {"allowed_users": ["user-2"]}}))
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
     get_user_notes = AsyncMock()
     monkeypatch.setattr(bot.misskey, "get_user_notes", get_user_notes)
 
@@ -739,9 +835,7 @@ async def test_admin_clean_posts_only_accepts_exact_y_confirmation(
 async def test_admin_string_allowlist_uses_exact_match(
     make_bot: MakeBot, write_config: WriteConfig
 ) -> None:
-    bot = await make_bot(
-        write_config(bot={"admin": {"allowed_users": "admin@example.com"}})
-    )
+    bot = await make_bot(write_config(bot={"admins": ["admin@example.com"]}))
 
     response = await bot.admin.on_message(
         {
@@ -766,10 +860,8 @@ async def test_admin_can_reenable_chat(
     monkeypatch.setattr("twipsybot.bot.flows.chat.logger.info", info_log)
     bot = await make_bot(
         write_config(
-            bot={
-                "admin": {"allowed_users": ["user-2"]},
-                "response": {"blacklist": ["user-2"], "rate_limit": "1h"},
-            }
+            bot={"admins": ["user-2"]},
+            reply={"blacklist": ["user-2"], "rate_limit": "1h"},
         )
     )
     plugin_hook = AsyncMock(wraps=bot.plugin_manager.call_plugin_hook)
@@ -780,11 +872,11 @@ async def test_admin_can_reenable_chat(
         "user": {"id": "user-2", "username": "bob"},
     }
     await bot.chat.handle(message)
-    assert bot.config.get("bot.response.chat") is False
+    assert bot.config.get("reply.chat") is False
 
     await bot.chat.handle({**message, "id": "message-2", "text": "^chat on"})
 
-    assert bot.config.get("bot.response.chat") is True
+    assert bot.config.get("reply.chat") is True
     assert any(
         call.args == ("Chat handled by Admin",) for call in debug_log.call_args_list
     )
@@ -902,9 +994,9 @@ async def test_auto_post_suppresses_cancellation_during_shutdown() -> None:
     bot = SimpleNamespace(
         config=SimpleNamespace(
             get=lambda key, default=None: {
-                ConfigKeys.BOT_AUTO_POST_ENABLED: True,
-                ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY: 1,
-                ConfigKeys.BOT_AUTO_POST_LOCAL_ONLY: False,
+                ConfigKeys.POST_ROTATION: True,
+                ConfigKeys.POST_DAILY_MAX: 1,
+                ConfigKeys.POST_LOCAL_ONLY: False,
             }.get(key, default)
         ),
         runtime=SimpleNamespace(running=True),
@@ -924,9 +1016,9 @@ async def test_auto_post_propagates_cancellation_while_running() -> None:
     bot = SimpleNamespace(
         config=SimpleNamespace(
             get=lambda key, default=None: {
-                ConfigKeys.BOT_AUTO_POST_ENABLED: True,
-                ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY: 1,
-                ConfigKeys.BOT_AUTO_POST_LOCAL_ONLY: False,
+                ConfigKeys.POST_ROTATION: True,
+                ConfigKeys.POST_DAILY_MAX: 1,
+                ConfigKeys.POST_LOCAL_ONLY: False,
             }.get(key, default)
         ),
         runtime=SimpleNamespace(running=True),
@@ -936,3 +1028,54 @@ async def test_auto_post_propagates_cancellation_while_running() -> None:
 
     with pytest.raises(asyncio.CancelledError):
         await service.run()
+
+
+async def test_auto_post_schedule_follows_settings(
+    make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    bot = await make_bot(write_config())
+    bot.auto_post.apply_schedule(initial=True)
+    job = bot.scheduler.get_job("auto_post")
+    assert isinstance(job.trigger, IntervalTrigger)
+    assert job.trigger.interval.total_seconds() == 10800
+
+    settings = read_settings(bot.config.settings_path)
+    settings["autopost"] = {
+        "rotation": False,
+        "schedule": True,
+        "times": ["21:30", "08:00"],
+    }
+    write_settings(bot.config.settings_path, settings)
+    await bot.settings.reload()
+
+    trigger = bot.scheduler.get_job("auto_post").trigger
+    assert isinstance(trigger, OrTrigger)
+    now = datetime(2026, 10, 3, 9, 0, tzinfo=trigger.triggers[0].timezone)
+    fire = trigger.get_next_fire_time(None, now)
+    assert fire is not None
+    assert (fire.hour, fire.minute) == (21, 30)
+    assert bot.auto_post.mode == "schedule"
+
+    settings["autopost"] = {"rotation": False}
+    write_settings(bot.config.settings_path, settings)
+    await bot.settings.reload()
+
+    assert bot.scheduler.get_job("auto_post") is None
+    assert bot.auto_post.mode == "off"
+
+
+async def test_admin_autopost_switches_mode(
+    make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    bot = await make_bot(write_config())
+
+    assert "需要先" in await bot.admin._handle_autopost("schedule")
+    assert bot.auto_post.mode == "rotation"
+    assert "用法" in await bot.admin._handle_autopost("on")
+
+    await bot.settings.update({ConfigKeys.POST_TIMES: ["09:00"]})
+    assert await bot.admin._handle_autopost("schedule") == "autopost: schedule"
+    post = read_settings(bot.config.settings_path)["autopost"]
+    assert (post.get("rotation", False), post["schedule"]) == (False, True)
+    assert await bot.admin._handle_autopost("off") == "autopost: off"
+    assert bot.auto_post.mode == "off"

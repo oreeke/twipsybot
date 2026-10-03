@@ -1,5 +1,4 @@
 import asyncio
-import json
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version as package_version
@@ -8,6 +7,7 @@ from urllib.parse import urlsplit
 
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 
+from ..bot.flows.post import JOB_ID as AUTO_POST_JOB_ID
 from ..shared.config_keys import ConfigKeys
 from ..shared.exceptions import (
     APIBadRequestError,
@@ -44,10 +44,6 @@ class CmdHandlersMixin:
     name: str
     commands: dict[str, Any]
     allowed_users: frozenset[str]
-    _default_model: str
-
-    def _set_global_config_value(self, path: str, value: Any) -> None:
-        raise NotImplementedError
 
     def _log_plugin_action(self, action: str, details: str = "") -> None:
         raise NotImplementedError
@@ -58,9 +54,9 @@ class CmdHandlersMixin:
 
     def _get_feature_toggle_text(self) -> str:
         cfg = self.global_config
-        chat = "on" if cfg.get(ConfigKeys.BOT_RESPONSE_CHAT) else "off"
-        mention = "on" if cfg.get(ConfigKeys.BOT_RESPONSE_MENTION) else "off"
-        autopost = "on" if cfg.get(ConfigKeys.BOT_AUTO_POST_ENABLED) else "off"
+        chat = "on" if cfg.get(ConfigKeys.REPLY_CHAT) else "off"
+        mention = "on" if cfg.get(ConfigKeys.REPLY_MENTION) else "off"
+        autopost = self.bot.auto_post.mode
         return f"开关  chat={chat} mention={mention} autopost={autopost}"
 
     def _get_plugin_status_text(self) -> str | None:
@@ -93,14 +89,19 @@ class CmdHandlersMixin:
         return f"任务  stream {stream} · scheduler {scheduler}"
 
     def _get_auto_post_status_text(self) -> str:
-        count = self.bot.auto_post.daily_post_count
-        limit = self.global_config.get(ConfigKeys.BOT_AUTO_POST_MAX_PER_DAY)
-        text = f"发帖  {count}/{limit}"
-        if not self.global_config.get(ConfigKeys.BOT_AUTO_POST_ENABLED):
-            return f"{text} · 已关闭"
-        if count >= limit:
-            return f"{text} · 今日已达上限"
-        job = self.bot.scheduler.get_job("auto_post")
+        match self.bot.auto_post.mode:
+            case "off":
+                return "发帖  已关闭"
+            case "rotation":
+                count = self.bot.auto_post.daily_post_count
+                limit = self.global_config.get(ConfigKeys.POST_DAILY_MAX)
+                text = f"发帖  轮转 {count}/{limit}"
+                if count >= limit:
+                    return f"{text} · 今日已达上限"
+            case _:
+                times = self.global_config.get(ConfigKeys.POST_TIMES)
+                text = f"发帖  定时 {len(times)} 个时间点"
+        job = self.bot.scheduler.get_job(AUTO_POST_JOB_ID)
         next_run = getattr(job, "next_run_time", None)
         if self.bot.scheduler.state != STATE_RUNNING or next_run is None:
             return f"{text} · 未调度"
@@ -365,28 +366,21 @@ class CmdHandlersMixin:
             f"跳过 {skipped} 条 · 未处理 {unprocessed} 条"
         )
 
-    def _handle_set_bool(self, label: str, key: str, args: str) -> str:
+    async def _handle_set_bool(self, label: str, key: str, args: str) -> str:
         action = args.strip().lower()
         if action not in {"on", "off"}:
             return f"用法: ^{label} on|off"
-        value = action == "on"
-        self._set_global_config_value(key, value)
+        await self.bot.settings.update({key: action == "on"})
         return f"{label}: {action}"
 
     async def _handle_model(self, args: str) -> str:
         model = args.strip()
         if not model:
-            saved = await self.db.get_plugin_data(self.name, ConfigKeys.OPENAI_MODEL)
-            suffix = f"\n已保存覆盖: {saved}" if saved else ""
-            return f"当前模型: {self.openai.model}{suffix}"
+            return f"当前模型: {self.openai.model}"
         if model.lower() in {"reset", "default"}:
-            await self.db.delete_plugin_data(self.name, ConfigKeys.OPENAI_MODEL)
-            self.openai.model = self._default_model
-            self._set_global_config_value(ConfigKeys.OPENAI_MODEL, self._default_model)
-            return f"已恢复默认模型: {self._default_model}"
-        self.openai.model = model
-        self._set_global_config_value(ConfigKeys.OPENAI_MODEL, model)
-        await self.db.set_plugin_data(self.name, ConfigKeys.OPENAI_MODEL, model)
+            await self.bot.settings.update({ConfigKeys.BOT_MODEL: None})
+            return f"已恢复默认模型: {self.openai.model}"
+        await self.bot.settings.update({ConfigKeys.BOT_MODEL: model})
         return f"已切换模型: {model}"
 
     @staticmethod
@@ -404,31 +398,7 @@ class CmdHandlersMixin:
     def _format_plain_list_update(message: str, items: list[str]) -> str:
         return "\n".join([message, "", *(items or ["(空)"])])
 
-    async def _apply_saved_response_user_list(self, key: str) -> None:
-        saved = await self.db.get_plugin_data(self.name, key)
-        if not saved:
-            return
-        try:
-            decoded = json.loads(saved)
-        except json.JSONDecodeError:
-            decoded = saved
-        normalized = normalize_tokens(decoded, lower=True)
-        self._set_global_config_value(key, normalized)
-        self._log_plugin_action("applied config override", f"{key}={len(normalized)}")
-
-    async def _save_response_user_list(self, key: str, items: list[str]) -> None:
-        self._set_global_config_value(key, items)
-        await self.db.set_plugin_data(
-            self.name, key, json.dumps(items, ensure_ascii=False, separators=(",", ":"))
-        )
-
-    async def _reset_response_user_list(self, key: str, baseline: list[str]) -> None:
-        self._set_global_config_value(key, list(baseline))
-        await self.db.delete_plugin_data(self.name, key)
-
-    async def _handle_response_user_list(
-        self, label: str, key: str, args: str, baseline: list[str]
-    ) -> str:
+    async def _handle_response_user_list(self, label: str, key: str, args: str) -> str:
         current = normalize_tokens(self.global_config.get(key), lower=True)
         parts = args.strip().split(maxsplit=1)
         if not parts or parts[0].lower() in {"list", "status", "show"}:
@@ -437,9 +407,6 @@ class CmdHandlersMixin:
         values = normalize_tokens(parts[1] if len(parts) > 1 else "", lower=True)
         if action in {"clear", "empty"}:
             updated: list[str] = []
-        elif action in {"reset", "default"}:
-            await self._reset_response_user_list(key, baseline)
-            return self._format_plain_list_update(f"已恢复 {label}", baseline)
         elif action in {"add", "+", "append"} and values:
             existing = set(current)
             updated = current + [value for value in values if value not in existing]
@@ -449,6 +416,6 @@ class CmdHandlersMixin:
         elif action in {"set", "="}:
             updated = values
         else:
-            return f"用法: ^{label} [list|add|del|set|clear|reset]"
-        await self._save_response_user_list(key, updated)
+            return f"用法: ^{label} [list|add|del|set|clear]"
+        await self.bot.settings.update({key: updated})
         return self._format_plain_list_update(f"已更新 {label}", updated)

@@ -24,7 +24,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 \
-    TWIPSYBOT_HOLD_ON_STARTUP_ERROR=1
+    COLORTERM=truecolor
 
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin/twipsybot /usr/local/bin/twipsybot

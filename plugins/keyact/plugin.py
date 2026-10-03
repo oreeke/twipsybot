@@ -2,10 +2,11 @@ import re
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from pydantic import StringConstraints, field_validator
+from pydantic import BeforeValidator, Field, StringConstraints, field_validator
 
 from twipsybot.plugin import (
     HandledResult,
+    LineText,
     MentionEvent,
     MessageEvent,
     PluginBase,
@@ -13,6 +14,19 @@ from twipsybot.plugin import (
 )
 
 _MENTION_TOKEN_RE = re.compile(r"@[\w.@-]+\s*")
+_KEYWORD_SEP_RE = re.compile(r"[,，|]")
+
+
+def _parse_rule(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    keywords, sep, response = value.partition("=")
+    if not sep:
+        raise ValueError(f"rule must be `keywords = response`: {value}")
+    return {
+        "keywords": [k for k in _KEYWORD_SEP_RE.split(keywords) if k.strip()],
+        "response": response.replace("\\n", "\n"),
+    }
 
 
 @dataclass(slots=True)
@@ -40,11 +54,14 @@ class _Config(PluginConfig):
     mention_enabled: bool = True
     chat_enabled: bool = True
     case_sensitive: bool = False
-    rules: tuple[_RuleConfig, ...] = ()
+    rules: Annotated[
+        tuple[Annotated[_RuleConfig, BeforeValidator(_parse_rule)], ...], LineText
+    ] = Field(default=(), description="ping, hi = pong")
 
 
 class KeyActPlugin(PluginBase):
     api_version = 3
+    priority = 990
     config_class = _Config
     settings: _Config
 

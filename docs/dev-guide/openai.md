@@ -5,7 +5,7 @@ description: 了解 TwipsyBot 使用的 OpenAI 兼容 API、接口模式、多�
 
 # OpenAI
 
-TwipsyBot 使用 OpenAI Python SDK 连接 OpenAI 或兼容服务。协议适配集中在 `twipsybot/clients/openai`，业务代码应调用 `OpenAIAPI`，不应自行创建 SDK 客户端或拼接请求。
+TwipsyBot 使用 OpenAI Python SDK 连接 OpenAI 或兼容服务。`connect.openai_base_url` 原样传给 SDK；留空时由 SDK 读取 `OPENAI_BASE_URL` 或使用 OpenAI 官方端点。协议适配集中在 `twipsybot/clients/openai`，业务代码应调用 `OpenAIAPI`，不应自行创建 SDK 客户端或拼接请求。
 
 插件不应直接导入内部客户端。需要调用模型时，应使用 `PluginContext.openai` 提供的稳定服务接口。可用方法见[插件开发](plugins.md#openai-与-bot)。
 
@@ -20,11 +20,11 @@ TwipsyBot 使用 OpenAI Python SDK 连接 OpenAI 或兼容服务。协议适配�
 
 `generate_text()` 可请求 JSON Object。`generate_chat()` 接收消息列表，并支持文本与图片内容。Moderations 固定使用 `omni-moderation-latest`，兼容服务需要实现 `/moderations`。
 
-图片生成需要配置 `image_model`，可选的 `image_size` 和 `image_quality` 会直接传给兼容服务。服务可返回 Base64 数据或图片 URL。核心只接受 PNG、JPEG 和 WebP，下载或解码后的图片不得超过 32 MiB，随后会上传到 Misskey Drive。图片生成目前不属于插件稳定接口。
+图片生成需要配置 `bot.image_model`，可选的 `image_size` 和 `image_quality` 会直接传给兼容服务。服务可返回 Base64 数据或图片 URL。核心只接受 PNG、JPEG 和 WebP，下载或解码后的图片不得超过 32 MiB，随后会上传到 Misskey Drive。图片生成目前不属于插件稳定接口。
 
 ## 接口模式
 
-`api_mode` 支持以下值：
+`bot.api_mode` 支持以下值：
 
 | 值 | 行为 |
 | --- | --- |
@@ -42,11 +42,11 @@ OpenAI 请求共享最多 16 个并发槽位。SDK 单次请求超时为 60 秒�
 
 `max_tokens` 在 Responses API 中映射为 `max_output_tokens`。Chat Completions 请求 OpenAI 官方域名时使用 `max_completion_tokens`，其他兼容端点使用 `max_tokens`。`temperature` 和 JSON Object 参数会按所选接口转换。
 
-聊天历史按 `chat_context_tokens` 从最新消息向前截取。已知模型使用 tiktoken 对应编码，未知模型使用 `o200k_base`，编码不可用时退回字符数近似计算。分词表缓存在 `data/tiktoken`。
+聊天历史按 `reply.ctx_tokens` 从最新消息向前截取。已知模型使用 tiktoken 对应编码，未知模型使用 `o200k_base`，编码不可用时退回字符数近似计算。分词表缓存在 `data/tiktoken`。
 
 ## 兼容服务
 
-兼容端点至少应实现项目启用能力对应的 API。仅提供 Chat Completions 时，将 `api_mode` 设为 `chat` 可避免首次 Responses 探测。使用 Vision、Images 或 Moderations 前，应分别确认模型支持图片输入、图片生成和 `/moderations`。
+兼容端点至少应实现项目启用能力对应的 API。仅提供 Chat Completions 时，将 `bot.api_mode` 设为 `chat` 可避免首次 Responses 探测。使用 Vision、Images 或 Moderations 前，应分别确认模型支持图片输入、图片生成和 `/moderations`。
 
 新增模型能力时，应在客户端层统一请求格式和响应提取，再由 flow 或插件服务适配器调用。不要让业务代码依赖特定服务商的原始 SDK 响应对象。
 
@@ -56,4 +56,4 @@ OpenAI 请求共享最多 16 个并发槽位。SDK 单次请求超时为 60 秒�
 
 ## API 版本
 
-项目代码和文档基于 OpenAI Python SDK `3.6.0`，并随官方更新同步维护。
+项目代码和文档基于 OpenAI Python SDK `3.24.0`，并随官方更新同步维护。

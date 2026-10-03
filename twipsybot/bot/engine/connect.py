@@ -43,15 +43,15 @@ class StreamingConnector:
 
     def _load_timeline_channels(self) -> set[str]:
         mapping = {
-            ConfigKeys.BOT_TIMELINE_HOME: ChannelType.HOME_TIMELINE.value,
-            ConfigKeys.BOT_TIMELINE_LOCAL: ChannelType.LOCAL_TIMELINE.value,
-            ConfigKeys.BOT_TIMELINE_HYBRID: ChannelType.HYBRID_TIMELINE.value,
-            ConfigKeys.BOT_TIMELINE_GLOBAL: ChannelType.GLOBAL_TIMELINE.value,
+            ConfigKeys.TIMELINE_HOME: ChannelType.HOME_TIMELINE.value,
+            ConfigKeys.TIMELINE_LOCAL: ChannelType.LOCAL_TIMELINE.value,
+            ConfigKeys.TIMELINE_HYBRID: ChannelType.HYBRID_TIMELINE.value,
+            ConfigKeys.TIMELINE_GLOBAL: ChannelType.GLOBAL_TIMELINE.value,
         }
         return {channel for key, channel in mapping.items() if self._config.get(key)}
 
     def load_antenna_selectors(self) -> list[str]:
-        return normalize_tokens(self._config.get(ConfigKeys.BOT_TIMELINE_ANTENNA_IDS))
+        return normalize_tokens(self._config.get(ConfigKeys.TIMELINE_ANTENNAS))
 
     async def resolve_antenna_ids(self, selectors: list[str]) -> list[str]:
         normalized = [s.strip() for s in selectors if isinstance(s, str) and s.strip()]

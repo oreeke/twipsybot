@@ -17,4 +17,6 @@
 ··· [使用手册](https://twipsybot.oreeke.com/) ··· [开发指南](https://twipsybot.oreeke.com/dev-guide/) ··· [变更日志](./CHANGELOG.md) ···
 <br><br>❤️
 
+![Screenshot](./assets/connect.png)
+
 </div>

@@ -7,26 +7,28 @@ description: 配置 TwipsyBot 定时发帖、管理员手动发帖和图片生�
 
 ## 自动发帖
 
-启用 `bot.auto_post.enabled` 后，TwipsyBot 按 `interval` 运行发帖任务。默认提示词会与系统提示词一起交给文本模型。Topics 插件启用后，可以为任务提供 TXT 主题或 RSS 内容。
+自动发帖设置位于 `autopost`，有两种互斥模式，二者共用可见性、联合和提示词设置：
 
-机器人每次启动或重启后，首次自动发帖任务会在约 1 分钟后执行，之后再按 `interval` 运行。如果自动发帖未启用、每日上限已经用完或缺少有效提示词，本次任务会跳过。
+- `rotation`（轮转）：按 `interval` 循环发帖，受 `daily_max` 每日上限约束。机器人启动后约 1 分钟首次执行，之后按间隔运行。
+- `schedule`（定时）：在 `times` 列出的每个时间点各发一次，时间按主机时区计算，不受每日上限约束，也不计入每日计数。
 
-TwipsyBot 会在自动发帖提示词前加入分钟级时间标记，减少 [Prompt caching](https://platform.openai.com/docs/guides/prompt-caching) 重复命中。时间标记不能代替内容来源。希望帖子主题更丰富时，应配置 [Topics](../plugins/topics.md)。
+两个开关默认都关闭，即不自动发帖。在 `twipsybot cfg` 中打开其中一个会自动关闭另一个。`times` 用 `+` 添加时间点、`−` 删除，时与分可从下拉列表选择，展开后也可直接输入数字跳转。最多 24 个时间点，相邻时间点（含跨午夜）至少间隔 5 分钟；轮转间隔同样不得小于 5 分钟。切换模式和修改时间会立即生效。
 
-每日计数保存在 SQLite，并按主机本地日期重置。插件一次返回多篇内容时，每篇都计入 `max_posts_per_day`，帖子之间间隔 10 秒。
+默认提示词会与系统提示词一起交给文本模型。Topics 插件启用后，可以为任务提供 TXT 主题或 RSS 内容。轮转的每日上限已经用完或缺少有效提示词时，本次任务会跳过。
+
+TwipsyBot 会在自动发帖提示词前加入分钟级时间标记，减少 [Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) 重复命中。时间标记不能代替内容来源。希望帖子主题更丰富时，应配置 [Topics](../plugins/topics.md)。
+
+轮转的每日计数保存在 SQLite，并按主机本地日期重置。插件一次返回多篇内容时，帖子之间间隔 10 秒；轮转模式下每篇都计入 `daily_max`。
 
 建议首次配置：
 
 ```yaml
-bot:
-  auto_post:
-    enabled: true
-    interval: 6h
-    max_posts_per_day: 4
-    visibility: "home"
-    local_only: true
-    prompt: |-
-      生成一篇有趣、有见解的社交媒体帖子。
+autopost:
+  schedule: true
+  times: ["08:30", "12:00", "21:00"]
+  visibility: home
+  local_only: true
+  prompt: "生成一篇有趣、有见解的社交媒体帖子。"
 ```
 
 确认内容和频率合适后，再决定是否设为 `public` 或允许联合。
@@ -54,7 +56,7 @@ bot:
 
 ## 图片生成
 
-设置 `openai.image_model` 后，授权管理员可以发送：
+设置 `bot.image_model` 后，授权管理员可以发送：
 
 ```text
 /img 雨后的未来城市车站，清晨，自然光

@@ -28,10 +28,6 @@ htmlcov/
 logs/
 *.log
 
-# Config
-config.yaml
-config.yaml.example
-
 # Temporary files
 *.tmp
 *.bak

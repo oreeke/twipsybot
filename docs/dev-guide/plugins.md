@@ -9,22 +9,15 @@ description: 使用 TwipsyBot 插件 API 创建事件 Hook、配置、存储和�
 
 ```text
 plugins/example/
-├── plugin.py
-└── config.yaml
+└── plugin.py
 ```
 
-`plugin.py` 必须通过模块级 `plugin` 导出插件类。入口按单文件加载，不支持相对导入；多模块插件应使用 Entry Points。
-
-集中配置 `plugins/config.yaml` 中存在同名条目时，会完整取代插件目录的 `config.yaml`，两处不会合并。
+`plugin.py` 必须通过模块级 `plugin` 导出插件类。入口按单文件加载，不支持相对导入；多模块插件应使用 Entry Points。插件配置统一来自 `data/settings.yaml` 的 `plugins.<name>`，也可以通过 `twipsybot cfg` 编辑。
 
 ## 最小插件
 
 ```python
-from twipsybot.plugin import (
-    MentionEvent,
-    PluginBase,
-    PluginConfig,
-)
+from twipsybot.plugin import MentionEvent, PluginBase, PluginConfig
 
 
 class ExampleConfig(PluginConfig):
@@ -33,6 +26,7 @@ class ExampleConfig(PluginConfig):
 
 class ExamplePlugin(PluginBase):
     api_version = 3
+    priority = 100
     config_class = ExampleConfig
     settings: ExampleConfig
 
@@ -45,22 +39,30 @@ class ExamplePlugin(PluginBase):
 plugin = ExamplePlugin
 ```
 
-```yaml
-enabled: true
-priority: 100
-response: "pong"
-```
-
-以上是 `plugins/example/config.yaml`。写入集中配置时使用：
+对应设置：
 
 ```yaml
-example:
+plugins:
+  example:
     enabled: true
-    priority: 100
     response: "pong"
 ```
 
 插件必须用字面量声明其支持的 API 版本。不要将 `api_version` 赋值为宿主当前版本常量，否则宿主升级后无法识别旧插件不兼容。所有被覆盖的生命周期和 Hook 方法必须是异步方法。`PluginConfig` 使用 Pydantic 验证，`enabled`、`priority` 等框架字段不会进入配置模型。验证后的配置通过 `self.settings` 读取，配置实例只读。
+
+`priority` 可作为 `PluginBase` 子类属性提供默认优先级；用户仍可在 `plugins.<name>.priority` 中覆盖。数字越大越先执行。
+
+`twipsybot cfg` 会根据配置模型自动生成表单。列表字段可用 `LineText` 标记，TUI 以多行文本原样保存，用户逐行填写、`#` 开头的行为注释，验证时拆分为非空行列表；元素需要进一步解析时，可在元素类型上叠加 `BeforeValidator`：
+
+```python
+from typing import Annotated
+
+from twipsybot.plugin import LineText, PluginConfig
+
+
+class ExampleConfig(PluginConfig):
+    feeds: Annotated[tuple[str, ...], LineText] = ()
+```
 
 ## 第三方包
 
@@ -79,17 +81,18 @@ from twipsybot.plugin import PluginBase
 
 class ExamplePlugin(PluginBase):
     api_version = 3
+    priority = 100
 
 
 plugin = ExamplePlugin
 ```
 
-入口名称是插件 ID，也是 `plugins/config.yaml` 中的配置键。安装第三方包不会自动启用代码，必须集中配置后才会加载：
+入口名称是插件 ID，也是 `plugins.<name>` 中的配置键。安装第三方包不会自动启用代码，必须配置后才会加载：
 
 ```yaml
-example:
+plugins:
+  example:
     enabled: true
-    priority: 100
 ```
 
 第三方插件的依赖和版本由自身管理。
@@ -118,7 +121,7 @@ class ExampleConfig(PluginConfig):
 
 通过 `_register_resource(resource)` 注册带 `close()` 的资源，基类会在清理时关闭。插件自身创建的任务应在 `on_shutdown()` 中停止，并在 `cleanup()` 中完成最终释放。
 
-管理员执行 `^reload <插件名>` 时，框架会先停止向该插件分发 Hook 并等待进行中的调用结束，然后对旧实例依次调用 `on_shutdown()` 和 `cleanup()`，再用同一类和新配置创建实例并执行 `initialize()`、`on_startup()`。插件无需实现额外接口，只要做到全部运行时状态都在实例内、并在上述两个方法中释放，就能正确重载。不要把状态放在模块或类变量中；需要跨重载保留的数据写入 `storage`。
+配置文件热更新或管理员执行 `^reload <插件名>` 时，框架会先停止向该插件分发 Hook 并等待进行中的调用结束，然后对旧实例依次调用 `on_shutdown()` 和 `cleanup()`，再用同一类和新配置创建实例并执行 `initialize()`、`on_startup()`。插件无需实现额外接口，只要做到全部运行时状态都在实例内、并在上述两个方法中释放，就能正确重载。不要把状态放在模块或类变量中；需要跨重载保留的数据写入 `storage`。
 
 ## 事件 Hook
 
@@ -163,14 +166,14 @@ return {"contents": ["第一篇", "第二篇"], "visibility": "home"}
 return {"prompt": "围绕开源维护写一篇短文。"}
 ```
 
-`contents`、其中的文本和 `prompt` 必须非空。多个插件返回结果时，`contents` 优先于 `prompt`，同类结果按插件优先级取第一个；多篇内容间隔 10 秒发布。两种结果仍受每日上限控制。`PromptModificationResult` 还可提供分钟级整数 `timestamp`。
+`contents`、其中的文本和 `prompt` 必须非空。多个插件返回结果时，`contents` 优先于 `prompt`，同类结果按插件优先级取第一个；多篇内容间隔 10 秒发布。轮转模式下两种结果都受 `autopost.daily_max` 控制，定时模式不受限。`PromptModificationResult` 还可提供分钟级整数 `timestamp`。
 
 ## PluginContext
 
 `self.context` 提供：
 
 - `name`：稳定插件 ID，本地插件为目录名，第三方插件为 Entry Point 名称。
-- `config`：原始插件配置的只读映射。
+- `config`：`plugins.<name>` 原始配置的只读映射。
 - `storage`：以插件 ID 隔离的命名空间，提供 `get`、`set`、`delete`。
 - `misskey`：发帖、转帖、反应、聊天、天线和 Drive 服务。
 - `openai`：文本、聊天和 Moderations API。

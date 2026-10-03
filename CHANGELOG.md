@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.10.0 - 2026-10-03
+
+新增终端配置界面（TUI）与热重载，重构配置体系
+
+### Added
+
+- 新增 `twipsybot cfg` 终端配置界面，按配置模型生成表单，实时校验并标记需要重启的字段
+- 运行中热重载 `data/settings.yaml` 与提示词文件，插件配置变更自动重载对应插件
+- 自动发帖新增定时模式，可设置最多 24 个每日时间点，与间隔发帖（轮转）互斥，两者默认关闭
+- 缺少配置、配置无效、鉴权或连接失败时，机器人等待修正后自动启动，不再退出
+- Iincho 新增 Cloudflare Workers AI（Llama Guard 3）审核方式
+- 插件 API 新增 `LineText` 标记，列表字段可逐行填写并保留注释；KeyAct 规则改为 `关键词 = 回复` 逐行格式；插件可用类属性声明默认 `priority`
+
+### Changed
+
+- 配置改为 `data/settings.yaml` 与 `data/secrets.yaml`，连接信息可由环境变量覆盖
+- 管理命令的修改直接写入设置文件，不再单独保存在数据库；`^autopost` 改为 `rotation|schedule|off|reset`
+- 回复限制提示默认启用，轮数上限默认 1 小时后解除，管理员不受回复限制，轮数仅在开启限制时计数
+- OpenAI SDK 升级到 3.24.0，`urllib3` 升级到 2.8.0，新增 `textual` 依赖
+
+### Removed
+
+- 移除 `config.yaml`、插件配置文件、配置示例及对应环境变量，不兼容旧配置，升级后需在 `twipsybot cfg` 中重新填写
+- 移除可配置的数据库与日志路径，以及 `^whitelist`、`^blacklist` 的 `reset` 子命令
+
+<br>
+
 ## 0.9.0 - 2026-10-01
 
 新增插件热重载，精简插件框架与核心流程

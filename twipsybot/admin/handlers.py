@@ -38,10 +38,8 @@ def _status_light(*, healthy: bool, waiting: bool = True) -> str:
 class CmdHandlersMixin:
     bot: Any
     global_config: Any
-    db: Any
     plugin_manager: Any
     openai: Any
-    name: str
     commands: dict[str, Any]
     allowed_users: frozenset[str]
 

@@ -1,18 +1,11 @@
 ---
 title: 插件开发
-description: 使用 TwipsyBot 插件 API 创建事件 Hook、配置、存储和自动发帖扩展。
+description: 使用 TwipsyBot 插件 API 编写事件 Hook、配置、存储与自动发帖扩展。
 ---
 
 # 插件开发
 
-本地插件位于 `plugins/<name>/`，通过固定模块和导出接入：
-
-```text
-plugins/example/
-└── plugin.py
-```
-
-`plugin.py` 必须通过模块级 `plugin` 导出插件类。入口按单文件加载，不支持相对导入；多模块插件应使用 Entry Points。插件配置统一来自 `data/settings.yaml` 的 `plugins.<name>`，也可以通过 `twipsybot cfg` 编辑。
+本地插件位于 `plugins/<name>/plugin.py`，以模块级 `plugin` 导出插件类。入口按单文件加载，不支持相对导入，多模块插件请用 [Entry Points](#entry-points)。配置来自 `plugins.<name>`，可由 `twipsybot cfg` 编辑。
 
 ## 最小插件
 
@@ -39,8 +32,6 @@ class ExamplePlugin(PluginBase):
 plugin = ExamplePlugin
 ```
 
-对应设置：
-
 ```yaml
 plugins:
   example:
@@ -48,84 +39,57 @@ plugins:
     response: "pong"
 ```
 
-插件必须用字面量声明其支持的 API 版本。不要将 `api_version` 赋值为宿主当前版本常量，否则宿主升级后无法识别旧插件不兼容。所有被覆盖的生命周期和 Hook 方法必须是异步方法。`PluginConfig` 使用 Pydantic 验证，`enabled`、`priority` 等框架字段不会进入配置模型。验证后的配置通过 `self.settings` 读取，配置实例只读。
+- `api_version` 必须是字面量；引用宿主常量会导致宿主升级后无法识别不兼容。
+- 覆盖的生命周期与 Hook 方法必须是 `async`。
+- `priority` 为默认优先级，可被 `plugins.<name>.priority` 覆盖，越大越先执行。
 
-`priority` 可作为 `PluginBase` 子类属性提供默认优先级；用户仍可在 `plugins.<name>.priority` 中覆盖。数字越大越先执行。
+## 配置模型
 
-`twipsybot cfg` 会根据配置模型自动生成表单。列表字段可用 `LineText` 标记，TUI 以多行文本原样保存，用户逐行填写、`#` 开头的行为注释，验证时拆分为非空行列表；元素需要进一步解析时，可在元素类型上叠加 `BeforeValidator`：
+`PluginConfig` 基于 Pydantic，验证后通过只读的 `self.settings` 访问；`enabled`、`priority` 等框架字段不进入模型。TUI 依据模型自动生成表单。
 
 ```python
 from typing import Annotated
+
+from pydantic import Field
 
 from twipsybot.plugin import LineText, PluginConfig
 
 
 class ExampleConfig(PluginConfig):
+    max_length: int = Field(200, ge=1, le=3000)
     feeds: Annotated[tuple[str, ...], LineText] = ()
 ```
 
-## 第三方包
+`LineText` 字段在 TUI 中以多行文本原样保存，验证时拆为非空行并忽略 `#` 注释行；元素需进一步解析时，可在元素类型上叠加 `BeforeValidator`。
 
-需要独立发布或声明依赖的插件可使用 Python Entry Points。在第三方包的 `pyproject.toml` 中注册：
+## Entry Points
+
+需独立发布或声明依赖的插件，在包的 `pyproject.toml` 中注册，模块同样导出 `plugin`：
 
 ```toml
 [project.entry-points."twipsybot.plugins"]
 example = "twipsybot_example:plugin"
 ```
 
-对应模块仍导出插件类：
-
-```python
-from twipsybot.plugin import PluginBase
-
-
-class ExamplePlugin(PluginBase):
-    api_version = 3
-    priority = 100
-
-
-plugin = ExamplePlugin
-```
-
-入口名称是插件 ID，也是 `plugins.<name>` 中的配置键。安装第三方包不会自动启用代码，必须配置后才会加载：
-
-```yaml
-plugins:
-  example:
-    enabled: true
-```
-
-第三方插件的依赖和版本由自身管理。
-
-复杂配置可以使用 Pydantic 字段和模型验证器集中约束：
-
-```python
-from pydantic import Field
-
-from twipsybot.plugin import PluginConfig
-
-
-class ExampleConfig(PluginConfig):
-    response: str = "收到"
-    max_length: int = Field(200, ge=1, le=3000)
-```
+入口名即插件 ID 与配置键。安装不会自动启用，需设置 `plugins.<name>.enabled: true`；依赖与版本由插件自行管理。
 
 ## 生命周期
 
 | 方法 | 时机 |
 | --- | --- |
-| `initialize()` | 加载后初始化资源，只有返回 `True` 才继续启用 |
-| `on_startup()` | 插件初始化完成、开始接收 Hook 前 |
+| `initialize()` | 加载后初始化资源，返回 `True` 才启用 |
+| `on_startup()` | 初始化完成、开始接收 Hook 前 |
 | `on_shutdown()` | 停止接收新 Hook 后 |
 | `cleanup()` | 释放资源，初始化失败时也可能调用 |
 
-通过 `_register_resource(resource)` 注册带 `close()` 的资源，基类会在清理时关闭。插件自身创建的任务应在 `on_shutdown()` 中停止，并在 `cleanup()` 中完成最终释放。
+- `_register_resource(resource)` 注册带 `close()` 的资源，清理时自动关闭。
+- 自建任务在 `on_shutdown()` 中停止，在 `cleanup()` 中完成释放。
 
-配置文件热更新或管理员执行 `^reload <插件名>` 时，框架会先停止向该插件分发 Hook 并等待进行中的调用结束，然后对旧实例依次调用 `on_shutdown()` 和 `cleanup()`，再用同一类和新配置创建实例并执行 `initialize()`、`on_startup()`。插件无需实现额外接口，只要做到全部运行时状态都在实例内、并在上述两个方法中释放，就能正确重载。不要把状态放在模块或类变量中；需要跨重载保留的数据写入 `storage`。
+**重载**（配置变更或 `^reload`）：停止分发 Hook 并等待进行中的调用 → 旧实例 `on_shutdown()`、`cleanup()` → 以新配置新建实例并执行 `initialize()`、`on_startup()`。运行时状态只放在实例内并在上述方法中释放即可正确重载；不要使用模块或类变量，需跨重载保留的数据写入 `storage`。
 
 ## 事件 Hook
 
-| Hook | 事件类型 | 可返回结果 |
+| Hook | 事件 | 返回 |
 | --- | --- | --- |
 | `on_message` | `MessageEvent` | `HandledResult \| None` |
 | `on_mention` | `MentionEvent` | `HandledResult \| None` |
@@ -133,10 +97,6 @@ class ExampleConfig(PluginConfig):
 | `on_timeline_note` | `TimelineNoteEvent` | `None` |
 | `on_auto_post` | `AutoPostEvent` | `AutoPostResult \| PromptModificationResult \| None` |
 | `on_auto_post_published` | `str` | `None` |
-
-`on_auto_post_published(content)` 仅在当前插件通过 `AutoPostResult` 返回的内容成功发布后调用，可用于提交去重记录或轮换位置。发布失败时不会调用。
-
-事件字段如下：
 
 | 类型 | 字段 |
 | --- | --- |
@@ -148,38 +108,38 @@ class ExampleConfig(PluginConfig):
 | `UserRef` | `id username host handle` |
 | `FileRef` | `id mime_type url thumbnail_url raw` |
 
-`NotificationEvent.id`、`UserRef.id`、`cw`、`host` 和文件 URL 等字段可能为空；消息、提及和时间线事件的 `id` 始终是非空字符串。事件数据类不可变，每个插件会收到独立的 `raw` 副本，但嵌套值并非深度只读。应将 `raw` 视为只读后备数据，不要依赖其长期兼容性。
+- 按 `priority` 降序调用。`on_message` / `on_mention` 返回 `HandledResult` 即终止后续插件与默认 AI；通知与时间线 Hook 仅观察，所有插件都会收到。
+- 返回值须严格符合公共 TypedDict，多余字段会使结果失效。
+- 消息、提及与时间线事件的 `id` 始终非空；`NotificationEvent.id`、`UserRef.id`、`cw`、`host`、文件 URL 等可能为空。
+- `UserRef.handle` 为 `username@host`，本地用户为 `username`。`channel` 通常为 `homeTimeline`、`localTimeline`、`hybridTimeline`、`globalTimeline` 或 `antenna`。
+- 事件数据类不可变；每个插件获得独立的 `raw` 副本，但嵌套值并非深度只读。`raw` 仅作只读后备，不保证长期兼容。
 
-`UserRef.handle` 会自动组合为 `username@host`，本地用户仅为 `username`。时间线 `channel` 通常为 `homeTimeline`、`localTimeline`、`hybridTimeline`、`globalTimeline` 或 `antenna`。
-
-插件按 `priority` 从高到低调用。`on_message` 或 `on_mention` 返回 `HandledResult` 后，后续插件和默认 AI 不再执行；返回 `None` 则继续。通知和时间线 Hook 仅用于观察，所有插件都会收到。返回值必须严格符合公共 TypedDict，额外字段会使结果失效。
-
-自动发帖可以直接返回内容：
+### 自动发帖
 
 ```python
 return {"contents": ["第一篇", "第二篇"], "visibility": "home"}
 ```
 
-也可以修改核心提示词：
-
 ```python
 return {"prompt": "围绕开源维护写一篇短文。"}
 ```
 
-`contents`、其中的文本和 `prompt` 必须非空。多个插件返回结果时，`contents` 优先于 `prompt`，同类结果按插件优先级取第一个；多篇内容间隔 10 秒发布。轮转模式下两种结果都受 `autopost.daily_max` 控制，定时模式不受限。`PromptModificationResult` 还可提供分钟级整数 `timestamp`。
+- `contents` 直接发布、不调用 AI；`prompt` 置于全局自动发帖提示词之前，由 AI 生成。两者及 `contents` 中的文本均须非空。
+- 多插件返回时 `contents` 优先于 `prompt`，同类取优先级最高者；多篇间隔 10 秒发布。
+- 轮转模式下两者都受 `autopost.daily_max` 约束，定时模式不受限。
+- `PromptModificationResult` 可附带分钟级整数 `timestamp`。
+- `on_auto_post_published(content)` 仅在本插件 `AutoPostResult` 的内容发布成功后调用，适合提交去重记录或推进轮换位置。
 
 ## PluginContext
 
-`self.context` 提供：
-
-- `name`：稳定插件 ID，本地插件为目录名，第三方插件为 Entry Point 名称。
-- `config`：`plugins.<name>` 原始配置的只读映射。
-- `storage`：以插件 ID 隔离的命名空间，提供 `get`、`set`、`delete`。
-- `misskey`：发帖、转帖、反应、聊天、天线和 Drive 服务。
-- `openai`：文本、聊天和 Moderations API。
-- `bot`：机器人账号信息、用户锁和天线解析。
-
-只从 `twipsybot.plugin` 导入公共类型。不要导入 `twipsybot.bot`、`twipsybot.clients` 或 `twipsybot.db`，这些模块不保证插件兼容性。
+| `self.context.*` | 说明 |
+| --- | --- |
+| `name` | 插件 ID：本地为目录名，第三方为 Entry Point 名 |
+| `config` | `plugins.<name>` 原始配置的只读映射 |
+| `storage` | 按插件 ID 隔离的字符串存储 |
+| `misskey` | 发帖、转帖、反应、聊天、天线与 Drive |
+| `openai` | 文本、聊天与审核 |
+| `bot` | 机器人身份、用户锁与天线解析 |
 
 ### Storage
 
@@ -189,42 +149,7 @@ await self.context.storage.set("key", "value")
 deleted = await self.context.storage.delete("key")
 ```
 
-键和值均为字符串，`delete(None)` 会清空当前插件的存储并返回删除数量。
-
-### Misskey 与 Drive
-
-| 接口 | 用途 |
-| --- | --- |
-| `misskey.create_note(...)` | 发帖或回复 |
-| `misskey.create_renote(...)` | 转帖或引用 |
-| `misskey.create_reaction(...)` | 添加反应 |
-| `misskey.send_message(...)` | 向用户发送私信 |
-| `misskey.list_antennas()` | 获取天线 |
-| `misskey.instance_url` | 读取实例地址 |
-| `misskey.drive.show_file(...)` | 获取文件信息 |
-| `misskey.drive.fetch_bytes(...)` | 从 URL 下载文件 |
-| `misskey.drive.download_bytes(...)` | 下载文件 |
-| `misskey.drive.upload_bytes(...)` | 上传文件 |
-
-`visibility` 支持 `public`、`home` 和 `followers`。Drive 上传结果中的 `id` 是文件 ID。当前 `create_note` 和 `HandledResult` 不支持附带文件 ID。
-
-### OpenAI 与 Bot
-
-| 接口 | 用途 |
-| --- | --- |
-| `openai.generate_text(...)` | 单轮文本生成，可请求 JSON Object |
-| `openai.generate_chat(...)` | 多轮或多模态生成 |
-| `openai.moderate_texts(...)` | 批量审核文本 |
-| `openai.system_prompt / max_tokens / temperature` | 读取全局生成参数 |
-| `openai.uses_responses_api` | 判断当前消息格式 |
-| `bot.user_id / username` | 读取机器人身份 |
-| `bot.actor_lock(...)` | 串行处理同一用户 |
-| `bot.load_antenna_selectors()` | 读取天线选择器 |
-| `bot.resolve_antenna_ids(...)` | 解析天线 ID |
-
-`moderate_texts` 使用 `omni-moderation-latest`。自定义 OpenAI 兼容端点需要支持 `/moderations`。
-
-持久化值必须是字符串；复杂结构可使用 JSON 编码。涉及同一用户的读改写操作时使用：
+键值均为字符串，复杂结构用 JSON 编码；`delete(None)` 清空本插件存储并返回删除数量。同一用户的读改写需加锁：
 
 ```python
 async with self.context.bot.actor_lock(event.user.id, event.user.handle):
@@ -232,16 +157,46 @@ async with self.context.bot.actor_lock(event.user.id, event.user.handle):
     await self.context.storage.set("state", value or "initialized")
 ```
 
+### Misskey 与 Drive
+
+| 接口 | 用途 |
+| --- | --- |
+| `misskey.create_note(text, visibility, reply_id, local_only)` | 发帖或回复 |
+| `misskey.create_renote(note_id, visibility, text, local_only)` | 转帖或引用 |
+| `misskey.create_reaction(note_id, reaction)` | 添加反应 |
+| `misskey.send_message(user_id, text)` | 发送私信 |
+| `misskey.list_antennas()` | 获取天线 |
+| `misskey.instance_url` | 实例地址 |
+| `misskey.drive.show_file(file_id)` | 文件信息 |
+| `misskey.drive.fetch_bytes(url, max_bytes=...)` | 从 URL 下载 |
+| `misskey.drive.download_bytes(file_id, thumbnail=..., max_bytes=...)` | 下载文件 |
+| `misskey.drive.upload_bytes(data, name=..., content_type=...)` | 上传文件，结果 `id` 为文件 ID |
+
+`visibility`：`public`、`home`、`followers`。`create_note` 与 `HandledResult` 暂不支持附件。
+
+### OpenAI 与 Bot
+
+| 接口 | 用途 |
+| --- | --- |
+| `openai.generate_text(prompt, system_prompt, max_tokens, temperature, json_output)` | 单轮文本，可请求 JSON Object |
+| `openai.generate_chat(messages, max_tokens, temperature)` | 多轮或多模态 |
+| `openai.moderate_texts(texts)` | 批量审核，按输入顺序返回命中类别集合；需端点支持 `/moderations` |
+| `openai.system_prompt` · `max_tokens` · `temperature` | 全局生成参数 |
+| `openai.uses_responses_api` | 当前消息格式 |
+| `bot.user_id` · `username` | 机器人身份 |
+| `bot.actor_lock(user_id, username)` | 串行处理同一用户 |
+| `bot.load_antenna_selectors()` | 读取天线选择器 |
+| `bot.resolve_antenna_ids(selectors)` | 解析天线 ID |
+
 ## 失败处理
 
-Hook 异常或超时只隔离本次调用，不会终止其他插件。Hook 超时为 180 秒；关闭时最多等待 3 秒，随后取消。插件仍应捕获可预期的网络或解析错误，不要吞掉 `asyncio.CancelledError`。
-
-生命周期方法超时 30 秒。初始化或启动失败时，插件会执行 `cleanup` 并被禁用；Bot 停止时会先执行 `on_shutdown`，再执行 `cleanup`。重载时配置校验、初始化或启动失败，该插件同样被禁用，其他插件不受影响。
+- Hook 异常或超时（180 秒）仅影响本次调用；关闭时最多等待 3 秒后取消。
+- 自行捕获可预期的网络与解析错误，长时间 I/O 自设超时，不要吞掉 `asyncio.CancelledError`。
+- 生命周期方法超时 30 秒；初始化、启动或重载失败时执行 `cleanup()` 并禁用该插件，不影响其他插件。
 
 ## API 边界
 
-公共 API 包括 `twipsybot.plugin` 导出的 `PluginBase`、`PluginContext`、事件类型、结果类型和服务 `Protocol`，以及本文明确说明的 `PluginBase` 辅助方法。
+- **公共**：`twipsybot.plugin` 导出的 `PluginBase`、`PluginContext`、事件、结果与服务 `Protocol`，以及本文记载的 `PluginBase` 辅助方法。
+- **内部**：其他 `twipsybot.*` 模块（含 `bot`、`clients`、`db`）、`PluginManager`、未文档化的私有属性与事件 `raw`。
 
-内部 API 包括其他 `twipsybot.*` 模块、`PluginManager`、底层对象、未文档化的私有属性和事件 `raw`。
-
-插件 API v3 只进行向后兼容的扩展。删除、重命名公共 API 成员或改变其语义属于破坏性变更，需要提升 API 主版本号。
+插件 API v3 仅做向后兼容扩展；删除、重命名公共成员或改变其语义需提升主版本号。

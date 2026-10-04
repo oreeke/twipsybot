@@ -61,7 +61,7 @@ class _Config(PluginConfig):
 
 class KeyActPlugin(PluginBase):
     api_version = 3
-    priority = 990
+    priority = 850
     config_class = _Config
     settings: _Config
 

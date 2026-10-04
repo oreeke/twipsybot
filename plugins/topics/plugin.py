@@ -47,7 +47,7 @@ class _Config(PluginConfig):
 
 class TopicsPlugin(PluginBase):
     api_version = 3
-    priority = 100
+    priority = 300
     config_class = _Config
     settings: _Config
 

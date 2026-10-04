@@ -1,64 +1,45 @@
 ---
 title: 提及、聊天与访问控制
-description: 配置 TwipsyBot 的 Misskey 提及、聊天上下文、回复限制和用户访问名单。
+description: 配置 TwipsyBot 的提及与聊天回复、上下文、回复限制和用户名单。
 ---
 
 # 提及、聊天与访问控制
 
-## 提及和聊天
+## 回复
 
-`reply.mention` 控制公开或半公开帖子中的 `@提及`，`reply.chat` 控制 Misskey 私聊和群聊。两项可以独立关闭。
+- `reply.mention` 控制帖子中的 `@提及`，`reply.chat` 控制私聊与群聊。
+- 群聊消息须提及机器人，才会触发回复、插件或 `/img`。
+- 提及在生成前与发送前都会确认原帖可读，已删除则跳过。
+- 上下文由 `reply.memory`（条数，0–100）与 `reply.ctx_tokens`（token 预算）共同限制；私聊按用户、群聊按房间共享。
 
-群聊消息必须提及机器人，否则不会触发普通回复、插件或 `/img`。
+## 限制
 
-处理提及时，机器人会在生成前和发送回复前确认原帖仍可读取。原帖已删除或无法确认时，跳过本次回复。
+按用户 ID 持久化于 SQLite：
 
-聊天支持有限的历史上下文，`reply.memory` 控制最多读取的历史消息条数，取值范围为 `0` 到 `100`；`reply.ctx_tokens` 控制其中实际提交给模型的 token 数。私聊上下文按用户区分，群聊上下文由房间成员共享。两项限制同时生效，较大的值能保留更多上下文，也会增加模型输入和调用成本。
+| 字段 | 作用 |
+| --- | --- |
+| `rate_limit` | 两次回复的最短间隔，触发时发送 `rate_limit_msg` |
+| `max_turns` | 累计回复次数上限，触发时发送 `max_turns_msg`；`-1` 不计数 |
+| `turns_release` | 达上限后的恢复时间；`-1` 则拉黑并写入设置 |
 
-## 回复限制
+提示文案留空则静默。提示不计入轮数，但会刷新最近回复时间。被自动拉黑的用户需通过 `^blacklist del` 解除。
 
-限制以 Misskey 用户 ID 为单位持久化到 SQLite：
+## 名单
 
-- `reply.rate_limit` 防止同一用户过于频繁地触发回复。
-- `reply.max_turns` 限制累计机器人回复次数，只在开启（不为 `-1`）期间计数。
-- `reply.turns_release` 设置轮数限制后的恢复时间。
+- 白名单与 `bot.admins` 豁免间隔和轮数限制；黑名单禁用普通 AI 回复。
+- 支持用户 ID、`username@host` 或 `@username@host`；推荐用户 ID，用户名不区分大小写。
+- 白名单不授予管理权限，管理权限仅由 `bot.admins` 决定。
 
-被限流时，机器人发送 `reply.rate_limit_msg`（默认“我需要休息一下...”）；达到轮数上限时发送 `reply.max_turns_msg`（默认“我要回家了...”），留空则不回复。限制提示本身不会增加对话轮数，但会更新最近回复时间。
+## 插件优先
 
-如果 `reply.turns_release: -1`，达到上限的用户会被加入黑名单并写入 `data/settings.yaml`。需要管理员通过 `^blacklist del <用户>` 或 `^blacklist clear` 解除。
+KeyAct（990）与 Vision（900）先于默认 AI 处理提及和聊天；插件返回回复后，后续插件与 AI 不再处理该事件。
 
-## 白名单与黑名单
-
-白名单用于信任的用户，使其不受回复间隔和轮数限制；`bot.admins` 中的管理员自动享有同样豁免。黑名单完全阻止普通 AI 回复。两者都支持：
-
-- Misskey 用户 ID
-- `username@host`
-- 带前导 `@` 的完整账号
-
-推荐优先使用用户 ID。用户名匹配不区分大小写。
-
-管理员命令权限由独立的 `bot.admins` 控制。进入回复白名单不会自动获得管理权限。
-
-## 插件处理顺序
-
-KeyAct 和 Vision 可以在默认 AI 之前处理提及或聊天。插件返回回复后，后续插件和默认 AI 不再处理同一个事件。优先级较高的插件先执行，因此默认配置中 KeyAct 会先匹配明确关键词，Vision 随后处理图片，其余内容才进入普通 AI 回复。
-
-## 建议配置
-
-公开机器人可以从以下策略开始：
+## 示例
 
 ```yaml
 reply:
-  mention: true
-  chat: true
-  memory: 10
-  ctx_tokens: 2000
   rate_limit: 30s
   max_turns: 30
   turns_release: 1d
-  whitelist:
-    - "trusted-user-id"
-  blacklist: []
+  whitelist: ["trusted-user-id"]
 ```
-
-`bot.admins` 中的管理员自动不受限制，无需加入白名单。先观察实际调用量和社区使用方式，再调整间隔与轮数。

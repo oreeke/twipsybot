@@ -1,45 +1,37 @@
 ---
 title: TwipsyBot
-description: TwipsyBot 的安装、配置、功能、插件与运行维护文档。
+description: TwipsyBot 的部署、配置、功能、插件与开发文档。
 ---
 
 # TwipsyBot
 
 一只轻量、可扩展的 [Misskey](https://misskey-hub.net/) AI 机器人。
 
-## 开始使用
+## 文档
 
-- [快速开始](user-guide/getting-started.md)
-- [配置](user-guide/configuration.md)
-- [功能](/user-guide/features/)
-- [插件](/user-guide/plugins/)
-- [运维](user-guide/operations.md)
-- [故障排查](user-guide/troubleshooting.md)
-- [配置参考](user-guide/reference/configuration.md)
-- [开发](/dev-guide/)
+| 页面 | 内容 |
+| --- | --- |
+| [**快速开始**](user-guide/getting-started.md) | Docker Compose 部署与验证 |
+| [**配置**](user-guide/configuration.md) | TUI、YAML、生效方式与模型 |
+| [**功能**](/user-guide/features/) | 回复、发帖、时间线与管理命令 |
+| [**插件**](/user-guide/plugins/) | 内置插件与启用方式 |
+| [**运维**](user-guide/operations.md) | 状态、备份与升级 |
+| [**故障排查**](user-guide/troubleshooting.md) | 常见问题定位 |
+| [**配置参考**](user-guide/reference/configuration.md) | 全部字段与默认值 |
+| [**开发**](/dev-guide/) | 架构、插件 API 与测试 |
 
-## 能做什么
+## 能力
 
-- 在 Misskey 中响应提及、私聊和群聊，并保留有限的对话上下文。
-- 按间隔轮转或在指定时间点自动发帖，也可以由管理员临时指定主题、可见性和联合范围。
-- 使用白名单、黑名单、回复间隔和对话轮数控制访问。
-- 订阅 Home、Local、Hybrid、Global 时间线或指定天线。
-- 通过插件增加关键词回复、天线互动、主题与 RSS 发帖、图片理解和本地时间线观察。
-- 使用 SQLite 保存运行状态，不需要额外部署数据库。
+- 响应提及、私聊与群聊，保留有限上下文。
+- 轮转或定时自动发帖，管理员可手动发帖与生图。
+- 白名单、黑名单、回复间隔与轮数限制。
+- 订阅时间线与天线，通过插件扩展关键词回复、天线互动、RSS 发帖、识图与时间线观察。
+- SQLite 保存状态，配置热更新，无需额外数据库。
 
-## 运行方式
+## 须知
 
-TwipsyBot 只需要以下外部服务：
-
-- 一个 Misskey 账号及其访问令牌。
-- 一个可用的 OpenAI 兼容 API、密钥和模型名称。
-
-Docker Compose 是生产运行的推荐方式。本地安装适合调试、插件调整或希望自行管理 Python 环境的用户。
-
-## 使用前须知
-
-- 建议创建独立的机器人账号，不要复用个人账号的访问令牌。
-- 访问令牌和模型 API 密钥属于敏感信息，不要提交到 Git 仓库或发到公开日志中。
-- 自动发帖、Radar 和 Iincho 会主动读取或发布内容。首次启用时应使用较低频率、较窄天线和 `local_only` 进行验证。
-- OpenAI 兼容只表示请求协议兼容。文本、图片、视觉和内容审核能力仍取决于所选模型及服务端。
-- 机器人行为需要遵守所在实例的使用规则和联邦规范。
+- 仅依赖 Misskey 访问令牌与 OpenAI 兼容 API；推荐 Docker Compose 部署。
+- 使用独立机器人账号，令牌与密钥切勿提交或公开。
+- 自动发帖、Radar、Iincho 会主动读写内容，先用低频、窄天线与 `local_only` 验证。
+- “OpenAI 兼容”仅指协议，图片、视觉与审核能力取决于所选模型和服务端。
+- 遵守所在实例规则与联邦规范。

@@ -29,11 +29,8 @@ class _SlashCommand:
 class AdminCommandService(CmdHandlersMixin):
     def __init__(self, bot: Any):
         self.bot = bot
-        self.name = "Admin"
         self.global_config = bot.config
-        self.db = bot.db
         self.plugin_manager = bot.plugin_manager
-        self.misskey = bot.misskey
         self.openai = bot.openai
         self.refresh()
         self.commands: dict[str, Any] = {}

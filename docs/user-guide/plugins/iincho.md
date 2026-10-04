@@ -1,26 +1,21 @@
 ---
 title: Iincho 本地时间线观察
-description: 使用 Iincho 汇总 Misskey 本地时间线趋势并提供内容风险概览。
+description: 使用 Iincho 抽样 Misskey 本地时间线，发布内容风险概览。
 ---
 
 # Iincho：本地时间线观察
 
-Iincho 定期对本地时间线进行均匀抽样，发布内容风险概览；配置管理员且发现疑似违规时，生成热点趋势并私聊发送。
-
-公开概览不包含原帖、用户身份或疑似违规帖子 ID；管理员可以通过私聊收到相关帖子 ID。
+定期均匀抽样本地时间线，发布内容风险概览。配置 `admin_ids` 且发现疑似违规时，额外生成热点趋势并私聊管理员（含相关帖子 ID）；公开概览不含原帖、用户或帖子 ID。
 
 ## 前置条件
 
-- 设置 `timeline.local: true`，保存后重启机器人。
-- 文本模型支持 JSON Object 输出（仅配置 `admin_ids` 且发现疑似违规时用于生成趋势）。
-- 审查后端二选一：
-  - `openai`（默认）：主配置端点支持 `/moderations`，并可使用 `omni-moderation-latest`。
-  - `cloudflare`：Cloudflare 账户 ID 和具备 Workers AI Read 权限的 API 令牌。
-- 如需管理员提醒，准备接收私聊的 Misskey 用户 ID。
+- `timeline.local: true`，需重启。
+- 审核后端二选一：
+  - `openai`（默认）：主端点支持 `/moderations` 与 `omni-moderation-latest`。
+  - `cloudflare`：账户 ID 与具备 Workers AI Read 权限的令牌，使用 `@cf/meta/llama-guard-3-8b`，不依赖主端点。
+- 配置 `admin_ids` 时，文本模型需支持 JSON Object 输出。
 
 ## 配置
-
-通过 `twipsybot cfg` 配置 Iincho，或在 `data/settings.yaml` 中写入：
 
 ```yaml
 plugins:
@@ -42,30 +37,26 @@ plugins:
       concurrency: 4
 ```
 
-- 默认优先级为 `40`，通常无需填写。
-- `interval` 默认 `1h`，最低 5 分钟，从插件启动时开始计算。
-- `prompt` 和 `system_prompt` 有内置默认值；需要自定义时不能为空。
-- `min_notes` 是生成报告所需的最少有效样本数。
-- `sample_size` 是每周期最多保留的均匀样本数，不能小于 `min_notes`。
-- `max_input_chars` 限制送入趋势模型的文本总量。
-- `local_only` 默认为 `true`，建议保持本地发布。
-- `admin_ids` 可以是列表，也可以是逗号或空格分隔的 ID。未发现违规时只发布概览，不调用趋势模型，也不私聊。
-- `moderation.provider` 为 `openai` 时使用主配置端点批量审核；为 `cloudflare` 时使用 `@cf/meta/llama-guard-3-8b`，不依赖主配置。
-- `cf_account_id` 为 32 位十六进制账户 ID，可在 Cloudflare 控制台概览页找到。
-- Cloudflare 每篇样本单独请求并按 token 计费，`concurrency` 限制并发数；调小 `sample_size` 可降低用量。
+| 字段 | 说明 |
+| --- | --- |
+| `interval` | 报告周期，至少 5 分钟，从插件启动起算 |
+| `min_notes` | 生成报告所需最少有效样本 |
+| `sample_size` | 每周期最多样本数，不小于 `min_notes` |
+| `max_input_chars` | 送入趋势模型的文本上限 |
+| `local_only` | 报告不联合，建议保持 `true` |
+| `admin_ids` | 接收私聊的用户 ID，列表或逗号、空格分隔；未发现违规时不调用趋势模型也不私聊 |
+| `moderation.cf_account_id` | 32 位十六进制账户 ID，见 Cloudflare 控制台概览页 |
+| `moderation.concurrency` | Cloudflare 并发数；按样本逐条计费，调小 `sample_size` 可降低用量 |
+
+`prompt` 与 `system_prompt` 有内置默认值，自定义时不能为空。
 
 ## 数据范围
 
-Iincho 只处理运行期间收到的 `localTimeline` 文本：
+- 仅处理运行期间收到的文本帖子，跳过自身帖子；不处理图片，不补采历史。
+- 固定容量均匀抽样，不保存正文；送入趋势模型前替换 URL 与提及。
+- 风险类别：骚扰攻击、仇恨歧视、色情内容、涉未成年、暴力威胁、自伤风险、违法活动、诽谤隐私。Llama Guard 不识别骚扰攻击，OpenAI 不识别诽谤隐私。
+- 样本不足或审核、趋势生成、发布失败时跳过本周期且不补发；单个管理员私聊失败不影响其他人。
 
-- 跳过机器人自己的帖子和无文本帖子。
-- 不处理图片，也不补采离线历史。
-- 使用固定容量均匀抽样，不保存帖子正文。
-- 发送给趋势模型前会替换 URL 和账号提及。
-- 风险分类归并为骚扰攻击、仇恨歧视、色情内容、涉未成年、暴力威胁、自伤风险、违法活动和诽谤隐私。Llama Guard 不识别骚扰攻击，OpenAI 不识别诽谤隐私。
-
-## 正确理解报告
-
-风险数字来自自动模型对抽样文本的分类信号，不是人工裁定，也不能代表整个时间线。它适合辅助观察趋势，不适合作为自动封禁、处罚或用户画像依据。
-
-有效样本不足、趋势生成失败、审核接口失败或发布失败时，当前周期会跳过且不补发。管理员消息发送失败不会阻止给其他管理员发送，但生成或审核失败会跳过整份报告。
+::: warning
+风险数字是模型对抽样文本的分类信号，不是人工裁定，也不代表整个时间线。仅用于观察趋势，不应作为封禁、处罚或用户画像依据。
+:::

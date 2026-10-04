@@ -31,6 +31,7 @@ from ..plugin.manager import discover_plugin_classes
 from ..shared.config import EXCLUSIVE, SECRETS, Config
 from ..shared.exceptions import ConfigurationError
 from ..shared.settings import get_dotted, read_settings, set_dotted, write_settings
+from .logs import LogsPage
 from .schema import Section, Spec, build_sections, overlay, to_widget
 from .times import TimesField
 
@@ -78,6 +79,7 @@ class ConfigApp(App[None]):
         Binding("ctrl+s", "save", "Save"),
         Binding("ctrl+r", "reload", "Reload"),
         Binding("ctrl+q", "quit", "Quit"),
+        Binding("slash", "search", show=False),
     ]
 
     def __init__(self, config: Config):
@@ -105,6 +107,7 @@ class ConfigApp(App[None]):
             with ContentSwitcher(initial=self._pages[self.sections[0].id], id="pages"):
                 for section in self.sections:
                     yield from self._page(section)
+                yield LogsPage(self.config.log_path, id="logs", classes="page")
         yield Static(id="status")
         yield Footer()
 
@@ -124,14 +127,23 @@ class ConfigApp(App[None]):
             )
 
     def _nav(self) -> Iterable[Option | None]:
-        plugins = False
-        yield Option("[b dim]CORE[/]", disabled=True)
-        for section in self.sections:
-            if section.plugin and not plugins:
-                plugins = True
+        def options(plugin: bool) -> list[Option]:
+            return [
+                Option(self._nav_text(s), id=self._pages[s.id])
+                for s in self.sections
+                if s.plugin is plugin
+            ]
+
+        groups = {
+            "CORE": options(False),
+            "OPS": [Option("  logs", id="logs")],
+            "PLUGINS": options(True),
+        }
+        for i, (title, items) in enumerate((k, v) for k, v in groups.items() if v):
+            if i:
                 yield None
-                yield Option("[b dim]PLUGINS[/]", disabled=True)
-            yield Option(self._nav_text(section), id=self._pages[section.id])
+            yield Option(f"[b dim]{title}[/]", disabled=True)
+            yield from items
 
     def _page(self, section: Section) -> ComposeResult:
         page = self._pages[section.id]
@@ -376,6 +388,10 @@ class ConfigApp(App[None]):
     def action_reload(self) -> None:
         self._load()
         self.notify("reloaded from disk")
+
+    def action_search(self) -> None:
+        if self.query_one("#pages", ContentSwitcher).current == "logs":
+            self.query_one("#log-search", Input).focus()
 
     async def action_quit(self) -> None:
         if not any(self._is_dirty(k) for k in self._specs):

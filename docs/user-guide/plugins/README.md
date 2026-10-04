@@ -1,44 +1,35 @@
 ---
 title: 插件
-description: 配置 TwipsyBot 的关键词回复、天线互动、RSS 发帖、图片理解和时间线观察插件。
+description: TwipsyBot 内置插件：关键词回复、图片理解、RSS 发帖、天线互动与时间线观察。
 ---
 
 # 插件
 
-TwipsyBot 自带几个可选插件。插件默认关闭，可以在 `twipsybot cfg` 的 `PLUGINS` 区域启用，也可以编辑 `data/settings.yaml` 的 `plugins.<name>`。
+内置插件默认关闭，在 `twipsybot cfg` 的 `PLUGINS` 区或 `plugins.<name>` 中启用。
 
-| 插件 | 用途 | 依赖 |
-| --- | --- | --- |
-| [Iincho](iincho.md) | 汇总本地时间线趋势和风险信号 | Local Timeline、Moderations API 或 Workers AI |
-| [KeyAct](keyact.md) | 精确关键词直接回复 | 提及或聊天 |
-| [Radar](radar.md) | 对天线帖子反应、回复、转帖或引用 | Misskey 天线 |
-| [Topics](topics.md) | 为自动发帖提供 TXT 主题或 RSS | 自动发帖 |
-| [Vision](vision.md) | 理解提及和聊天中的图片 | 多模态模型 |
+| 插件 | 用途 | 依赖 | 优先级 |
+| --- | --- | --- | --- |
+| [**KeyAct**](keyact.md) | 精确关键词回复 | 提及、聊天 | 990 |
+| [**Vision**](vision.md) | 图片理解 | 多模态模型 | 900 |
+| [**Topics**](topics.md) | TXT 主题与 RSS 发帖 | 自动发帖 | 100 |
+| [**Radar**](radar.md) | 天线帖子互动 | 天线 | 50 |
+| [**Iincho**](iincho.md) | 本地时间线风险概览 | Local 时间线、审核 API | 40 |
 
-## 配置规则
-
-每个插件都包含通用字段：
+## 通用字段
 
 ```yaml
 plugins:
-  plugin_name:
+  keyact:
     enabled: true
-    priority: 100
+    priority: 990
 ```
 
-- `enabled` 决定是否加载。
-- `priority` 越大越先执行；省略时使用插件类默认值。
-- 修改 `plugins.<name>` 后会自动热重载该插件；也可由管理员发送 `^reload <插件名>` 立即重新读取设置并重载。
-- 插件字段名保持各插件文档中的名称不变。
+`priority` 可省略，越大越先执行。配置变更自动重载插件，也可发送 `^reload <插件名>`。
 
-内置插件默认优先级：KeyAct `990`，Vision `900`，Topics `100`，Radar `50`，Iincho `40`。
+## 执行顺序
 
-KeyAct 和 Vision 会处理消息或提及。一个插件返回结果后，后续插件和默认 AI 不再处理同一事件。Radar 和 Iincho 观察时间线事件，不会互相截断。Topics 只在自动发帖任务中运行。
+- 提及与聊天按优先级交给 KeyAct、Vision；任一插件返回回复即终止，后续插件与默认 AI 不再处理。
+- Radar 与 Iincho 仅观察时间线，互不截断。
+- Topics 只在自动发帖时运行。
 
-## 推荐启用顺序
-
-1. 先保持所有插件关闭，验证普通提及和聊天。
-2. 需要固定问答时启用 KeyAct。
-3. 需要图片理解时启用 Vision，并验证模型支持多模态。
-4. 需要内容来源时启用 Topics。
-5. 最后配置 Radar 或 Iincho，并先缩小时间线范围。
+建议先验证普通回复，再按需启用 KeyAct → Vision → Topics，最后在收窄时间线范围后启用 Radar 或 Iincho。

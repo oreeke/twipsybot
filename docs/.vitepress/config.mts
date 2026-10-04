@@ -44,7 +44,7 @@ export default withMermaid(
     ],
     themeConfig: {
       nav: [
-        { text: "用户指南", link: "/user-guide/getting-started" },
+        { text: "开始", link: "/user-guide/getting-started" },
         { text: "插件", link: "/user-guide/plugins/" },
         { text: "开发", link: "/dev-guide/" },
       ],

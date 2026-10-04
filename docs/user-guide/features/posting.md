@@ -1,26 +1,26 @@
 ---
 title: 自动发帖与图片生成
-description: 配置 TwipsyBot 定时发帖、管理员手动发帖和图片生成命令。
+description: 配置 TwipsyBot 轮转与定时发帖、管理员手动发帖和图片生成。
 ---
 
 # 自动发帖与图片生成
 
 ## 自动发帖
 
-自动发帖设置位于 `autopost`，有两种互斥模式，二者共用可见性、联合和提示词设置：
+`autopost` 有两种互斥模式，默认均关闭，共用 `visibility`、`local_only` 与 `prompt`：
 
-- `rotation`（轮转）：按 `interval` 循环发帖，受 `daily_max` 每日上限约束。机器人启动后约 1 分钟首次执行，之后按间隔运行。
-- `schedule`（定时）：在 `times` 列出的每个时间点各发一次，时间按主机时区计算，不受每日上限约束，也不计入每日计数。
+| 模式 | 触发 | 每日上限 |
+| --- | --- | --- |
+| `rotation` | 启动约 1 分钟后首次执行，之后每 `interval` 一次 | 受 `daily_max` 限制，按主机本地日期重置 |
+| `schedule` | `times` 中的每个时间点，按主机时区 | 不受限，不计数 |
 
-两个开关默认都关闭，即不自动发帖。在 `twipsybot cfg` 中打开其中一个会自动关闭另一个。`times` 用 `+` 添加时间点、`−` 删除，时与分可从下拉列表选择，展开后也可直接输入数字跳转。最多 24 个时间点，相邻时间点（含跨午夜）至少间隔 5 分钟；轮转间隔同样不得小于 5 分钟。切换模式和修改时间会立即生效。
+- TUI 中开启其一会自动关闭另一个，修改即时生效。
+- `times` 最多 24 个，相邻（含跨午夜）至少 5 分钟；`interval` 同样不少于 5 分钟。
+- 每日上限用尽或缺少有效提示词时跳过本次。
+- 提示词前会附加分钟级时间标记，减少 [Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) 重复命中；要丰富主题请用 [Topics](../plugins/topics.md)。
+- 插件一次返回多篇时间隔 10 秒发布，轮转模式下每篇都计入 `daily_max`。
 
-默认提示词会与系统提示词一起交给文本模型。Topics 插件启用后，可以为任务提供 TXT 主题或 RSS 内容。轮转的每日上限已经用完或缺少有效提示词时，本次任务会跳过。
-
-TwipsyBot 会在自动发帖提示词前加入分钟级时间标记，减少 [Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) 重复命中。时间标记不能代替内容来源。希望帖子主题更丰富时，应配置 [Topics](../plugins/topics.md)。
-
-轮转的每日计数保存在 SQLite，并按主机本地日期重置。插件一次返回多篇内容时，帖子之间间隔 10 秒；轮转模式下每篇都计入 `daily_max`。
-
-建议首次配置：
+建议先以低曝光试运行：
 
 ```yaml
 autopost:
@@ -28,45 +28,33 @@ autopost:
   times: ["08:30", "12:00", "21:00"]
   visibility: home
   local_only: true
-  prompt: "生成一篇有趣、有见解的社交媒体帖子。"
 ```
-
-确认内容和频率合适后，再决定是否设为 `public` 或允许联合。
 
 ## 手动发帖
 
-授权管理员可以在与机器人的私聊中使用：
+管理员私聊发送，选项置于主题前：
 
 ```text
-/post 发一篇关于夏夜观星的短文
-/post -h 写一条今天的维护通知
-/post -f -l 写一条仅关注者可见且不联合的通知
+/post 夏夜观星
+/post -h 今天的维护通知
+/post -f -l 仅关注者可见且不联合的通知
 ```
-
-选项必须放在主题前：
 
 | 选项 | 作用 |
 | --- | --- |
-| `-p` | `public` 可见性 |
-| `-h` | `home` 可见性 |
-| `-f` | `followers` 可见性 |
-| `-l` | 禁止联合，仅本地显示 |
+| `-p` · `-h` · `-f` | `public` · `home` · `followers` |
+| `-l` | 不联合 |
 
-未指定选项时使用自动发帖的可见性和 `local_only` 配置。`/post` 只在私聊中执行，不计入自动发帖的每日计数。
+缺省沿用 `autopost` 的可见性与 `local_only`，不计入每日计数。
 
 ## 图片生成
 
-设置 `bot.image_model` 后，授权管理员可以发送：
+设置 `bot.image_model` 后，管理员可在私聊、群聊（需提及）或提及中使用：
 
 ```text
 /img 雨后的未来城市车站，清晨，自然光
 ```
 
-`/img` 可用于私聊、群聊或提及；群聊中必须提及机器人。生成结果会上传到机器人账号的 Misskey Drive，并作为回复附件发送。
-
-注意事项：
-
-- `image_size` 和 `image_quality` 只有在对应服务支持时才填写。
-- 返回图片必须是 JPEG、PNG 或 WebP，单个生成结果不能超过 32 MiB。
-- 文件会保留在机器人 Drive 中，TwipsyBot 不会自动清理，需结合实例容量定期管理。
-- 文本模型可用不代表图片模型可用，两者应分别验证。
+- 结果上传至机器人 Drive 并作为附件回复；Drive 文件不会自动清理。
+- 仅在服务支持时填写 `image_size` 与 `image_quality`。
+- 返回须为 JPEG、PNG 或 WebP，不超过 32 MiB。

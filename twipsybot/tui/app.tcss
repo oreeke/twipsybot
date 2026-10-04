@@ -120,6 +120,53 @@ Screen {
     color: $error;
 }
 
+#logs .title {
+    height: 1;
+}
+
+#logs .name {
+    width: 1fr;
+}
+
+#logs .title Label {
+    margin: 0 1 0 2;
+    color: $text-muted;
+}
+
+#log-lines {
+    width: 6;
+}
+
+#log-search {
+    width: 24;
+}
+
+LogTail {
+    height: 1fr;
+    overflow: auto auto;
+}
+
+LogTail > .log-tail--dim {
+    color: $text-muted;
+}
+
+LogTail > .log-tail--success {
+    color: $success;
+}
+
+LogTail > .log-tail--warning {
+    color: $warning;
+}
+
+LogTail > .log-tail--error {
+    color: $error;
+}
+
+LogTail > .log-tail--match {
+    background: $warning 40%;
+    text-style: bold;
+}
+
 #status {
     height: 1;
     padding: 0 2;

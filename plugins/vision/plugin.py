@@ -30,7 +30,7 @@ class _Config(PluginConfig):
 
 class VisionPlugin(PluginBase):
     api_version = 3
-    priority = 900
+    priority = 750
     config_class = _Config
     settings: _Config
 

@@ -15,10 +15,11 @@ from apscheduler.triggers.interval import IntervalTrigger
 from conftest import MakeBot, MakePluginDir, WriteConfig, set_plugin_config
 
 from twipsybot import Neuro
-from twipsybot.admin.service import AdminCommandService
+from twipsybot.admin import handlers
+from twipsybot.admin.service import _extract_slash_command
 from twipsybot.app import cli as app_cli
 from twipsybot.app import main as app_main
-from twipsybot.bot.engine.pipeline import AIResponse
+from twipsybot.bot.engine.pipeline import Reply
 from twipsybot.bot.flows.image import ImageGenerationService
 from twipsybot.bot.flows.post import AutoPostService
 from twipsybot.shared.config_keys import ConfigKeys
@@ -102,7 +103,7 @@ async def test_admin_status_connection_markers(
     bot = await make_bot(write_config())
     monkeypatch.setattr(bot.runtime, "running", running)
     bot.streaming.state = status
-    assert f"连接  {expected} {status}" in bot.admin._get_status_text().splitlines()
+    assert f"连接  {expected} {status}" in handlers.status_text(bot).splitlines()
 
 
 @pytest.mark.parametrize(
@@ -125,9 +126,7 @@ async def test_admin_status_scheduler_markers(
     bot = await make_bot(write_config())
     monkeypatch.setattr(bot.runtime, "running", running)
     monkeypatch.setattr(bot.scheduler, "state", state)
-    assert (
-        bot.admin._get_task_status_text() == f"任务  stream 🟨 · scheduler {expected}"
-    )
+    assert handlers.task_status_text(bot) == f"任务  stream 🟨 · scheduler {expected}"
 
 
 @pytest.mark.parametrize(
@@ -162,7 +161,7 @@ async def test_admin_status_reports_stream_task_state(
             task.cancel()
         if outcome != "running":
             await asyncio.gather(task, return_exceptions=True)
-        text = bot.admin._get_status_text()
+        text = handlers.status_text(bot)
         scheduler = "🟥" if running else "🟨"
         assert f"任务  stream {expected} · scheduler {scheduler}" in text.splitlines()
         status = "🟩 运行中" if running else "🟨 未运行"
@@ -211,7 +210,7 @@ async def test_admin_status_reports_auto_post_schedule(
         ),
     )
     monkeypatch.setattr(bot, "scheduler", scheduler)
-    text = bot.admin._get_auto_post_status_text()
+    text = handlers.auto_post_status_text(bot)
     assert text.startswith(expected)
     if expected.endswith("下次"):
         assert next_run.astimezone().strftime("%m-%d %H:%M %z") in text
@@ -265,7 +264,7 @@ def test_bot_mention_matches_complete_local_account(text: str, expected: bool) -
     ],
 )
 def test_slash_command_detection(text: str, expected: tuple[str, str] | None) -> None:
-    assert AdminCommandService._extract_slash_command(text) == expected
+    assert _extract_slash_command(text) == expected
 
 
 async def test_image_service_downloads_url_before_upload() -> None:
@@ -309,7 +308,7 @@ async def test_image_response_handles_provider_failures(failure: str) -> None:
         )
     )
 
-    assert await service.generate_response("一只猫") == AIResponse(
+    assert await service.generate_response("一只猫") == Reply(
         "图片生成失败，请稍后再试。"
     )
 
@@ -333,7 +332,7 @@ async def test_image_service_rejects_invalid_or_oversized_data(data: bytes) -> N
         )
     )
 
-    assert await service.generate_response("一只猫") == AIResponse(
+    assert await service.generate_response("一只猫") == Reply(
         "图片生成失败，请稍后再试。"
     )
     upload_bytes.assert_not_awaited()
@@ -496,13 +495,13 @@ async def test_admin_commands_persist_to_settings(
     make_bot: MakeBot, write_config: WriteConfig
 ) -> None:
     bot = await make_bot(write_config())
-    await bot.admin._handle_set_bool("chat", ConfigKeys.REPLY_CHAT, "off")
-    await bot.admin._handle_model("temporary-model")
+    await handlers.set_bool(bot, ConfigKeys.REPLY_CHAT, "chat", "off")
+    await handlers.set_model(bot, "temporary-model")
 
     assert bot.openai.model == "temporary-model"
     assert read_settings(bot.config.settings_path)["bot"]["model"] == "temporary-model"
 
-    response = await bot.admin._handle_model("reset")
+    response = await handlers.set_model(bot, "reset")
 
     assert response == "已恢复默认模型: deepseek-flash"
     assert bot.openai.model == "deepseek-flash"
@@ -532,7 +531,7 @@ async def test_settings_reload_applies_live_and_flags_restart(
     assert bot.openai.model == "live-model"
     assert bot.openai.api_mode == "responses"
     assert bot.system_prompt == "新的人设"
-    assert bot.admin.allowed_users == {"user-9"}
+    assert handlers.admins(bot) == ["user-9"]
     assert bot.streaming.log_dump_events is True
     warning.assert_called_once_with("Restart required for: timeline.home")
 
@@ -802,11 +801,11 @@ async def test_admin_clean_posts_only_skips_missing_resources(
         bot.misskey, "get_note", AsyncMock(side_effect=APINotFoundError("missing"))
     )
 
-    assert await bot.admin._delete_clean_posts([note], cutoff, set()) == (0, 1, 0)
+    assert await handlers.delete_clean_posts(bot, [note], cutoff, set()) == (0, 1, 0)
 
     bot.misskey.get_note = AsyncMock(side_effect=APIPermissionError("denied"))
     with pytest.raises(APIPermissionError, match="denied"):
-        await bot.admin._delete_clean_posts([note], cutoff, set())
+        await handlers.delete_clean_posts(bot, [note], cutoff, set())
 
 
 @pytest.mark.parametrize("confirmation", ("yes", "-Y", "--yes"))
@@ -849,6 +848,19 @@ async def test_admin_string_allowlist_uses_exact_match(
     assert "没有权限" in response
 
 
+async def test_admin_unknown_command_keeps_single_colon_heading(
+    make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
+
+    response = await bot.admin.on_message(
+        {"text": "^foo:", "user": {"id": "user-2", "username": "bob"}}
+    )
+
+    assert response is not None
+    assert response.startswith("^foo:\n```\n未知命令: foo:")
+
+
 async def test_admin_can_reenable_chat(
     make_bot: MakeBot,
     write_config: WriteConfig,
@@ -856,7 +868,7 @@ async def test_admin_can_reenable_chat(
 ) -> None:
     debug_log = Mock()
     info_log = Mock()
-    monkeypatch.setattr("twipsybot.bot.engine.pipeline.logger.debug", debug_log)
+    monkeypatch.setattr("twipsybot.bot.flows.chat.logger.debug", debug_log)
     monkeypatch.setattr("twipsybot.bot.flows.chat.logger.info", info_log)
     bot = await make_bot(
         write_config(
@@ -961,7 +973,7 @@ async def test_auto_post_confirms_only_successful_publish(
     )
     service = AutoPostService(cast(Any, bot))
     monkeypatch.setattr(service, "_PLUGIN_POST_INTERVAL_SECONDS", 0)
-    result = {"plugin_name": "Topics"}
+    result = "Topics"
 
     with pytest.raises(RuntimeError, match="failed"):
         await service._post_plugin_contents(
@@ -1069,13 +1081,13 @@ async def test_admin_autopost_switches_mode(
 ) -> None:
     bot = await make_bot(write_config())
 
-    assert "需要先" in await bot.admin._handle_autopost("schedule")
+    assert "需要先" in str(await handlers.set_autopost(bot, "schedule"))
     assert bot.auto_post.mode == "rotation"
-    assert "用法" in await bot.admin._handle_autopost("on")
+    assert await handlers.set_autopost(bot, "on") is None
 
     await bot.settings.update({ConfigKeys.POST_TIMES: ["09:00"]})
-    assert await bot.admin._handle_autopost("schedule") == "autopost: schedule"
+    assert await handlers.set_autopost(bot, "schedule") == "autopost: schedule"
     post = read_settings(bot.config.settings_path)["autopost"]
     assert (post.get("rotation", False), post["schedule"]) == (False, True)
-    assert await bot.admin._handle_autopost("off") == "autopost: off"
+    assert await handlers.set_autopost(bot, "off") == "autopost: off"
     assert bot.auto_post.mode == "off"

@@ -187,8 +187,9 @@ async def test_keyact_reads_line_rules() -> None:
 
 
 def test_keyact_rejects_rule_without_response() -> None:
+    context = _context({"enabled": True, "rules": "ping"})
     with pytest.raises(ValueError, match="keywords = response"):
-        KeyActPlugin(_context({"enabled": True, "rules": "ping"}))
+        KeyActPlugin(context)
 
 
 def test_topics_rss_list_accepts_lines_with_comments() -> None:
@@ -800,8 +801,9 @@ def test_radar_delay_parsing(value: Any, expected: timedelta | None) -> None:
     "value", ("30s", "0m", "1d1m", "2d", "5", 5, True, "1x", timedelta(seconds=59))
 )
 def test_radar_rejects_invalid_delay(value: Any) -> None:
+    context = _context({"enabled": True, "delay": value})
     with pytest.raises(ValueError, match="delay must be between 1m and 1d"):
-        RadarPlugin(_context({"enabled": True, "delay": value}))
+        RadarPlugin(context)
 
 
 def _radar_event(note_id: str = "note-1") -> TimelineNoteEvent:

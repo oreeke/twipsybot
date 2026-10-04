@@ -1,159 +1,162 @@
 import asyncio
 import json
 import re
+from collections import deque
+from contextlib import suppress
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import aiohttp
 from loguru import logger
 
+from ...shared.constants import STREAM_SEND_BUFFER_MAX
 from ...shared.exceptions import WebSocketConnectionError, WebSocketReconnectError
+from .transport import TCPClient
 
-__all__ = ("_StreamingSocketMixin",)
+__all__ = ("StreamingSocket",)
 
 _I_PARAM_RE = re.compile(r"([?&]i=)[^&#\s]+")
 _I_JSON_RE = re.compile(r'("i"\s*:\s*")[^"]+(")')
+_RECEIVE_TIMEOUT = 10
+_CLOSED_TYPES = (
+    aiohttp.WSMsgType.CLOSED,
+    aiohttp.WSMsgType.CLOSING,
+    aiohttp.WSMsgType.ERROR,
+)
 
 
 def _redact_access_token(text: str) -> str:
     return _I_JSON_RE.sub(r"\1***\2", _I_PARAM_RE.sub(r"\1***", text))
 
 
-class _StreamingSocketMixin:
+class StreamingSocket:
+    def __init__(self, instance_url: str, access_token: str, transport: TCPClient):
+        self.instance_url = instance_url
+        self.access_token = access_token
+        self.transport = transport
+        self.ws: aiohttp.ClientWebSocketResponse | None = None
+        self.buffer: deque[dict[str, Any]] = deque(maxlen=STREAM_SEND_BUFFER_MAX)
+        self._overflow_warned = False
+        self._ws_lock = asyncio.Lock()
+        self._send_lock = asyncio.Lock()
+        self._connect_task: asyncio.Task[None] | None = None
+
     @property
-    def _ws_available(self) -> bool:
-        return self.ws_connection is not None and not self.ws_connection.closed
+    def available(self) -> bool:
+        return self.ws is not None and not self.ws.closed
 
-    def _buffer_outgoing(self, message: dict[str, Any]) -> None:
-        if (
-            len(self._send_buffer) == self._send_buffer.maxlen
-            and not self._send_buffer_overflow_warned
-        ):
+    def buffer_outgoing(self, message: dict[str, Any]) -> None:
+        if len(self.buffer) == self.buffer.maxlen and not self._overflow_warned:
             logger.warning("WebSocket send buffer full; dropping oldest messages")
-            self._send_buffer_overflow_warned = True
-        self._send_buffer.append(message)
+            self._overflow_warned = True
+        self.buffer.append(message)
 
-    async def _send_or_buffer(self, message: dict[str, Any]) -> None:
+    def clear_buffer(self) -> None:
+        self.buffer.clear()
+        self._overflow_warned = False
+
+    async def send(self, message: dict[str, Any]) -> None:
         async with self._send_lock:
-            ws = self.ws_connection
-            if ws is None or ws.closed:
-                self._buffer_outgoing(message)
+            if (ws := self.ws) is None or ws.closed:
+                self.buffer_outgoing(message)
                 return
             try:
                 await ws.send_json(message)
             except (aiohttp.ClientError, OSError) as e:
-                self._buffer_outgoing(message)
-                await self._close_websocket()
-                error_msg = _redact_access_token(str(e))
-                logger.debug(f"WebSocket send failed; reconnecting: {error_msg}")
+                self.buffer_outgoing(message)
+                await self._drop(e)
 
-    async def _send_control(self, message: dict[str, Any]) -> None:
+    async def send_control(self, message: dict[str, Any]) -> None:
         async with self._send_lock:
-            ws = self.ws_connection
-            if ws is None or ws.closed:
+            if (ws := self.ws) is None or ws.closed:
                 raise WebSocketReconnectError()
             try:
                 await ws.send_json(message)
             except (aiohttp.ClientError, OSError) as e:
-                await self._close_websocket()
-                error_msg = _redact_access_token(str(e))
-                logger.debug(f"WebSocket send failed; reconnecting: {error_msg}")
+                await self._drop(e)
                 raise WebSocketReconnectError() from e
 
-    async def _flush_send_buffer(self) -> None:
-        while self._send_buffer and self._ws_available:
-            message = self._send_buffer.popleft()
-            await self._send_control(message)
-        if not self._send_buffer:
-            self._send_buffer_overflow_warned = False
+    async def _drop(self, error: Exception) -> None:
+        await self.close()
+        logger.debug(
+            f"WebSocket send failed; reconnecting: {_redact_access_token(str(error))}"
+        )
 
-    async def _reconnect_with_backoff(self, delay_seconds: float) -> None:
-        await self._close_websocket()
-        await asyncio.sleep(delay_seconds)
-        await self._connect_and_resubscribe()
+    async def flush(self) -> None:
+        while self.buffer and self.available:
+            await self.send_control(self.buffer.popleft())
+        if not self.buffer:
+            self._overflow_warned = False
 
-    async def _connect_websocket(self) -> None:
+    async def connect(self) -> None:
         async with self._ws_lock:
-            if self._ws_available:
+            if self.available:
                 return
-            task = getattr(self, "_connect_task", None)
+            task = self._connect_task
             if task is None or task.done():
-                task = asyncio.create_task(
-                    self._connect_websocket_inner(),
-                    name="stream-ws-connect",
-                )
+                task = asyncio.create_task(self._open(), name="stream-ws-connect")
                 self._connect_task = task
         try:
             await task
         finally:
             if task.done():
                 async with self._ws_lock:
-                    if getattr(self, "_connect_task", None) is task:
+                    if self._connect_task is task:
                         self._connect_task = None
 
-    async def _connect_websocket_inner(self) -> None:
+    async def _open(self) -> None:
         raw = self.instance_url.strip().rstrip("/")
-        if "://" not in raw:
-            raw = f"https://{raw}"
-        parsed = urlsplit(raw)
-        scheme = (parsed.scheme or "").lower()
+        parsed = urlsplit(raw if "://" in raw else f"https://{raw}")
+        scheme = parsed.scheme.lower()
         if scheme not in {"https", "http"}:
             raise ValueError("Unsupported instance URL scheme")
-        ws_scheme = "wss" if scheme == "https" else "ws"
-        base_ws_url = urlunsplit(
-            (ws_scheme, parsed.netloc, parsed.path.rstrip("/"), "", "")
+        base_url = urlunsplit(
+            (
+                "wss" if scheme == "https" else "ws",
+                parsed.netloc,
+                parsed.path.rstrip("/"),
+                "",
+                "",
+            )
         ).rstrip("/")
-        qs = urlencode({"i": self.access_token})
-        ws_url = f"{base_ws_url}/streaming?{qs}"
-        safe_url = f"{base_ws_url}/streaming"
+        safe_url = f"{base_url}/streaming"
         try:
-            ws = await self.transport.ws_connect(ws_url)
+            ws = await self.transport.ws_connect(
+                f"{safe_url}?{urlencode({'i': self.access_token})}"
+            )
             async with self._ws_lock:
-                if self._ws_available:
-                    try:
+                if self.available:
+                    with suppress(Exception):
                         await ws.close()
-                    except Exception:
-                        pass
                     return
-                self.ws_connection = ws
+                self.ws = ws
             logger.debug(f"WebSocket connected: {safe_url}")
         except WebSocketConnectionError:
-            await self._close_websocket()
+            await self.close()
             raise
         except (aiohttp.ClientError, OSError) as e:
-            await self._close_websocket()
-            error_msg = _redact_access_token(str(e))
-            logger.error(f"WebSocket connection failed: {error_msg}")
+            await self.close()
+            logger.error(f"WebSocket connection failed: {_redact_access_token(str(e))}")
             raise WebSocketConnectionError() from e
 
-    async def _listen_messages(self) -> None:
-        while self.running:
-            ws = self.ws_connection
-            if ws is None or ws.closed:
-                raise WebSocketReconnectError()
-            try:
-                msg = await asyncio.wait_for(ws.receive(), timeout=10)
-                if msg.type in (
-                    aiohttp.WSMsgType.CLOSED,
-                    aiohttp.WSMsgType.CLOSING,
-                    aiohttp.WSMsgType.ERROR,
-                ):
-                    raise WebSocketReconnectError()
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    data = json.loads(msg.data)
-                    await self._process_message(data, msg.data)
-            except TimeoutError:
-                continue
-            except (aiohttp.ClientError, OSError) as e:
-                raise WebSocketReconnectError() from e
-            except (ValueError, TypeError, AttributeError, KeyError) as e:
-                logger.error(f"Failed to parse message: {e}")
+    async def receive(self) -> Any:
+        if (ws := self.ws) is None or ws.closed:
+            raise WebSocketReconnectError()
+        try:
+            msg = await asyncio.wait_for(ws.receive(), timeout=_RECEIVE_TIMEOUT)
+        except TimeoutError:
+            return None
+        except (aiohttp.ClientError, OSError) as e:
+            raise WebSocketReconnectError() from e
+        if msg.type in _CLOSED_TYPES:
+            raise WebSocketReconnectError()
+        if msg.type != aiohttp.WSMsgType.TEXT:
+            return None
+        return json.loads(msg.data)
 
-    async def _close_websocket(self) -> None:
+    async def close(self) -> None:
         async with self._ws_lock:
-            if self.ws_connection and not self.ws_connection.closed:
-                try:
-                    await self.ws_connection.close()
-                except Exception:
-                    pass
-            self.ws_connection = None
+            ws, self.ws = self.ws, None
+            if ws is not None and not ws.closed:
+                with suppress(Exception):
+                    await ws.close()

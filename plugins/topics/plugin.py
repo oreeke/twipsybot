@@ -62,7 +62,7 @@ class TopicsPlugin(PluginBase):
                 await self._initialize_storage(
                     {"rss_recent_keys": "[]", "rss_last_feed_idx": "0"}
                 )
-                details = f"RSS feeds: {len(self._get_rss_urls())}"
+                details = f"RSS feeds: {len(self.settings.rss_list)}"
             else:
                 await self._load_topics()
                 initial_index = max(0, self.settings.txt_start_line - 1)
@@ -72,8 +72,6 @@ class TopicsPlugin(PluginBase):
                 details = f"Custom topics: {len(self.topics)}"
             self._log_plugin_action("initialized", details)
             return True
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.error(f"Topics plugin initialization failed: {e}")
             return False
@@ -91,8 +89,6 @@ class TopicsPlugin(PluginBase):
             return {
                 "prompt": self.settings.txt_ai_prefix.format(topic=topic),
             }
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.error(f"Topics plugin auto-post hook failed: {e}")
             return None
@@ -102,8 +98,6 @@ class TopicsPlugin(PluginBase):
             for key, value in defaults.items():
                 if await self.context.storage.get(key) is None:
                     await self.context.storage.set(key, value)
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.warning(f"Topics plugin storage initialization failed: {e}")
             raise
@@ -138,7 +132,7 @@ class TopicsPlugin(PluginBase):
 
     async def _get_next_rss_posts(self) -> list[str]:
         self._pending_rss.clear()
-        urls = self._get_rss_urls()
+        urls = list(self.settings.rss_list)
         if not urls:
             logger.warning("RSS source enabled but rss_list is empty")
             return []
@@ -194,9 +188,6 @@ class TopicsPlugin(PluginBase):
         )
         return []
 
-    def _get_rss_urls(self) -> list[str]:
-        return list(self.settings.rss_list)
-
     @staticmethod
     def _rss_session() -> aiohttp.ClientSession:
         return aiohttp.ClientSession(timeout=_RSS_TIMEOUT, headers=_RSS_HEADERS)
@@ -208,16 +199,12 @@ class TopicsPlugin(PluginBase):
                 for i, url in enumerate(urls)
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
-        return self._collect_fetch_results(results)
-
-    @staticmethod
-    def _collect_fetch_results(results: list[Any]) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
-        for r in results:
-            if isinstance(r, Exception):
-                logger.warning(f"RSS fetch failed: {r}")
-                continue
-            candidates.extend(r)
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.warning(f"RSS fetch failed: {result}")
+            else:
+                candidates.extend(result)
         return candidates
 
     @staticmethod
@@ -384,8 +371,6 @@ class TopicsPlugin(PluginBase):
                 max_tokens=self.context.openai.max_tokens,
                 temperature=self.context.openai.temperature,
             )
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.warning(f"RSS title rewrite failed: {e}")
             return title
@@ -401,8 +386,6 @@ class TopicsPlugin(PluginBase):
             if not isinstance(obj, list):
                 return []
             return [x for x in obj if isinstance(x, str) and x]
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.warning(f"Failed to load rss_recent_keys: {e}")
             return []
@@ -411,8 +394,6 @@ class TopicsPlugin(PluginBase):
         try:
             await self.context.storage.set("rss_recent_keys", json.dumps(keys))
             return True
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.warning(f"Failed to save rss_recent_keys: {e}")
             return False
@@ -421,8 +402,6 @@ class TopicsPlugin(PluginBase):
         try:
             raw = await self.context.storage.get(key)
             return max(0, int(raw)) if raw else 0
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.warning(f"Failed to load {key}: {e}")
             return 0
@@ -431,8 +410,6 @@ class TopicsPlugin(PluginBase):
         try:
             await self.context.storage.set(key, value)
             return True
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.warning(f"Failed to save {key}: {e}")
             return False
@@ -459,8 +436,6 @@ class TopicsPlugin(PluginBase):
             )
             self._log_plugin_action("selected topic", f"{topic} (line: {index + 1})")
             return topic
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.warning(f"Failed to get next topic: {e}")
             return fallback

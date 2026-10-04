@@ -140,23 +140,6 @@ class ResponseLimiter:
             return True, self._config.get(ConfigKeys.REPLY_MAX_TURNS_MSG)
         return False, ""
 
-    async def maybe_send_blocked_reply(
-        self,
-        *,
-        user_id: str,
-        handle: str | None,
-        send_reply: Callable[[str, str | None], Awaitable[None]],
-    ) -> bool:
-        blocked, reply = await self.get_response_block_reply(
-            user_id=user_id, handle=handle
-        )
-        if not blocked:
-            return False
-        if reply:
-            await send_reply(reply, None)
-            await self.record_response(user_id, count_turn=False)
-        return True
-
     def _turns_limited(self) -> bool:
         max_turns = self._config.get(ConfigKeys.REPLY_MAX_TURNS)
         return isinstance(max_turns, int) and max_turns >= 0

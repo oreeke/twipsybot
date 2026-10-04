@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.14.0 - 2026-10-05
+
+精简核心架构，移除过度抽象
+
+### Changed
+
+- 回复统一经响应管道投递，管理命令、slash 命令与普通回复在同一轮内按用户串行
+- Streaming 客户端改为组合结构，事件注册改为 `streaming.events.on()`，状态查询改为 `streaming.events.status()`
+- 管理命令合并为单一命令表，管理员名单修改即时生效；仅发送 `^` 时提示未知命令
+- 回复限制提示写入日志
+
+### Removed
+
+- `APIResponseError` 移除未使用的 `error_id`、`kind`、`info`，保留 `status`、`code`、`retry_after`
+
+<br>
+
 ## 0.13.0 - 2026-10-05
 
 Radar 支持自定义互动延时

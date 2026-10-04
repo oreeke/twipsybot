@@ -101,7 +101,7 @@ class OpenAIAPI:
         self.image_size = image_size
         self.image_quality = image_quality
 
-    async def _call_api_common(
+    async def _chat_completions(
         self,
         messages: list[dict[str, Any]],
         max_tokens: int | None,
@@ -109,28 +109,17 @@ class OpenAIAPI:
         call_type: str,
         json_output: bool = False,
     ) -> str:
-        messages = self._to_chat_completions_messages(messages)
-        try:
-            response = await make_chat_completions_request(
-                client=self.client,
-                semaphore=self._semaphore,
-                model=self.model,
-                token_param=self._token_param,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                json_output=json_output,
-            )
-            return process_chat_completions_response(response, call_type)
-        except BadRequestError as e:
-            logger.error(f"API request parameter error: {e}")
-            raise ValueError(self._safe_error_message(e)) from e
-        except OpenAIAuthenticationError as e:
-            logger.error(f"API authentication failed: {e}")
-            raise AuthenticationError(self._safe_error_message(e)) from e
-        except (ValueError, TypeError, KeyError) as e:
-            logger.error(f"Invalid API response format: {e}")
-            raise ValueError(self._safe_error_message(e)) from e
+        response = await make_chat_completions_request(
+            client=self.client,
+            semaphore=self._semaphore,
+            model=self.model,
+            token_param=self._token_param,
+            messages=self._to_chat_completions_messages(messages),
+            max_tokens=max_tokens,
+            temperature=temperature,
+            json_output=json_output,
+        )
+        return process_chat_completions_response(response, call_type)
 
     @property
     def uses_responses_api(self) -> bool:
@@ -233,59 +222,48 @@ class OpenAIAPI:
         call_type: str,
         json_output: bool = False,
     ) -> str:
-        if not self.uses_responses_api:
-            return await self._call_api_common(
-                messages, max_tokens, temperature, call_type, json_output
-            )
+        args = (messages, max_tokens, temperature, call_type, json_output)
         try:
-            response = await make_responses_request(
-                client=self.client,
-                semaphore=self._semaphore,
-                model=self.model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                json_output=json_output,
-            )
-            text = extract_responses_text(response)
-            logger.debug(
-                f"OpenAI API {call_type} call succeeded; output length: {len(text)}"
-            )
-            return text
+            if not self.uses_responses_api:
+                text = await self._chat_completions(*args)
+            else:
+                try:
+                    response = await make_responses_request(
+                        client=self.client,
+                        semaphore=self._semaphore,
+                        model=self.model,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        json_output=json_output,
+                    )
+                    text = extract_responses_text(response)
+                except APIStatusError as e:
+                    if not self._is_responses_unavailable(e):
+                        raise
+                    self._responses_disabled = True
+                    logger.warning(
+                        f"Responses API unavailable; falling back to Chat Completions: {e}"
+                    )
+                    text = await self._chat_completions(*args)
         except OpenAIAuthenticationError as e:
             logger.error(f"API authentication failed: {e}")
             raise AuthenticationError(self._safe_error_message(e)) from e
-        except APIStatusError as e:
-            if not self._is_responses_unavailable(e):
-                if not isinstance(e, BadRequestError):
-                    raise
-                logger.error(f"API request parameter error: {e}")
-                raise ValueError(self._safe_error_message(e)) from e
-            self._responses_disabled = True
-            logger.warning(
-                f"Responses API unavailable; falling back to Chat Completions: {e}"
-            )
-            return await self._call_api_common(
-                messages, max_tokens, temperature, call_type, json_output
-            )
+        except BadRequestError as e:
+            logger.error(f"API request parameter error: {e}")
+            raise ValueError(self._safe_error_message(e)) from e
         except (ValueError, TypeError, KeyError) as e:
             logger.error(f"Invalid API response format: {e}")
             raise ValueError(self._safe_error_message(e)) from e
+        logger.debug(
+            f"OpenAI API {call_type} call succeeded; output length: {len(text)}"
+        )
+        return text
 
     async def close(self):
         if getattr(self, "client", None):
             await self.client.close()
             logger.debug("OpenAI API client closed")
-
-    @staticmethod
-    def _build_messages(
-        prompt: str, system_prompt: str | None = None
-    ) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt.strip()})
-        messages.append({"role": "user", "content": prompt.strip()})
-        return messages
 
     async def generate_text(
         self,
@@ -295,7 +273,9 @@ class OpenAIAPI:
         temperature: float | None = None,
         json_output: bool = False,
     ) -> str:
-        messages = self._build_messages(prompt, system_prompt)
+        messages: list[dict[str, Any]] = [{"role": "user", "content": prompt.strip()}]
+        if system_prompt:
+            messages.insert(0, {"role": "system", "content": system_prompt.strip()})
         return await self._call_api(
             messages, max_tokens, temperature, "single-turn text", json_output
         )

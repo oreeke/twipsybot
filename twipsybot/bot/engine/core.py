@@ -76,7 +76,9 @@ class Neuro:
             openai=self.openai,
             bot=self,
         )
-        self.pipeline = ResponsePipeline(limits=self.limits)
+        self.pipeline = ResponsePipeline(
+            limits=self.limits, plugins=self.plugin_manager
+        )
         self.bot_user_id = None
         self.bot_username = None
         self.chat = ChatHandler(self)
@@ -100,9 +102,6 @@ class Neuro:
         self.settings = SettingsReloader(self)
         logger.info("Bot initialized")
 
-    def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
-        return self.limits.is_response_blacklisted_user(user_id=user_id, handle=handle)
-
     async def start(self) -> None:
         if self.runtime.running:
             logger.warning("Bot is already running")
@@ -125,7 +124,6 @@ class Neuro:
             f"Connected to Misskey instance: bot_id={self.bot_user_id}, @{self.bot_username}"
         )
         await self.plugin_manager.load_plugins()
-        self.admin.start()
         await self.plugin_manager.startup_plugins()
 
     def _setup_scheduler(self) -> None:
@@ -138,16 +136,6 @@ class Neuro:
             self.scheduler.add_job(func, "cron", hour=hour, minute=0, second=0)
         self.auto_post.apply_schedule(initial=True)
         self.scheduler.start()
-
-    @staticmethod
-    async def _run_stop_steps(steps: tuple[tuple[str, Any], ...]) -> None:
-        for action, operation in steps:
-            try:
-                await operation()
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.exception(f"Error {action}: {e}")
 
     async def stop(self) -> None:
         if not self.runtime.running:
@@ -166,27 +154,25 @@ class Neuro:
         finally:
             logger.info("Services stopped")
 
+    async def _stop_scheduler(self) -> None:
+        if self.scheduler.running:
+            self.scheduler.shutdown(wait=False)
+
     async def _stop_services(self) -> None:
-        await self._run_stop_steps(
-            (
-                ("shutting down plugins", self.plugin_manager.shutdown_plugins),
-                ("cleaning up plugins", self.plugin_manager.cleanup_plugins),
-            )
-        )
-        try:
-            if self.scheduler.running:
-                self.scheduler.shutdown(wait=False)
-        except Exception as e:
-            logger.exception(f"Error stopping scheduler: {e}")
-        await self._run_stop_steps(
-            (
-                ("cleaning up tasks", self.runtime.cleanup_tasks),
-                ("closing streaming client", self.streaming.close),
-                ("closing Misskey client", self.misskey.close),
-                ("closing OpenAI client", self.openai.close),
-                ("closing database", self.db.close),
-            )
-        )
+        for action, step in (
+            ("shutting down plugins", self.plugin_manager.shutdown_plugins),
+            ("cleaning up plugins", self.plugin_manager.cleanup_plugins),
+            ("stopping scheduler", self._stop_scheduler),
+            ("cleaning up tasks", self.runtime.cleanup_tasks),
+            ("closing streaming client", self.streaming.close),
+            ("closing Misskey client", self.misskey.close),
+            ("closing OpenAI client", self.openai.close),
+            ("closing database", self.db.close),
+        ):
+            try:
+                await step()
+            except Exception as e:
+                logger.exception(f"Error {action}: {e}")
 
     def is_bot_mentioned(self, text: str) -> bool:
         if not text or not self.bot_username:

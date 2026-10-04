@@ -71,7 +71,7 @@ class ExampleConfig(PluginConfig):
 example = "twipsybot_example:plugin"
 ```
 
-入口名即插件 ID 与配置键。安装不会自动启用，需设置 `plugins.<name>.enabled: true`；依赖与版本由插件自行管理。
+入口名即插件 ID 与配置键，与本地插件同名时本地插件优先。安装不会自动启用，需设置 `plugins.<name>.enabled: true`；依赖与版本由插件自行管理。
 
 ## 生命周期
 

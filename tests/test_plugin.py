@@ -190,7 +190,7 @@ async def test_priority_and_handled_short_circuit(
         "on_message", {"id": "message-1", "user": {"username": "a"}}
     )
 
-    assert results == [{"handled": True, "response": "high", "plugin_name": "high"}]
+    assert results == [("high", {"handled": True, "response": "high"})]
     assert await bot.db.get_plugin_data("low", "called") is None
 
 
@@ -226,7 +226,7 @@ async def test_hook_timeout_and_exception_are_isolated(
         "on_message", {"id": "message-1", "user": {"username": "a"}}
     )
 
-    assert results == [{"handled": True, "response": "ok", "plugin_name": "healthy"}]
+    assert results == [("healthy", {"handled": True, "response": "ok"})]
 
 
 async def test_lifecycle_order(
@@ -625,7 +625,7 @@ async def test_event_raw_is_isolated_between_plugins(
 
     results = await bot.plugin_manager.call_plugin_hook("on_message", payload)
 
-    assert results[0]["response"] == "original"
+    assert results[0][1]["response"] == "original"
     assert payload["user"]["username"] == "original"
 
 
@@ -861,7 +861,7 @@ async def test_reload_plugin_replaces_instance_with_new_config(
     assert new.events == ["init", "initialize", "startup"]
     assert await new.context.storage.get("kept") == "yes"
     assert await manager.call_plugin_hook("on_message", _MESSAGE) == [
-        {"handled": True, "response": "updated", "plugin_name": "reload"}
+        ("reload", {"handled": True, "response": "updated"})
     ]
 
 
@@ -891,7 +891,7 @@ async def test_reload_plugin_failure_disables_only_that_plugin(
     info = {item["name"]: item["enabled"] for item in manager.get_plugin_info()}
     assert info == {"broken": False, "healthy": True}
     assert await manager.call_plugin_hook("on_message", _MESSAGE) == [
-        {"handled": True, "response": "ok", "plugin_name": "healthy"}
+        ("healthy", {"handled": True, "response": "ok"})
     ]
 
 
@@ -986,7 +986,7 @@ async def test_reload_plugin_drains_active_hook_before_shutdown(
 
     release.set()
     assert await reload == "enabled"
-    assert (await active_hook)[0]["response"] == "default"
+    assert (await active_hook)[0][1]["response"] == "default"
     assert plugin.events[-3:] == ["hook", "shutdown", "cleanup"]
 
 
@@ -1055,9 +1055,7 @@ async def test_auto_post_confirmation_responds_to_cancellation(
 
     monkeypatch.setattr(plugin, "on_auto_post_published", confirm)
     task = asyncio.create_task(
-        bot.plugin_manager.confirm_auto_post_published(
-            {"plugin_name": "publisher"}, "content"
-        )
+        bot.plugin_manager.confirm_auto_post_published("publisher", "content")
     )
     await confirmation_started.wait()
     task.cancel()
@@ -1122,7 +1120,7 @@ async def test_actor_lock_does_not_reenter_response_pipeline(
         timeout=0.2,
     )
 
-    assert results == [{"handled": True, "response": "ok", "plugin_name": "actor"}]
+    assert results == [("actor", {"handled": True, "response": "ok"})]
 
 
 def test_message_hook_event_preserves_chat_file() -> None:

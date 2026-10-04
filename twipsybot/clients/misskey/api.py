@@ -65,44 +65,26 @@ class MisskeyAPI:
         return {"Authorization": f"Bearer {self.access_token}"}
 
     @staticmethod
-    def _format_error_text(error_text: str) -> str:
-        s = error_text.strip()
-        if not s:
-            return ""
+    def _parse_error(raw: str) -> tuple[str, str | None]:
+        text = raw.strip()
         try:
-            obj = json.loads(s)
+            payload = json.loads(text)
         except json.JSONDecodeError:
-            return s
-        if not isinstance(obj, dict):
-            return s
-        err = obj.get("error")
-        if not isinstance(err, dict):
-            return s
-        code = err.get("code")
-        msg = err.get("message")
-        if isinstance(code, str) and isinstance(msg, str):
-            return f"{code}: {msg}"
-        if isinstance(msg, str):
-            return msg
-        return s
-
-    @staticmethod
-    def _error_details(error_text: str) -> dict[str, Any]:
-        try:
-            payload = json.loads(error_text)
-        except json.JSONDecodeError:
-            return {}
-        if not isinstance(payload, dict) or not isinstance(payload.get("error"), dict):
-            return {}
-        return payload["error"]
+            return text, None
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if not isinstance(error, dict):
+            return text, None
+        code = error.get("code") if isinstance(error.get("code"), str) else None
+        if isinstance(message := error.get("message"), str):
+            text = f"{code}: {message}" if code else message
+        return text, code
 
     @classmethod
     def _response_error(
         cls, response: Any, endpoint: str, raw_error_text: str
     ) -> APIResponseError:
         status = response.status
-        error_text = cls._format_error_text(raw_error_text)
-        details = cls._error_details(raw_error_text)
+        error_text, code = cls._parse_error(raw_error_text)
         error_type: type[APIResponseError] = {
             400: APIBadRequestError,
             401: AuthenticationError,
@@ -124,36 +106,29 @@ class MisskeyAPI:
         return error_type(
             error_text,
             status=status,
-            code=details.get("code") if isinstance(details.get("code"), str) else None,
-            error_id=details.get("id") if isinstance(details.get("id"), str) else None,
-            kind=details.get("kind") if isinstance(details.get("kind"), str) else None,
-            info=details.get("info"),
+            code=code,
             retry_after=retry_after,
         )
 
     async def _process_response(self, response, endpoint: str) -> Any:
-        if response.status in (200, 204):
-            if response.status == 204:
-                logger.debug(f"Misskey API request succeeded: {endpoint}")
-                return {}
+        if response.status not in (200, 204):
+            raise self._response_error(response, endpoint, await response.text())
+        result: Any = {}
+        if response.status == 200:
             try:
                 result = await response.json()
-                logger.debug(f"Misskey API request succeeded: {endpoint}")
-                return result
             except (json.JSONDecodeError, aiohttp.ContentTypeError):
-                if not await response.read():
-                    logger.debug(f"Misskey API request succeeded: {endpoint}")
-                    return {}
-                raise APIConnectionError() from None
-        raw_error_text = await response.text()
-        raise self._response_error(response, endpoint, raw_error_text)
+                if await response.read():
+                    raise APIConnectionError() from None
+        logger.debug(f"Misskey API request succeeded: {endpoint}")
+        return result
 
     async def make_read_request(
         self, endpoint: str, data: dict[str, Any] | None = None
     ) -> Any:
         for attempt in range(1, API_MAX_RETRIES + 1):
             try:
-                return await self._make_request_once(endpoint, data)
+                return await self.make_request(endpoint, data)
             except APIRateLimitError as e:
                 logger.info(f"Retry attempt #{attempt}...")
                 delay = (
@@ -165,16 +140,9 @@ class MisskeyAPI:
             except APIConnectionError:
                 logger.info(f"Retry attempt #{attempt}...")
                 await asyncio.sleep(random.uniform(0, min(2 ** (attempt - 1), 30)))
-        return await self._make_request_once(endpoint, data)
+        return await self.make_request(endpoint, data)
 
     async def make_request(
-        self,
-        endpoint: str,
-        data: dict[str, Any] | None = None,
-    ) -> Any:
-        return await self._make_request_once(endpoint, data)
-
-    async def _make_request_once(
         self, endpoint: str, data: dict[str, Any] | None = None
     ) -> Any:
         url = f"{self.instance_url}/api/{endpoint}"
@@ -210,11 +178,9 @@ class MisskeyAPI:
         local_only: bool | None = None,
         file_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        if visibility is None:
-            visibility = "public"
         data: dict[str, Any] = {
             "text": self._limit_text(text, NOTE_TEXT_MAX_LENGTH, "note"),
-            "visibility": visibility,
+            "visibility": "public" if visibility is None else visibility,
         }
         if file_ids:
             data["fileIds"] = file_ids
@@ -277,30 +243,26 @@ class MisskeyAPI:
     async def send_message(
         self, user_id: str, text: str, file_id: str | None = None
     ) -> dict[str, Any]:
-        data: dict[str, Any] = {
-            "toUserId": user_id,
-            "text": self._limit_text(text, CHAT_TEXT_MAX_LENGTH, "chat message"),
-        }
-        if file_id:
-            data["fileId"] = file_id
-        result = await self.make_request("chat/messages/create-to-user", data)
-        logger.debug(
-            f"Misskey chat message sent: message_id={result.get('id', 'unknown')}"
+        return await self._send_chat(
+            "create-to-user", {"toUserId": user_id}, text, file_id
         )
-        return result
 
     async def send_room_message(
         self, room_id: str, text: str, file_id: str | None = None
     ) -> dict[str, Any]:
-        data: dict[str, Any] = {
-            "toRoomId": room_id,
-            "text": self._limit_text(text, CHAT_TEXT_MAX_LENGTH, "chat message"),
-        }
+        return await self._send_chat(
+            "create-to-room", {"toRoomId": room_id}, text, file_id
+        )
+
+    async def _send_chat(
+        self, target: str, data: dict[str, Any], text: str, file_id: str | None
+    ) -> dict[str, Any]:
+        data["text"] = self._limit_text(text, CHAT_TEXT_MAX_LENGTH, "chat message")
         if file_id:
             data["fileId"] = file_id
-        result = await self.make_request("chat/messages/create-to-room", data)
+        result = await self.make_request(f"chat/messages/{target}", data)
         logger.debug(
-            f"Misskey room message sent: message_id={result.get('id', 'unknown')}"
+            f"Misskey chat message sent: message_id={result.get('id', 'unknown')}"
         )
         return result
 

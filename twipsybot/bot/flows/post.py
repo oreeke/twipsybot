@@ -8,9 +8,10 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
+from ...plugin.manager import HookResult
 from ...shared.config_keys import ConfigKeys
 from ...shared.utils import format_log_text
-from ..engine.pipeline import AIResponse
+from ..engine.pipeline import Reply
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro
@@ -125,19 +126,17 @@ class AutoPostService:
             self.posts_today = 0
         logger.debug("Post counter reset")
 
-    async def generate_response(self, prompt: str) -> AIResponse:
+    async def generate_response(self, prompt: str) -> Reply:
         prompt, visibility, local_only = self._parse_manual_options(prompt)
         try:
             content = await self._create_ai_post(
                 prompt, visibility=visibility, local_only=local_only
             )
-        except asyncio.CancelledError:
-            raise
         except Exception:
             logger.exception("Manual post failed")
-            return AIResponse("发帖失败，请稍后再试。")
+            return Reply("发帖失败，请稍后再试。")
         logger.info(f"Manual post succeeded: {format_log_text(content)}")
-        return AIResponse("发帖完成")
+        return Reply("发帖完成")
 
     @staticmethod
     def _parse_manual_options(prompt: str) -> tuple[str, str | None, bool | None]:
@@ -195,12 +194,15 @@ class AutoPostService:
             logger.error(f"Error during auto-post: {e}")
 
     async def _try_plugin_post(
-        self, plugin_results: list[Any], max_posts: int | None, local_only: bool | None
+        self,
+        plugin_results: list[HookResult],
+        max_posts: int | None,
+        local_only: bool | None,
     ) -> bool:
         default_visibility = self.bot.config.get(ConfigKeys.POST_VISIBILITY)
-        for result in plugin_results:
+        for name, result in plugin_results:
             if "contents" in result and await self._post_plugin_contents(
-                result,
+                name,
                 result["contents"],
                 result.get("visibility", default_visibility),
                 max_posts,
@@ -211,7 +213,7 @@ class AutoPostService:
 
     async def _post_plugin_contents(
         self,
-        result: dict[str, Any],
+        plugin_name: str,
         contents: list[str],
         visibility: str | None,
         max_posts: int | None,
@@ -224,7 +226,9 @@ class AutoPostService:
             await self.bot.misskey.create_note(
                 content, visibility=visibility, local_only=local_only
             )
-            await self.bot.plugin_manager.confirm_auto_post_published(result, content)
+            await self.bot.plugin_manager.confirm_auto_post_published(
+                plugin_name, content
+            )
             posted_any = True
             logger.info(f"Auto-post succeeded: {format_log_text(content)}")
             await self._record(max_posts)
@@ -233,20 +237,19 @@ class AutoPostService:
         return posted_any
 
     async def _generate_ai_post(
-        self, plugin_results: list[Any], max_posts: int | None
+        self, plugin_results: list[HookResult], max_posts: int | None
     ) -> None:
-        result = next((item for item in plugin_results if "prompt" in item), None)
-        plugin_prompt = result["prompt"] if result else ""
-        timestamp_override = result.get("timestamp") if result else None
-        if result:
-            logger.info(
-                f"Plugin {result.get('plugin_name')} requested prompt modification: {plugin_prompt}"
-            )
+        name, result = next(
+            ((n, r) for n, r in plugin_results if "prompt" in r), ("", {})
+        )
+        plugin_prompt = result.get("prompt", "")
+        if name:
+            logger.info(f"Plugin {name} requested prompt modification: {plugin_prompt}")
         try:
             content = await self._create_ai_post(
                 self.bot.config.get(ConfigKeys.POST_PROMPT, ""),
                 plugin_prompt,
-                timestamp_override,
+                result.get("timestamp"),
             )
         except ValueError as e:
             logger.warning(f"Auto-post failed; skipping this run: {e}")

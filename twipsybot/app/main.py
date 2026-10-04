@@ -70,8 +70,6 @@ class BotRunner:
         finally:
             try:
                 await asyncio.shield(self.shutdown())
-            except asyncio.CancelledError:
-                raise
             except Exception:
                 logger.exception("Error during shutdown")
 

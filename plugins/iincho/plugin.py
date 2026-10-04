@@ -194,8 +194,6 @@ class IinchoPlugin(PluginBase):
             await asyncio.sleep(self.settings.interval.total_seconds())
             try:
                 await self._process_window()
-            except asyncio.CancelledError:
-                raise
             except Exception as error:
                 logger.error(f"Iincho summary cycle failed: {error!r}")
 
@@ -299,8 +297,10 @@ class IinchoPlugin(PluginBase):
                 risk for code in codes if (risk := _LLAMA_GUARD_RISKS.get(code))
             )
 
+        tasks: list[asyncio.Task[frozenset[str]]] = []
         async with asyncio.TaskGroup() as group:
-            tasks = [group.create_task(classify(text)) for text in texts]
+            for text in texts:
+                tasks.append(group.create_task(classify(text)))
         return [task.result() for task in tasks]
 
     def _serialize_samples(self, samples: list[_Sample]) -> tuple[str, list[_Sample]]:
@@ -409,8 +409,6 @@ class IinchoPlugin(PluginBase):
         for message in messages:
             try:
                 await self.context.misskey.send_message(admin_id, message)
-            except asyncio.CancelledError:
-                raise
             except Exception as error:
                 logger.error(
                     f"Iincho admin alert failed: admin_id={admin_id!r} {error!r}"

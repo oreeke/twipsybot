@@ -8,7 +8,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
-from aiohttp import WSMsgType, web
+from aiohttp import ClientError, WSMsgType, web
 from aiohttp.multipart import BodyPartReader
 from aiohttp.test_utils import TestServer
 from conftest import (
@@ -21,6 +21,8 @@ from openai import APIStatusError
 from twipsybot import Neuro
 from twipsybot.app import main as app_main
 from twipsybot.clients.misskey.api import MisskeyAPI
+from twipsybot.clients.misskey.channels import ChannelType
+from twipsybot.clients.misskey.events import _normalize
 from twipsybot.clients.misskey.payloads import (
     extract_chat_text,
     extract_note_text,
@@ -61,28 +63,28 @@ async def test_streaming_event_status_tracks_busy_workers(
         if outcome == "error":
             raise ValueError("dispatch failed")
 
-    monkeypatch.setattr(client, "_dispatch_event", dispatch)
-    worker = asyncio.create_task(client._worker_loop())
-    client._workers.append(worker)
+    monkeypatch.setattr(client.events, "dispatch", dispatch)
+    worker = asyncio.create_task(client.events.worker_loop())
+    client.events.workers.append(worker)
     try:
-        await client._event_queue.put(("main", {"type": "mention"}))
+        await client.events.queue.put(("main", {"type": "mention"}))
         await asyncio.wait_for(started.wait(), timeout=1)
-        status = client.get_event_status()
+        status = client.events.status()
         assert status["queue_size"] == 0
         assert status["busy_workers"] == 1
         assert status["workers_alive"] == 1
-        assert status["workers_total"] == client._worker_count
-        assert status["queue_capacity"] == client._event_queue.maxsize
+        assert status["workers_total"] == client.events.worker_count
+        assert status["queue_capacity"] == client.events.queue.maxsize
         if outcome == "cancel":
             worker.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await worker
         else:
-            await client._event_queue.put(None)
+            await client.events.queue.put(None)
             release.set()
             await asyncio.wait_for(worker, timeout=1)
-        assert client.get_event_status()["busy_workers"] == 0
-        assert client.get_event_status()["workers_alive"] == 0
+        assert client.events.status()["busy_workers"] == 0
+        assert client.events.status()["workers_alive"] == 0
     finally:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
@@ -120,13 +122,13 @@ def test_misskey_payload_extractors_use_current_fields() -> None:
 
 def test_misskey_error_format_uses_current_fields() -> None:
     assert (
-        MisskeyAPI._format_error_text(
+        MisskeyAPI._parse_error(
             '{"error":{"code":"INVALID_PARAM","message":"Invalid parameter","id":"id"}}'
-        )
+        )[0]
         == "INVALID_PARAM: Invalid parameter"
     )
     legacy = '{"error":{"id":"legacy","info":"Legacy error","kind":"legacy"}}'
-    assert MisskeyAPI._format_error_text(legacy) == legacy
+    assert MisskeyAPI._parse_error(legacy)[0] == legacy
 
 
 async def test_room_timeline_uses_room_id_without_fallback() -> None:
@@ -196,7 +198,7 @@ async def test_misskey_api_retries_connection_errors(
     request = AsyncMock(side_effect=[APIConnectionError(), {"ok": True}])
     sleep = AsyncMock()
     api = object.__new__(MisskeyAPI)
-    api._make_request_once = request
+    api.make_request = request
     monkeypatch.setattr("twipsybot.clients.misskey.api.asyncio.sleep", sleep)
 
     assert await api.make_read_request("notes/show") == {"ok": True}
@@ -210,7 +212,7 @@ async def test_misskey_api_respects_retry_after(
     request = AsyncMock(side_effect=[APIRateLimitError(retry_after=12.0), {"ok": True}])
     sleep = AsyncMock()
     api = object.__new__(MisskeyAPI)
-    api._make_request_once = request
+    api.make_request = request
     monkeypatch.setattr("twipsybot.clients.misskey.api.asyncio.sleep", sleep)
 
     assert await api.make_read_request("notes/show") == {"ok": True}
@@ -235,8 +237,6 @@ async def test_misskey_preserves_permission_error_details() -> None:
 
     assert exc_info.value.status == 403
     assert exc_info.value.code == "PERMISSION_DENIED"
-    assert exc_info.value.error_id == "error-id"
-    assert exc_info.value.kind == "permission"
 
 
 async def test_misskey_api_stops_after_max_retries(
@@ -245,7 +245,7 @@ async def test_misskey_api_stops_after_max_retries(
     request = AsyncMock(side_effect=APIConnectionError())
     sleep = AsyncMock()
     api = object.__new__(MisskeyAPI)
-    api._make_request_once = request
+    api.make_request = request
     monkeypatch.setattr("twipsybot.clients.misskey.api.asyncio.sleep", sleep)
 
     with pytest.raises(APIConnectionError):
@@ -256,14 +256,14 @@ async def test_misskey_api_stops_after_max_retries(
 
 
 async def test_misskey_api_does_not_retry_writes() -> None:
-    request = AsyncMock(side_effect=APIConnectionError())
-    api = object.__new__(MisskeyAPI)
-    api._make_request_once = request
+    post = Mock(side_effect=ClientError("down"))
+    transport = SimpleNamespace(session=SimpleNamespace(post=post))
+    api = MisskeyAPI("https://example.com", "token", transport=cast(Any, transport))
 
     with pytest.raises(APIConnectionError):
         await api.make_request("notes/create")
 
-    request.assert_awaited_once_with("notes/create", None)
+    post.assert_called_once()
 
 
 async def test_create_note_leaves_reply_validation_to_misskey() -> None:
@@ -295,6 +295,16 @@ async def test_create_note_preserves_known_specified_reply_visibility() -> None:
             "replyId": "specified-note",
         },
     )
+
+
+async def test_create_note_does_not_turn_empty_visibility_public() -> None:
+    request = AsyncMock(return_value={})
+    api = object.__new__(MisskeyAPI)
+    api.make_request = request
+
+    await api.create_note("text", visibility="")
+
+    request.assert_awaited_once_with("notes/create", {"text": "text", "visibility": ""})
 
 
 @pytest.mark.parametrize(
@@ -422,7 +432,7 @@ async def test_streaming_without_reconnect_exposes_initial_failure(
     error = WebSocketConnectionError("handshake failed")
     websocket = SimpleNamespace(closed=False, send_json=AsyncMock(), close=AsyncMock())
     handshake = AsyncMock(side_effect=[error, websocket])
-    monkeypatch.setattr(client.transport, "ws_connect", handshake)
+    monkeypatch.setattr(client.socket.transport, "ws_connect", handshake)
     monkeypatch.setattr(client, "_listen_messages", AsyncMock())
 
     try:
@@ -432,8 +442,8 @@ async def test_streaming_without_reconnect_exposes_initial_failure(
         assert exc_info.value is error
         assert not client.running
         assert client.state == "disconnected"
-        assert not client._workers
-        assert client.ws_connection is None
+        assert not client.events.workers
+        assert client.socket.ws is None
 
         await client.connect(reconnect=False)
 
@@ -469,7 +479,7 @@ async def test_streaming_disconnect_stops_listener(reconnect: bool) -> None:
 
             assert not client.running
             assert client.state == "disconnected"
-            assert client.ws_connection is None
+            assert client.socket.ws is None
         finally:
             listener.cancel()
             await asyncio.gather(listener, return_exceptions=True)
@@ -481,7 +491,7 @@ async def test_streaming_without_reconnect_still_listens(
 ) -> None:
     client = StreamingClient("https://example.com", "token")
     client.running = True
-    client.ws_connection = cast(Any, SimpleNamespace(closed=False))
+    client.socket.ws = cast(Any, SimpleNamespace(closed=False))
     connect_once = AsyncMock()
     monkeypatch.setattr(client, "connect_once", connect_once)
     listen = AsyncMock()
@@ -502,7 +512,7 @@ async def test_streaming_skips_invalid_json() -> None:
             SimpleNamespace(type=WSMsgType.CLOSED, data=None),
         ]
     )
-    client.ws_connection = cast(Any, SimpleNamespace(closed=False, receive=receive))
+    client.socket.ws = cast(Any, SimpleNamespace(closed=False, receive=receive))
 
     with pytest.raises(WebSocketConnectionError):
         await client._listen_messages()
@@ -534,14 +544,14 @@ async def test_streaming_event_deduplication_respects_channel_type(
 ) -> None:
     client = StreamingClient("https://example.com", "token")
     enqueue = AsyncMock()
-    monkeypatch.setattr(client, "_enqueue_event", enqueue)
+    monkeypatch.setattr(client.events, "enqueue", enqueue)
     for channel_id, channel_name, event_type in (
         ("first-id", first_channel, first_type),
         ("second-id", second_channel, second_type),
     ):
         params = {"antennaId": channel_id} if channel_name == "antenna" else {}
         client.channels[channel_id] = {"name": channel_name, "params": params}
-        await client._handle_channel_message(
+        await client.events.handle_channel_message(
             {
                 "id": channel_id,
                 "type": event_type,
@@ -561,14 +571,14 @@ async def test_streaming_does_not_dedupe_event_dropped_before_enqueue(
 ) -> None:
     client = StreamingClient("https://example.com", "token")
     enqueue = AsyncMock(side_effect=[False, True])
-    monkeypatch.setattr(client, "_enqueue_event", enqueue)
+    monkeypatch.setattr(client.events, "enqueue", enqueue)
     client.channels = {
         "local-id": {"name": "localTimeline", "params": {}},
         "antenna-id": {"name": "antenna", "params": {"antennaId": "a-1"}},
     }
 
     for channel_id in client.channels:
-        await client._handle_channel_message(
+        await client.events.handle_channel_message(
             {
                 "id": channel_id,
                 "type": "note",
@@ -587,13 +597,13 @@ async def test_streaming_routes_main_notifications_to_notification_handler(
     on_note = AsyncMock()
     on_mention = AsyncMock()
     on_notification = AsyncMock()
-    client.on_note(on_note)
-    client.on_mention(on_mention)
-    client.on_notification(on_notification)
+    client.events.on("note", on_note)
+    client.events.on("mention", on_mention)
+    client.events.on("notification", on_notification)
     payload = {"id": "n-1", "type": inner_type, "note": {"id": "note-1"}}
-    _, event = client._wrap_notification(payload)
+    _, event = _normalize("main", "notification", payload)
 
-    await client._dispatch_event("main", event)
+    await client.events.dispatch("main", event)
 
     on_note.assert_not_awaited()
     on_mention.assert_not_awaited()
@@ -607,9 +617,9 @@ async def test_streaming_reconnect_runs_resubscribe_flow(
     close = AsyncMock()
     sleep = AsyncMock()
     reconnect = AsyncMock()
-    monkeypatch.setattr(client, "_close_websocket", close)
+    monkeypatch.setattr(client.socket, "close", close)
     monkeypatch.setattr(client, "_connect_and_resubscribe", reconnect)
-    monkeypatch.setattr("twipsybot.clients.misskey.socket.asyncio.sleep", sleep)
+    monkeypatch.setattr("twipsybot.clients.misskey.streaming.asyncio.sleep", sleep)
 
     await client._reconnect_with_backoff(4.0)
 
@@ -627,7 +637,7 @@ async def test_streaming_resubscribes_existing_channels(
         "antenna-id": {"name": "antenna", "params": {"antennaId": "a-1"}},
     }
     send = AsyncMock()
-    monkeypatch.setattr(client, "_send_control", send)
+    monkeypatch.setattr(client.socket, "send_control", send)
 
     await client._resubscribe_channels()
 
@@ -674,22 +684,23 @@ async def test_streaming_chat_timer_preserves_replacement(
         "twipsybot.clients.misskey.events.asyncio.sleep", wait_for_expiry
     )
     try:
-        channel_id = await client._ensure_chat_user_stream({"fromUserId": "user-1"})
+        channel_id = await client.events.open_chat_channel(
+            ChannelType.CHAT_USER, {"otherId": "user-1"}
+        )
         assert channel_id is not None
-        tasks.append(client._chat_channel_tasks[channel_id])
+        tasks.append(client.events.chat_tasks[channel_id])
         await asyncio.wait_for(timer_started.wait(), timeout=2)
 
         for _ in range(2):
-            previous = client._chat_channel_tasks[channel_id]
+            previous = client.events.chat_tasks[channel_id]
             timer_started.clear()
-            client._refresh_chat_channel_timer(channel_id)
-            current = client._chat_channel_tasks[channel_id]
+            client.events.schedule_chat_disconnect(channel_id)
+            current = client.events.chat_tasks[channel_id]
             tasks.append(current)
             await asyncio.gather(previous, return_exceptions=True)
 
             assert previous.cancelled()
-            assert client._chat_channel_tasks.get(channel_id) is current
-            assert client._chat_channel_other_ids.get(channel_id) == "user-1"
+            assert client.events.chat_tasks.get(channel_id) is current
             assert channel_id in client.channels
             await asyncio.wait_for(timer_started.wait(), timeout=2)
 
@@ -697,8 +708,7 @@ async def test_streaming_chat_timer_preserves_replacement(
         await asyncio.wait_for(tasks[-1], timeout=2)
 
         assert channel_id not in client.channels
-        assert not client._chat_channel_tasks
-        assert not client._chat_channel_other_ids
+        assert not client.events.chat_tasks
     finally:
         for task in tasks:
             task.cancel()
@@ -733,9 +743,9 @@ async def test_main_chat_message_uses_matching_misskey_channel(
 ) -> None:
     client = StreamingClient("https://example.com", "token")
     send = AsyncMock()
-    monkeypatch.setattr(client, "_send_channel_message", send)
+    monkeypatch.setattr(client, "send_channel_message", send)
     try:
-        await client._handle_main_new_chat_message(message)
+        await client.events.handle_main_chat_message(message)
 
         channel_id = next(
             channel_id
@@ -752,7 +762,7 @@ async def test_streaming_channel_waits_for_misskey_confirmation(
 ) -> None:
     client = StreamingClient("https://example.com", "token")
     send_json = AsyncMock()
-    client.ws_connection = cast(
+    client.socket.ws = cast(
         Any, SimpleNamespace(closed=False, send_json=send_json, close=AsyncMock())
     )
 
@@ -789,14 +799,14 @@ async def test_main_chat_message_survives_channel_rejection(
 ) -> None:
     client = StreamingClient("https://example.com", "token")
     handler = AsyncMock()
-    client.on_message(handler)
+    client.events.on("message", handler)
     monkeypatch.setattr(
         client,
         "connect_channel",
         AsyncMock(side_effect=WebSocketConnectionError("rejected")),
     )
 
-    await client._handle_main_new_chat_message(
+    await client.events.handle_main_chat_message(
         {"id": "message-1", "fromUserId": "user-1", "text": "hello"}
     )
 
@@ -809,19 +819,19 @@ async def test_streaming_flushes_send_buffer_in_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = StreamingClient("https://example.com", "token")
-    client.ws_connection = cast(Any, SimpleNamespace(closed=False))
+    client.socket.ws = cast(Any, SimpleNamespace(closed=False))
     messages = [
         {"type": "ch", "body": {"id": "main-id", "type": "first"}},
         {"type": "ch", "body": {"id": "main-id", "type": "second"}},
     ]
-    client._send_buffer.extend(messages)
+    client.socket.buffer.extend(messages)
     send = AsyncMock()
-    monkeypatch.setattr(client, "_send_control", send)
+    monkeypatch.setattr(client.socket, "send_control", send)
 
-    await client._flush_send_buffer()
+    await client.socket.flush()
 
     assert send.await_args_list == [call(message) for message in messages]
-    assert not client._send_buffer
+    assert not client.socket.buffer
 
 
 async def test_streaming_warns_once_per_send_buffer_overflow(
@@ -830,18 +840,18 @@ async def test_streaming_warns_once_per_send_buffer_overflow(
     client = StreamingClient("https://example.com", "token")
     warning = Mock()
     monkeypatch.setattr("twipsybot.clients.misskey.socket.logger.warning", warning)
-    maxlen = client._send_buffer.maxlen
+    maxlen = client.socket.buffer.maxlen
     assert maxlen is not None
 
     for index in range(maxlen + 2):
-        client._buffer_outgoing({"index": index})
+        client.socket.buffer_outgoing({"index": index})
 
     warning.assert_called_once()
-    client.ws_connection = cast(Any, SimpleNamespace(closed=False))
-    monkeypatch.setattr(client, "_send_control", AsyncMock())
-    await client._flush_send_buffer()
-    client._send_buffer.extend({"index": index} for index in range(maxlen))
-    client._buffer_outgoing({"index": maxlen})
+    client.socket.ws = cast(Any, SimpleNamespace(closed=False))
+    monkeypatch.setattr(client.socket, "send_control", AsyncMock())
+    await client.socket.flush()
+    client.socket.buffer.extend({"index": index} for index in range(maxlen))
+    client.socket.buffer_outgoing({"index": maxlen})
 
     assert warning.call_count == 2
 
@@ -1112,7 +1122,7 @@ async def test_http_405_falls_back_to_chat_completions(
     fallback = AsyncMock(return_value="fallback")
     monkeypatch.setattr(module, "make_responses_request", responses)
     api = OpenAIAPI("test", "m")
-    monkeypatch.setattr(api, "_call_api_common", fallback)
+    monkeypatch.setattr(api, "_chat_completions", fallback)
 
     result = await api.generate_text("hello")
 
@@ -1172,8 +1182,8 @@ async def test_streaming_awaits_wrapped_async_handler(
     async def handler(data):
         received.append(data)
 
-    bot.streaming.event_handlers["note"] = [lambda data: handler(data)]
+    bot.streaming.events.handlers["note"] = [lambda data: handler(data)]
 
-    await bot.streaming._call_handlers("note", {"id": "note-1"})
+    await bot.streaming.events.call_handlers("note", {"id": "note-1"})
 
     assert received == [{"id": "note-1"}]

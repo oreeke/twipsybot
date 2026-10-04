@@ -280,7 +280,6 @@ async def make_bot(tmp_path: Path) -> AsyncIterator[MakeBot]:
         bot.bot_user_id = current_user.get("id")
         bot.bot_username = current_user.get("username")
         await bot.plugin_manager.load_plugins()
-        bot.admin.start()
         await bot.plugin_manager.startup_plugins()
         created.append(bot)
         return bot

@@ -1,4 +1,3 @@
-import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +12,7 @@ from ...clients.misskey.payloads import (
 )
 from ...shared.config_keys import ConfigKeys
 from ...shared.utils import format_log_text, maybe_log_event_dump
+from ..engine.pipeline import Reply, Source, replied
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro
@@ -44,16 +44,6 @@ class MentionHandler:
         if mention.explicit_mention and mention.username:
             return f"@{mention.username}\n{text}"
         return text
-
-    async def _send_mention_reply(
-        self, mention: MentionContext, text: str, file_id: str | None = None
-    ) -> None:
-        await self.bot.misskey.create_note(
-            text=self._format_mention_reply(mention, text),
-            visibility=mention.reply_visibility,
-            reply_id=mention.mention_id,
-            file_ids=[file_id] if file_id else None,
-        )
 
     def _should_handle_note(
         self,
@@ -114,7 +104,7 @@ class MentionHandler:
         mention = self._parse(note)
         if not mention.mention_id or self._is_self_mention(mention):
             return
-        if mention.user_id and self.bot.is_response_blacklisted_user(
+        if mention.user_id and self.bot.limits.is_response_blacklisted_user(
             user_id=mention.user_id, handle=mention.username
         ):
             return
@@ -122,8 +112,6 @@ class MentionHandler:
             display = mention.username or "unknown"
             try:
                 await self.bot.misskey.get_note(mention.mention_id)
-            except asyncio.CancelledError:
-                raise
             except Exception as e:
                 logger.warning(
                     f"Skipping mention because source note is unavailable: "
@@ -131,56 +119,41 @@ class MentionHandler:
                 )
                 return
 
-            async def send_reply(text: str, file_id: str | None) -> None:
-                await self._send_mention_reply(mention, text, file_id)
-
-            def log_plugin_sent(text: str) -> None:
-                formatted = self._format_mention_reply(mention, text)
-                logger.info(
-                    f"Plugin replied to @{display}: {format_log_text(formatted)}"
+            async def deliver(reply: Reply, source: Source) -> None:
+                text = self._format_mention_reply(mention, reply.text)
+                await self.bot.misskey.create_note(
+                    text=text,
+                    visibility=mention.reply_visibility,
+                    reply_id=mention.mention_id,
+                    file_ids=[reply.file_id] if reply.file_id else None,
                 )
+                logger.info(f"{replied(source)} to @{display}: {format_log_text(text)}")
 
-            def log_ai_sent(text: str) -> None:
-                formatted = self._format_mention_reply(mention, text)
-                logger.info(f"Replied to @{display}: {format_log_text(formatted)}")
-
-            def log_incoming() -> None:
-                logger.info(
-                    f"Mention received from @{display}: {format_log_text(mention.text)}"
-                )
-
-            log_incoming()
-            if await self.bot.pipeline.run_admin_command(
-                actor_id=mention.user_id,
-                actor_name=mention.username,
-                command_call=lambda: self.bot.admin.handle_slash_command(
-                    extract_note_text(normalize_payload(note), include_cw=True)
-                    or mention.text,
-                    user_id=mention.user_id,
-                    username=mention.username or "unknown",
-                    handle=mention.username,
-                    private=False,
-                ),
-                send_reply=send_reply,
-                log_sent=log_ai_sent,
-            ):
-                return
-            await self.bot.pipeline.run_response_pipeline(
-                actor_id=mention.user_id,
-                actor_name=mention.username,
-                user_id=mention.user_id,
-                handle=mention.username,
-                send_reply=send_reply,
-                plugin_call=lambda: self.bot.plugin_manager.call_plugin_hook(
-                    "on_mention", note
-                ),
-                plugin_kind="Mention",
-                plugin_log_sent=log_plugin_sent,
-                ai_generate=lambda: self._generate_ai_reply(mention, note),
-                ai_log_sent=log_ai_sent,
+            logger.info(
+                f"Mention received from @{display}: {format_log_text(mention.text)}"
             )
-        except asyncio.CancelledError:
-            raise
+            async with self.bot.pipeline.hold(mention.user_id, mention.username):
+                if (
+                    reply := await self.bot.admin.handle_slash_command(
+                        extract_note_text(normalize_payload(note), include_cw=True)
+                        or mention.text,
+                        user_id=mention.user_id,
+                        username=display,
+                        handle=mention.username,
+                        private=False,
+                    )
+                ) is not None:
+                    if reply.text:
+                        await deliver(reply, "command")
+                    return
+                await self.bot.pipeline.respond(
+                    user_id=mention.user_id,
+                    handle=mention.username,
+                    hook="on_mention",
+                    event=note,
+                    generate=lambda: self._generate_ai_reply(mention, note),
+                    deliver=deliver,
+                )
         except Exception:
             logger.exception("Error handling mention")
 

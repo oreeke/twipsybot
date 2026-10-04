@@ -1,14 +1,8 @@
-import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from loguru import logger
 
-from ...clients.misskey.antenna import (
-    build_antenna_index,
-    dedupe_non_empty,
-    resolve_antenna_selector,
-)
 from ...clients.misskey.api import MisskeyAPI
 from ...clients.misskey.channels import ChannelSpec, ChannelType
 from ...clients.misskey.streaming import StreamingClient
@@ -16,6 +10,21 @@ from ...shared.config import Config
 from ...shared.config_keys import ConfigKeys
 from ...shared.utils import normalize_tokens
 from .runtime import BotRuntime
+
+
+def _match_antenna(selector: str, antennas: list[tuple[str, str]]) -> list[str]:
+    if any(antenna_id == selector for antenna_id, _ in antennas):
+        return [selector]
+    if exact := [antenna_id for antenna_id, name in antennas if name == selector]:
+        return exact
+    lowered = selector.lower()
+    return list(
+        dict.fromkeys(
+            antenna_id
+            for antenna_id, name in antennas
+            if name and name.lower() == lowered
+        )
+    )
 
 
 class StreamingConnector:
@@ -54,22 +63,24 @@ class StreamingConnector:
         return normalize_tokens(self._config.get(ConfigKeys.TIMELINE_ANTENNAS))
 
     async def resolve_antenna_ids(self, selectors: list[str]) -> list[str]:
-        normalized = [s.strip() for s in selectors if isinstance(s, str) and s.strip()]
-        if not normalized:
+        selectors = [s.strip() for s in selectors if isinstance(s, str) and s.strip()]
+        if not selectors:
             return []
-        antennas = await self._misskey.list_antennas()
-        antenna_ids, name_to_ids, _ = build_antenna_index(antennas)
+        antennas = [
+            (a["id"], a["name"].strip() if isinstance(a.get("name"), str) else "")
+            for a in await self._misskey.list_antennas()
+            if isinstance(a, dict) and isinstance(a.get("id"), str) and a["id"]
+        ]
         resolved: list[str] = []
-        for selector in normalized:
-            antenna_id, err = resolve_antenna_selector(
-                selector, antenna_ids, name_to_ids
-            )
-            if err == "not_found":
-                logger.warning(f"Antenna not found: {selector}")
-            elif err == "ambiguous":
-                logger.warning(f"Antenna name is ambiguous: {selector}")
-            resolved.append(antenna_id)
-        return dedupe_non_empty(resolved)
+        for selector in selectors:
+            match _match_antenna(selector, antennas):
+                case [antenna_id]:
+                    resolved.append(antenna_id)
+                case []:
+                    logger.warning(f"Antenna not found: {selector}")
+                case _:
+                    logger.warning(f"Antenna name is ambiguous: {selector}")
+        return list(dict.fromkeys(resolved))
 
     async def get_streaming_channels(self) -> list[ChannelSpec]:
         active = {ChannelType.MAIN.value, *self._timeline_channels}
@@ -88,15 +99,16 @@ class StreamingConnector:
 
     async def setup_streaming(self) -> None:
         try:
-            self._streaming.on_mention(self._on_mention)
-            self._streaming.on_message(self._on_message)
-            self._streaming.on_notification(self._on_notification)
-            self._streaming.on_note(self._on_timeline_note)
+            for event, handler in (
+                ("mention", self._on_mention),
+                ("message", self._on_message),
+                ("notification", self._on_notification),
+                ("note", self._on_timeline_note),
+            ):
+                self._streaming.events.on(event, handler)
             channels = await self.get_streaming_channels()
             await self._streaming.connect_once(channels)
             self._runtime.add_task("streaming", self._streaming.connect(channels))
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.exception(f"Failed to set up Streaming connection: {e}")
             raise

@@ -61,6 +61,6 @@ REST 负责查询与写入，Streaming 接收实时事件，协议适配集中�
 
 ## 错误与测试
 
-- 错误分为参数、认证、权限、未找到、文件过大、限流与连接，保留 `status`、`code`、`error_id`、`kind`、`info`、`retry_after`；上层不吞异常、不无条件重试。
+- 错误分为参数、认证、权限、未找到、文件过大、限流与连接，保留 `status`、`code`、`retry_after`；上层不吞异常、不无条件重试。
 - 单个事件处理失败不终止其他 worker。
 - 测试不依赖真实例：REST 模拟 HTTP 响应，Streaming 构造事件与连接替身。新增 endpoint 或 Channel 至少覆盖成功、认证或参数失败、连接失败，以及有副作用的重试边界。

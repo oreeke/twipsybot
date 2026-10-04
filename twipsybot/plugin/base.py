@@ -101,8 +101,6 @@ class PluginBase:
                         await method()
                     else:
                         method()
-            except asyncio.CancelledError:
-                raise
             except Exception as e:
                 logger.error(f"Plugin {self.context.name} resource cleanup failed: {e}")
         self._resources_to_cleanup.clear()

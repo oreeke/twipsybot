@@ -23,7 +23,7 @@ flowchart TB
 	Flows --> MisskeyAPI[MisskeyAPI] -.-> MisskeyREST([Misskey REST API])
 	Flows --> OpenAI[OpenAIAPI] -.-> Endpoint([OpenAI 兼容端点])
 	Flows --> Pipeline[响应管道] --> Limiter[ResponseLimiter]
-	Flows --> Plugins[PluginManager]
+	Flows & Pipeline --> Plugins[PluginManager]
 	Plugins --> Builtins[内置插件]
 	Plugins --> Services[受限服务与命名空间存储]
 	Limiter & Services --> SQLite[(SQLite)]

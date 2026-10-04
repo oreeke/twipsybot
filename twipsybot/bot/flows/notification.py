@@ -1,4 +1,3 @@
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -24,7 +23,5 @@ class NotificationHandler:
             await self.bot.plugin_manager.call_plugin_hook(
                 "on_notification", notification
             )
-        except asyncio.CancelledError:
-            raise
         except Exception:
             logger.exception("Error handling notification event")

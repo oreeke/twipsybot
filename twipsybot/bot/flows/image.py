@@ -1,9 +1,8 @@
-import asyncio
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from ..engine.pipeline import AIResponse
+from ..engine.pipeline import Reply
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro
@@ -32,15 +31,13 @@ class ImageGenerationService:
             raise ValueError("Misskey Drive upload returned no file id")
         return file_id
 
-    async def generate_response(self, prompt: str) -> AIResponse:
+    async def generate_response(self, prompt: str) -> Reply:
         try:
             file_id = await self.generate_and_upload(prompt)
-        except asyncio.CancelledError:
-            raise
         except Exception:
             logger.exception("Image generation failed")
-            return AIResponse("图片生成失败，请稍后再试。")
-        return AIResponse("图片生成完成", file_id)
+            return Reply("图片生成失败，请稍后再试。")
+        return Reply("图片生成完成", file_id)
 
     @staticmethod
     def _detect_image_type(data: bytes) -> tuple[str, str]:

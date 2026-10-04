@@ -56,8 +56,6 @@ class SettingsReloader:
             if self._config.stat() != self._config.fingerprint:
                 try:
                     await self.reload()
-                except asyncio.CancelledError:
-                    raise
                 except Exception:
                     logger.exception("Settings reload crashed")
 
@@ -103,8 +101,6 @@ class SettingsReloader:
                 image_size=get(ConfigKeys.BOT_IMAGE_SIZE),
                 image_quality=get(ConfigKeys.BOT_IMAGE_QUALITY),
             )
-        if ConfigKeys.BOT_ADMINS in changed:
-            bot.admin.refresh()
         if ConfigKeys.SYSTEM_LOG_LEVEL in changed:
             set_log_level(get(ConfigKeys.SYSTEM_LOG_LEVEL))
         if ConfigKeys.SYSTEM_DUMP_EVENTS in changed:

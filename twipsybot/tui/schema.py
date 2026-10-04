@@ -144,14 +144,20 @@ def _is_model(annotation: Any) -> TypeGuard[type[BaseModel]]:
     return isinstance(annotation, type) and issubclass(annotation, BaseModel)
 
 
+def _choices(annotation: Any) -> tuple[str, ...] | None:
+    if get_origin(annotation) is Literal:
+        return tuple(str(a) for a in get_args(annotation))
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return tuple(str(m.value) for m in annotation)
+    return None
+
+
 def _classify(name: str, annotation: Any, default: Any) -> tuple[Kind, tuple[str, ...]]:
     origin, args = get_origin(annotation), get_args(annotation)
     if annotation is bool:
         return "bool", ()
-    if origin is Literal:
-        return "choice", tuple(str(a) for a in args)
-    if isinstance(annotation, type) and issubclass(annotation, Enum):
-        return "choice", tuple(str(m.value) for m in annotation)
+    if (choices := _choices(annotation)) is not None:
+        return "choice", choices
     if annotation is SecretStr:
         return "secret", ()
     if origin is list and args == (ClockTime,):
@@ -238,34 +244,34 @@ def _clocks(values: Iterable[Any]) -> list[str]:
     return clocks
 
 
-def to_widget(kind: Kind, value: Any) -> Any:
-    if kind == "bool":
-        return (
-            value.strip().lower() == "true" if isinstance(value, str) else bool(value)
-        )
-    if kind == "times":
-        return _clocks(value or ())
-    if value is None:
-        return None if kind == "choice" else ""
-    if kind == "list":
-        items = value.split(",") if isinstance(value, str) else value
-        return "\n".join(s for v in items if (s := str(v).strip()))
-    if kind == "lines" and (
-        isinstance(value, str) or all(isinstance(v, str) for v in value)
-    ):
-        return value if isinstance(value, str) else "\n".join(value)
-    if kind == "seconds":
-        with suppress(ValueError):
-            seconds = parse_seconds(value)
-            return "-1" if seconds < 0 else _duration(timedelta(seconds=seconds))
-        return str(value)
-    if kind in ("lines", "yaml"):
-        plain = to_jsonable_python(value)
-        return (
-            yaml.safe_dump(plain, allow_unicode=True, sort_keys=False).strip()
-            if plain
-            else ""
-        )
+def _list_text(value: Any) -> str:
+    items = value.split(",") if isinstance(value, str) else value
+    return "\n".join(s for v in items if (s := str(v).strip()))
+
+
+def _yaml_text(value: Any) -> str:
+    plain = to_jsonable_python(value)
+    if not plain:
+        return ""
+    return yaml.safe_dump(plain, allow_unicode=True, sort_keys=False).strip()
+
+
+def _lines_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if all(isinstance(v, str) for v in value):
+        return "\n".join(value)
+    return _yaml_text(value)
+
+
+def _seconds_text(value: Any) -> str:
+    with suppress(ValueError):
+        seconds = parse_seconds(value)
+        return "-1" if seconds < 0 else _duration(timedelta(seconds=seconds))
+    return str(value)
+
+
+def _plain_text(value: Any) -> str:
     match value:
         case timedelta():
             return _duration(value)
@@ -276,6 +282,26 @@ def to_widget(kind: Kind, value: Any) -> Any:
         case Enum():
             return str(value.value)
     return str(value)
+
+
+_TEXT_CONVERTERS: dict[Kind, Callable[[Any], str]] = {
+    "list": _list_text,
+    "lines": _lines_text,
+    "seconds": _seconds_text,
+    "yaml": _yaml_text,
+}
+
+
+def to_widget(kind: Kind, value: Any) -> Any:
+    if kind == "bool":
+        return (
+            value.strip().lower() == "true" if isinstance(value, str) else bool(value)
+        )
+    if kind == "times":
+        return _clocks(value or ())
+    if value is None:
+        return None if kind == "choice" else ""
+    return _TEXT_CONVERTERS.get(kind, _plain_text)(value)
 
 
 def overlay(

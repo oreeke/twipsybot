@@ -1,6 +1,4 @@
-import asyncio
 import time
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -9,7 +7,6 @@ from loguru import logger
 
 from ...clients.misskey.payloads import (
     extract_chat_text,
-    extract_first_text,
     extract_user_handle,
     extract_user_id,
     extract_username,
@@ -17,6 +14,7 @@ from ...clients.misskey.payloads import (
 from ...shared.config_keys import ConfigKeys
 from ...shared.constants import CHAT_CACHE_MAX_USERS, CHAT_CACHE_TTL
 from ...shared.utils import format_log_text, maybe_log_event_dump
+from ..engine.pipeline import Reply, Source, replied
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro
@@ -30,7 +28,6 @@ class _ChatContext:
     handle: str | None
     mention_to: str | None
     room_id: str | None
-    has_media: bool
     conversation_id: str
     actor_id: str
     room_label: str | None
@@ -92,28 +89,6 @@ class ChatHandler:
             history.append({"role": "assistant", "content": assistant_text})
         self._histories[conversation_id] = self._trim_history(history, limit)
 
-    async def _handle_admin_message(
-        self,
-        message: dict[str, Any],
-        ctx: _ChatContext,
-        send_reply: Callable[[str, str | None], Awaitable[None]],
-        log_sent: Callable[[str], None],
-    ) -> bool:
-        if not ctx.text.startswith("^"):
-            return False
-        if ctx.room_id:
-            return True
-        handled = await self.bot.pipeline.run_admin_message(
-            actor_id=ctx.actor_id,
-            actor_name=ctx.username,
-            message_call=lambda: self.bot.admin.on_message(message),
-            send_reply=send_reply,
-            log_sent=log_sent,
-        )
-        if handled:
-            logger.debug("Chat handled by Admin")
-        return handled
-
     async def handle(self, message: dict[str, Any]) -> None:
         chat_enabled = self.bot.config.get(ConfigKeys.REPLY_CHAT)
         admin_command = extract_chat_text(message).startswith("^")
@@ -131,8 +106,6 @@ class ChatHandler:
         )
         try:
             await self._process(message)
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
             logger.error(f"Error handling chat: {e}")
 
@@ -149,127 +122,79 @@ class ChatHandler:
         room_name = room_name if isinstance(room_name, str) and room_name else None
         return room_id, room_name
 
-    def _log_incoming_chat(
-        self,
-        *,
-        username: str,
-        text: str,
-        has_media: bool,
-        room_label: str | None,
-    ) -> None:
-        prefix = f"Room {room_label} " if room_label else ""
-        if text:
-            logger.info(
-                f"Chat received from {prefix}@{username}: {format_log_text(text)}"
-            )
-            return
-        if has_media:
-            logger.info(f"Chat received from {prefix}@{username}: (no text; has media)")
+    @staticmethod
+    def _log_incoming_chat(ctx: _ChatContext) -> None:
+        prefix = f"Room {ctx.room_label} " if ctx.room_label else ""
+        body = format_log_text(ctx.text) if ctx.text else "(no text; has media)"
+        logger.info(f"Chat received from {prefix}@{ctx.username}: {body}")
 
     async def _process(self, message: dict[str, Any]) -> None:
-        ctx = self._parse_chat_context(message)
-        if not ctx:
+        if not (ctx := self._parse_chat_context(message)):
             return
+        self._log_incoming_chat(ctx)
         limit: int = self.bot.config.get(ConfigKeys.REPLY_MEMORY)
-        user_content_ai = f"{ctx.username}: {ctx.text}" if ctx.room_id else ctx.text
+        handle = ctx.handle or ctx.mention_to
+        user_content = f"{ctx.username}: {ctx.text}" if ctx.room_id else ctx.text
 
-        def log_incoming() -> None:
-            self._log_incoming_chat(
-                username=ctx.username,
-                text=ctx.text,
-                has_media=ctx.has_media,
-                room_label=ctx.room_label,
+        async def deliver(reply: Reply, source: Source) -> None:
+            text = self._format_chat_reply_text(
+                room_id=ctx.room_id, mention_to=ctx.mention_to, text=reply.text
             )
-
-        async def send_reply(text: str, file_id: str | None) -> None:
-            await self._send_chat_reply(
-                user_id=ctx.user_id,
-                room_id=ctx.room_id,
-                text=text,
-                mention_to=ctx.mention_to,
-                file_id=file_id,
-            )
-
-        def log_plugin_sent(text: str) -> None:
-            formatted = self._format_chat_reply_text(
-                room_id=ctx.room_id, mention_to=ctx.mention_to, text=text
-            )
+            if ctx.room_id:
+                await self.bot.misskey.send_room_message(
+                    ctx.room_id, text, reply.file_id
+                )
+            else:
+                await self.bot.misskey.send_message(ctx.user_id, text, reply.file_id)
             logger.info(
-                f"Plugin replied to @{ctx.username}: {format_log_text(formatted)}"
+                f"{replied(source)} to @{ctx.username}: {format_log_text(text)}"
             )
+            if source in ("plugin", "ai") and ctx.text:
+                self.append_turn(ctx.conversation_id, user_content, reply.text, limit)
 
-        def log_admin_sent(text: str) -> None:
-            formatted = self._format_chat_reply_text(
-                room_id=ctx.room_id, mention_to=ctx.mention_to, text=text
-            )
-            logger.info(
-                f"Admin replied to @{ctx.username}: {format_log_text(formatted)}"
-            )
-
-        def plugin_after_sent(text: str) -> None:
-            user_text = extract_first_text(message, "text", "content")
-            if not user_text:
-                return
-            user_content = f"{ctx.username}: {user_text}" if ctx.room_id else user_text
-            self.append_turn(ctx.conversation_id, user_content, text, limit)
-
-        async def ai_generate() -> str | None:
+        async def generate() -> str | None:
             if not ctx.text:
                 return None
             return await self._generate_ai_reply(
                 conversation_id=ctx.conversation_id,
                 user_id=ctx.user_id,
-                user_content=user_content_ai,
+                user_content=user_content,
                 room_id=ctx.room_id,
                 limit=limit,
             )
 
-        def log_ai_sent(text: str) -> None:
-            formatted = self._format_chat_reply_text(
-                room_id=ctx.room_id, mention_to=ctx.mention_to, text=text
-            )
-            logger.info(f"Replied to @{ctx.username}: {format_log_text(formatted)}")
-
-        def ai_after_sent(text: str) -> None:
-            self.append_turn(ctx.conversation_id, user_content_ai, text, limit)
-
-        log_incoming()
-        if await self._handle_admin_message(message, ctx, send_reply, log_admin_sent):
-            return
-        if await self.bot.pipeline.run_admin_command(
-            actor_id=ctx.actor_id,
-            actor_name=ctx.username,
-            command_call=lambda: self.bot.admin.handle_slash_command(
-                ctx.text,
+        async with self.bot.pipeline.hold(ctx.actor_id, ctx.username):
+            if ctx.text.startswith("^"):
+                if not ctx.room_id and (
+                    text := await self.bot.admin.on_message(message)
+                ):
+                    await deliver(Reply(text), "admin")
+                    logger.debug("Chat handled by Admin")
+                return
+            if (
+                reply := await self.bot.admin.handle_slash_command(
+                    ctx.text,
+                    user_id=ctx.user_id,
+                    username=ctx.username,
+                    handle=handle,
+                    private=ctx.room_id is None,
+                )
+            ) is not None:
+                if reply.text:
+                    await deliver(reply, "command")
+                return
+            if self.bot.limits.is_response_blacklisted_user(
+                user_id=ctx.user_id, handle=handle
+            ):
+                return
+            await self.bot.pipeline.respond(
                 user_id=ctx.user_id,
-                username=ctx.username,
-                handle=ctx.handle or ctx.mention_to,
-                private=ctx.room_id is None,
-            ),
-            send_reply=send_reply,
-            log_sent=log_ai_sent,
-        ):
-            return
-        if self.bot.is_response_blacklisted_user(
-            user_id=ctx.user_id, handle=ctx.handle or ctx.mention_to
-        ):
-            return
-        await self.bot.pipeline.run_response_pipeline(
-            actor_id=ctx.actor_id,
-            actor_name=ctx.username,
-            user_id=ctx.user_id,
-            handle=ctx.handle or ctx.mention_to,
-            send_reply=send_reply,
-            plugin_call=lambda: self.bot.plugin_manager.call_plugin_hook(
-                "on_message", message
-            ),
-            plugin_kind="Chat",
-            plugin_log_sent=log_plugin_sent,
-            plugin_after_sent=plugin_after_sent,
-            ai_generate=ai_generate,
-            ai_log_sent=log_ai_sent,
-            ai_after_sent=ai_after_sent,
-        )
+                handle=handle,
+                hook="on_message",
+                event=message,
+                generate=generate,
+                deliver=deliver,
+            )
 
     def _parse_chat_context(self, message: dict[str, Any]) -> _ChatContext | None:
         text = extract_chat_text(message)
@@ -281,8 +206,7 @@ class ChatHandler:
         handle = extract_user_handle(message)
         mention_to = handle or (username if username != "unknown" else None)
         room_id, room_name = self._parse_room(message)
-        has_media = bool(message.get("fileId") or message.get("file"))
-        if not text and not has_media:
+        if not text and not (message.get("fileId") or message.get("file")):
             logger.debug("Chat missing required info: empty text and no media")
             return None
         if room_id and not self.bot.is_bot_mentioned(text):
@@ -300,7 +224,6 @@ class ChatHandler:
             handle=handle,
             mention_to=mention_to,
             room_id=room_id,
-            has_media=has_media,
             conversation_id=conversation_id,
             actor_id=actor_id,
             room_label=room_label,
@@ -316,25 +239,6 @@ class ChatHandler:
             if not stripped.startswith(mention):
                 return f"{mention}\n{text}"
         return text
-
-    async def _send_chat_reply(
-        self,
-        *,
-        user_id: str,
-        room_id: str | None,
-        text: str,
-        mention_to: str | None,
-        file_id: str | None = None,
-    ) -> None:
-        text = self._format_chat_reply_text(
-            room_id=room_id,
-            mention_to=mention_to,
-            text=text,
-        )
-        if room_id:
-            await self.bot.misskey.send_room_message(room_id, text, file_id)
-        else:
-            await self.bot.misskey.send_message(user_id, text, file_id)
 
     async def _generate_ai_reply(
         self,
@@ -381,8 +285,6 @@ class ChatHandler:
             if user_id:
                 return await self._get_user_chat_history(user_id, limit)
             return []
-        except asyncio.CancelledError:
-            raise
         except Exception:
             logger.exception("Error getting chat history")
             return []

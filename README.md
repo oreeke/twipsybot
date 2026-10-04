@@ -24,9 +24,8 @@
 <div align="left">
 
 ```bash
-# copy docker-compose.yaml
+# copy & edit docker-compose.yaml
 
-docker compose pull
 docker compose up -d
 docker compose exec twipsybot twipsybot cfg
 
@@ -43,4 +42,4 @@ docker compose exec twipsybot twipsybot cfg
 
 © 2025 OREEkE and contributors
 
-Code is licensed under [AGPL-3.0-or-later](./LICENSE). Documentation in `docs/` is licensed under [CC BY-SA 4.0](./docs/LICENSE).
+Code: [AGPL-3.0-or-later](./LICENSE) · Docs: [CC BY-SA 4.0](./docs/LICENSE)

@@ -9,9 +9,9 @@ description: TwipsyBot 内置插件：关键词回复、图片理解、RSS 发�
 
 | 插件 | 用途 | 依赖 | 优先级 |
 | --- | --- | --- | --- |
-| [**KeyAct**](keyact.md) | 精确关键词回复 | 提及、聊天 | 990 |
-| [**Vision**](vision.md) | 图片理解 | 多模态模型 | 900 |
-| [**Topics**](topics.md) | TXT 主题与 RSS 发帖 | 自动发帖 | 100 |
+| [**KeyAct**](keyact.md) | 精确关键词回复 | 提及、聊天 | 850 |
+| [**Vision**](vision.md) | 图片理解 | 多模态模型 | 750 |
+| [**Topics**](topics.md) | TXT 主题与 RSS 发帖 | 自动发帖 | 300 |
 | [**Radar**](radar.md) | 天线帖子互动 | 天线 | 50 |
 | [**Iincho**](iincho.md) | 本地时间线风险概览 | Local 时间线、审核 API | 40 |
 
@@ -21,7 +21,7 @@ description: TwipsyBot 内置插件：关键词回复、图片理解、RSS 发�
 plugins:
   keyact:
     enabled: true
-    priority: 990
+    priority: 850
 ```
 
 `priority` 可省略，越大越先执行。配置变更自动重载插件，也可发送 `^reload <插件名>`。

@@ -38,3 +38,9 @@ docker compose exec twipsybot twipsybot cfg
 ![Screenshot](assets/connect.png)
 
 </div>
+
+## License
+
+© 2025 OREEkE and contributors
+
+Code is licensed under [AGPL-3.0-or-later](./LICENSE). Documentation in `docs/` is licensed under [CC BY-SA 4.0](./docs/LICENSE).

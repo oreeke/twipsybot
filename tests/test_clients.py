@@ -579,6 +579,27 @@ async def test_streaming_does_not_dedupe_event_dropped_before_enqueue(
     assert enqueue.await_count == 2
 
 
+@pytest.mark.parametrize("inner_type", ["note", "mention", "follow"])
+async def test_streaming_routes_main_notifications_to_notification_handler(
+    inner_type: str,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    on_note = AsyncMock()
+    on_mention = AsyncMock()
+    on_notification = AsyncMock()
+    client.on_note(on_note)
+    client.on_mention(on_mention)
+    client.on_notification(on_notification)
+    payload = {"id": "n-1", "type": inner_type, "note": {"id": "note-1"}}
+    _, event = client._wrap_notification(payload)
+
+    await client._dispatch_event("main", event)
+
+    on_note.assert_not_awaited()
+    on_mention.assert_not_awaited()
+    on_notification.assert_awaited_once_with(event)
+
+
 async def test_streaming_reconnect_runs_resubscribe_flow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

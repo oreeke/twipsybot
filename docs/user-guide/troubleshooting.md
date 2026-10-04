@@ -23,7 +23,7 @@ docker compose logs --tail 200 twipsybot
 
 - 未知字段，或布尔值无法识别。
 - `autopost.interval` 使用秒或小于 5 分钟。
-- `rotation` 与 `schedule` 同时开启；或开启定时但 `times` 为空、非 `HH:MM`、间隔小于 5 分钟。
+- `rotation` 与 `schedule` 同时开启，或定时但 `times` 为空、非 `HH:MM`、间隔小于 5 分钟。
 - `bot.max_tokens` 不大于 0，或 `bot.temperature` 超出 0–2。
 - 可见性不是 `public`、`home`、`followers`。
 - KeyAct 规则缺少 `=`。

@@ -166,6 +166,7 @@ async with self.context.bot.actor_lock(event.user.id, event.user.handle):
 | `misskey.create_reaction(note_id, reaction)` | 添加反应 |
 | `misskey.send_message(user_id, text)` | 发送私信 |
 | `misskey.list_antennas()` | 获取天线 |
+| `misskey.get_note(note_id)` | 获取帖子最新数据 |
 | `misskey.instance_url` | 实例地址 |
 | `misskey.drive.show_file(file_id)` | 文件信息 |
 | `misskey.drive.fetch_bytes(url, max_bytes=...)` | 从 URL 下载 |

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
@@ -710,7 +710,10 @@ async def test_radar_reacts_through_public_misskey_service(
 ) -> None:
     monkeypatch.setattr("plugins.radar.plugin._DELAY_RANGE", (0.0, 0.0))
     create_reaction = AsyncMock(return_value={})
-    misskey = SimpleNamespace(create_reaction=create_reaction)
+    misskey = SimpleNamespace(
+        create_reaction=create_reaction,
+        get_note=AsyncMock(side_effect=lambda note_id: {"id": note_id}),
+    )
 
     @asynccontextmanager
     async def actor_lock(user_id: str | None, username: str | None):
@@ -772,6 +775,98 @@ async def test_radar_reacts_through_public_misskey_service(
         raw={},
     )
     assert plugin._should_skip_self(remote_same_name) is False
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, None),
+        ("", None),
+        ("  ", None),
+        ("1m", timedelta(minutes=1)),
+        ("2H", timedelta(hours=2)),
+        ("1h30m", timedelta(minutes=90)),
+        ("1d", timedelta(days=1)),
+        (timedelta(hours=3), timedelta(hours=3)),
+    ],
+)
+def test_radar_delay_parsing(value: Any, expected: timedelta | None) -> None:
+    plugin = RadarPlugin(_context({"enabled": True, "delay": value}))
+
+    assert plugin.settings.delay == expected
+
+
+@pytest.mark.parametrize(
+    "value", ("30s", "0m", "1d1m", "2d", "5", 5, True, "1x", timedelta(seconds=59))
+)
+def test_radar_rejects_invalid_delay(value: Any) -> None:
+    with pytest.raises(ValueError, match="delay must be between 1m and 1d"):
+        RadarPlugin(_context({"enabled": True, "delay": value}))
+
+
+def _radar_event(note_id: str = "note-1") -> TimelineNoteEvent:
+    return TimelineNoteEvent(
+        id=note_id,
+        text="hello",
+        cw=None,
+        user=UserRef(id="user-1", username="alice", host=None),
+        channel="antenna",
+        files=(),
+        raw={"id": note_id, "text": "hello"},
+    )
+
+
+def _radar_plugin(config: dict[str, Any], **misskey: Any) -> RadarPlugin:
+    @asynccontextmanager
+    async def actor_lock(user_id: str | None, username: str | None):
+        yield
+
+    return RadarPlugin(
+        _context(
+            {"enabled": True, "reaction": "heart", **config},
+            misskey=SimpleNamespace(**misskey),
+            bot=SimpleNamespace(
+                user_id="bot-id", username="bot", actor_lock=actor_lock
+            ),
+        )
+    )
+
+
+async def test_radar_uses_exact_configured_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleep = AsyncMock()
+    monkeypatch.setattr("plugins.radar.plugin.asyncio.sleep", sleep)
+    plugin = _radar_plugin({"delay": "2h"}, get_note=AsyncMock(return_value={}))
+
+    await plugin._delayed_act(_radar_event())
+
+    sleep.assert_awaited_once_with(7200.0)
+
+
+async def test_radar_refetches_note_before_acting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("plugins.radar.plugin._DELAY_RANGE", (0.0, 0.0))
+    get_note = AsyncMock(
+        side_effect=[
+            RuntimeError("NO_SUCH_NOTE"),
+            {"id": "note-2", "myReaction": "👍"},
+            {"id": "note-3"},
+        ]
+    )
+    create_reaction = AsyncMock(return_value={})
+    plugin = _radar_plugin({}, get_note=get_note, create_reaction=create_reaction)
+
+    for note_id in ("note-1", "note-2", "note-3"):
+        await plugin._delayed_act(_radar_event(note_id))
+
+    assert [c.args for c in get_note.await_args_list] == [
+        ("note-1",),
+        ("note-2",),
+        ("note-3",),
+    ]
+    create_reaction.assert_awaited_once_with("note-3", "heart")
 
 
 async def test_radar_ai_uses_configured_prompt() -> None:

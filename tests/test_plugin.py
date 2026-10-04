@@ -680,6 +680,8 @@ async def test_context_uses_isolated_service_adapters(
 
     assert misskey_server.calls["notes/create"][-1]["text"] == "adapter"
     assert await bot.db.get_plugin_data("context", "key") == "value"
+    assert await plugin.context.misskey.get_note("note-1") == {"visibility": "public"}
+    assert misskey_server.calls["notes/show"][-1]["noteId"] == "note-1"
 
     antenna = {"id": "antenna-1", "name": "original"}
     misskey_server.set_response("antennas/list", lambda payload: [antenna])

@@ -1,9 +1,12 @@
 import asyncio
 import random
+import re
+from datetime import timedelta
 from typing import Any, Literal
 
+import durationpy
 from loguru import logger
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from twipsybot.plugin import (
     PluginBase,
@@ -12,10 +15,14 @@ from twipsybot.plugin import (
 )
 
 _DELAY_RANGE = (180.0, 300.0)
+_DELAY_BOUNDS = (timedelta(minutes=1), timedelta(days=1))
+_DELAY_PATTERN = re.compile(r"(?:\d+[mhd])+")
+_DELAY_ERROR = "delay must be between 1m and 1d, e.g. 30m, 2h, 1d"
 _MAX_PENDING = 100
 
 
 class _Config(PluginConfig):
+    delay: timedelta | None = None
     reaction: str | None = None
     reply_enabled: bool = Field(False, validation_alias="reply")
     reply_text: str | None = None
@@ -31,6 +38,24 @@ class _Config(PluginConfig):
     quote_ai_prompt: str = "根据帖子内容写一句简短感想。\n不要复述原文，不要加引号。\n不超过30字：\n{content}"
     quote_visibility: Literal["public", "home", "followers"] | None = None
     quote_local_only: bool = False
+
+    @field_validator("delay", mode="before")
+    @classmethod
+    def _parse_delay(cls, value: Any) -> timedelta | None:
+        match value:
+            case None:
+                return None
+            case str() if not value.strip():
+                return None
+            case timedelta():
+                delay = value
+            case str() if _DELAY_PATTERN.fullmatch(s := value.strip().lower()):
+                delay = durationpy.from_str(s)
+            case _:
+                raise ValueError(_DELAY_ERROR)
+        if not _DELAY_BOUNDS[0] <= delay <= _DELAY_BOUNDS[1]:
+            raise ValueError(_DELAY_ERROR)
+        return delay
 
     @model_validator(mode="after")
     def _validate_ai_prompts(self) -> "_Config":
@@ -130,12 +155,23 @@ class RadarPlugin(PluginBase):
         task.add_done_callback(lambda _: self._pending.pop(note_id, None))
 
     async def _delayed_act(self, event: TimelineNoteEvent) -> None:
-        await asyncio.sleep(random.uniform(*_DELAY_RANGE))
+        delay = self.settings.delay
+        await asyncio.sleep(
+            delay.total_seconds() if delay else random.uniform(*_DELAY_RANGE)
+        )
         try:
             async with self.context.bot.actor_lock(event.user.id, event.user.handle):
-                await self._act(dict(event.raw), event.id, "antenna")
+                if note := await self._fetch_note(event.id):
+                    await self._act(note, event.id, "antenna")
         except Exception as e:
             logger.error(f"Radar interaction failed: {e!r}")
+
+    async def _fetch_note(self, note_id: str) -> dict[str, Any] | None:
+        try:
+            return await self.context.misskey.get_note(note_id)
+        except Exception as e:
+            logger.info(f"Radar skipped unavailable note {note_id}: {e!r}")
+            return None
 
     async def on_shutdown(self) -> None:
         tasks = tuple(self._pending.values())

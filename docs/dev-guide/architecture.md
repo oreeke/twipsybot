@@ -12,30 +12,24 @@ description: TwipsyBot 的启动流程、核心模块、响应管道与数据边
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear", "nodeSpacing": 32, "rankSpacing": 44}}}%%
 flowchart TB
-	CLI[CLI] --> Runner[BotRunner]
-	Runner --> Core[Neuro]
+	CLI[CLI] --> Runner[BotRunner] --> Core[Neuro]
 	Core --> Reloader[SettingsReloader]
-
-	Core --> Connector[StreamingConnector]
-	MisskeyStream[Misskey Streaming] --> Streaming[StreamingClient]
-	Streaming --> Connector
-	Connector --> Flows[业务流程]
-
 	Core --> Scheduler[定时任务]
-	Scheduler -->|自动发帖| Flows
+	Core --> Connector[StreamingConnector]
+	MisskeyStream([Misskey Streaming]) -.-> Streaming[StreamingClient] --> Connector
+	Scheduler -->|自动发帖| Flows[业务流程]
+	Connector --> Flows
 
+	Flows --> MisskeyAPI[MisskeyAPI] -.-> MisskeyREST([Misskey REST API])
+	Flows --> OpenAI[OpenAIAPI] -.-> Endpoint([OpenAI 兼容端点])
+	Flows --> Pipeline[响应管道] --> Limiter[ResponseLimiter]
 	Flows --> Plugins[PluginManager]
 	Plugins --> Builtins[内置插件]
 	Plugins --> Services[受限服务与命名空间存储]
+	Limiter & Services --> SQLite[(SQLite)]
 
-	Flows --> OpenAI[OpenAIAPI]
-	OpenAI --> Endpoint[OpenAI 兼容端点]
-
-	Flows --> Pipeline[响应管道]
-	Flows --> MisskeyAPI[MisskeyAPI]
-	MisskeyAPI --> MisskeyREST[Misskey REST API]
-	Pipeline --> Limiter[ResponseLimiter]
-	Limiter --> SQLite[(SQLite)]
+	classDef ext stroke-dasharray: 4 3
+	class MisskeyStream,MisskeyREST,Endpoint ext
 ```
 
 ## 目录
@@ -75,7 +69,7 @@ twipsybot/
 `twipsybot run` → `twipsybot.app.cli` → `BotRunner`：
 
 1. 初始化日志，加载设置、连接信息与环境变量覆盖（仅 `connect` 支持环境变量）。
-2. 配置无效、鉴权或连接失败时记录 `Startup blocked` 并等待设置变更；连接失败另每 60 秒重试。
+2. 配置无效、鉴权或连接失败时记录 `Startup blocked` 并等待设置变更；网络问题造成的连接失败每 60 秒重试。
 3. 创建 `Neuro`，初始化 SQLite、自动发帖状态与机器人身份。
 4. 加载插件与管理命令，执行 `on_startup()`。
 5. 启动设置轮询与定时任务，连接 Streaming。
@@ -104,9 +98,9 @@ Linux 处理 `SIGINT`、`SIGTERM`、`SIGHUP`，Windows 处理 `SIGINT`、`SIGTER
 
 ## 数据与并发
 
-- SQLite 保存轮转计数、回复限制状态与插件私有数据；管理命令改写 `settings.yaml` 而非数据库。
+- SQLite 保存轮转模式当日发帖数、回复限制状态与插件私有数据；管理命令改写 `settings.yaml` 而非数据库。
 - 插件仅通过命名空间隔离的 `PluginStorage` 读写字符串。
-- 回复限制状态带内存缓存，以 SQLite 为准；聊天历史短期缓存，过期后从 Misskey 重新获取。
+- 回复限制状态带内存缓存，以 SQLite 为准；聊天历史短期缓存，过期从 Misskey 重新获取。
 - actor lock 串行化同一用户的操作；不同用户与事件并发，共享内存状态需自行同步。
 - 超时：Hook 180 秒，生命周期方法 30 秒；关闭时为 Hook 保留 3 秒，整体最多 5 秒。
 

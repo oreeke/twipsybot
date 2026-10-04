@@ -211,7 +211,7 @@ class _StreamingEventsMixin:
             await self._handle_main_new_chat_message(event_data)
             return
         if event_type == "notification":
-            await self._handle_main_notification(event_data)
+            await self._call_handlers("notification", event_data)
             return
         if event_type in {"mention", "reply"}:
             await self._call_handlers("mention", event_data)
@@ -231,22 +231,6 @@ class _StreamingEventsMixin:
             message["streamingChannelId"] = channel_id
         message["type"] = "message"
         await self._handle_chat_channel_event(channel_name, "message", message)
-
-    async def _handle_main_notification(self, event_data: dict[str, Any]) -> None:
-        value = event_data.get("notification")
-        notification = value if isinstance(value, dict) else None
-        inner_type = notification.get("type") if notification else None
-        if inner_type in {"mention", "reply", "newChatMessage"}:
-            return
-        if (
-            notification is not None
-            and isinstance(inner_type, str)
-            and inner_type
-            and inner_type in self.event_handlers
-        ):
-            await self._call_handlers(inner_type, notification)
-            return
-        await self._call_handlers("notification", event_data)
 
     def _log_unknown_main_event(
         self, event_type: str, event_data: dict[str, Any]

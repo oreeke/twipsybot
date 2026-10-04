@@ -51,6 +51,9 @@ class MisskeyServiceAdapter:
     async def list_antennas(self) -> list[dict[str, Any]]:
         return deepcopy(await self._misskey.list_antennas())
 
+    async def get_note(self, note_id: str) -> dict[str, Any]:
+        return await self._misskey.get_note(note_id)
+
     async def create_reaction(self, note_id: str, reaction: str) -> dict[str, Any]:
         return await self._misskey.create_reaction(note_id, reaction)
 

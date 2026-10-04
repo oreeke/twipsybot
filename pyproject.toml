@@ -1,9 +1,11 @@
 [project]
 name = "twipsybot"
-version = "0.12.0"
+version = "0.13.0"
 description = "AI-powered Misskey bot with OpenAI-compatible LLMs."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "OREEkE" }]
 requires-python = ">=3.11"
 
 dependencies = [
@@ -37,7 +39,7 @@ dev = [
 twipsybot = "twipsybot.app.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.ruff]

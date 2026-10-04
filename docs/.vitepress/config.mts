@@ -122,9 +122,9 @@ export default withMermaid(
       docFooter: { prev: "上一页", next: "下一页" },
       footer: {
         message:
-          '基于 <a href="https://github.com/oreeke/twipsybot/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0</a> 许可发布',
+          '文档基于 <a href="https://github.com/oreeke/twipsybot/blob/main/docs/LICENSE" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a> · 代码基于 <a href="https://github.com/oreeke/twipsybot/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0</a> 许可发布',
         copyright:
-          `© ${currentYear} <a href="https://github.com/oreeke" target="_blank" rel="noopener noreferrer">OREEkE</a>. All rights reserved.`,
+          `© 2025-${currentYear} <a href="https://github.com/oreeke" target="_blank" rel="noopener noreferrer">OREEkE</a> and contributors`,
       },
     },
     mermaid: {

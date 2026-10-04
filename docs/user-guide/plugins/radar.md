@@ -15,6 +15,7 @@ description: 使用 Radar 对 Misskey 天线帖子添加反应、回复、引用
 plugins:
   radar:
     enabled: true
+    delay: ""
     reaction: "heart"
     reply: false
     reply_text: "谢谢分享，{username}"
@@ -35,7 +36,13 @@ plugins:
 - `reply_ai_prompt`、`quote_ai_prompt` 有内置默认值，支持 `{content}`。
 - 引用成功后不再转帖；引用未生成有效文本时仍可转帖。
 - `quote_visibility`、`renote_visibility` 支持 `public` / `home` / `followers`，默认沿用原帖；`*_local_only` 控制是否联合。
-- 收到帖子后随机延迟 3–5 分钟执行，待处理上限 100 条，超出跳过；跳过机器人自身帖子。
+- `delay` 留空时收到帖子后随机延迟 3–5 分钟执行；填写后按精确时间延迟，支持 `m` / `h` / `d` 及组合（如 `30m`、`2h`、`1h30m`、`1d`），范围 `1m`–`1d`。
+- 执行前重新获取帖子，已删除或不可见时跳过。
+- 待处理上限 100 条，超出跳过；跳过机器人自身帖子。
+
+::: warning 长延时
+待处理任务仅保存在内存中，重启或重载插件会丢弃尚未执行的帖子；延时越长，丢失越多，且待处理更易达到上限而跳过新帖。使用长延时时请收窄天线规则。
+:::
 
 ::: tip 稳妥启用
 首次只开 `reaction`，确认天线准确后再逐项增加回复、引用或转帖，避免对同一主题高频重复互动。

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.13.0 - 2026-10-05
+
+Radar 支持自定义互动延时
+
+### Added
+
+- Radar 新增 `delay`，可设 `1m`–`1d` 的固定延时，留空仍随机延迟 3–5 分钟
+- 插件 API 新增 `misskey.get_note()`，获取帖子最新数据
+
+### Changed
+
+- Radar 执行前重新获取帖子，已删除或不可见的帖子不再互动
+- 插件 `on_notification` 改为接收全部通知类型
+
+### Fixed
+
+- 修复 `note` 类型通知被误作时间线帖子分发给 `on_timeline_note` 的问题
+
+<br>
+
 ## 0.12.0 - 2026-10-04
 
 TUI 新增实时日志页

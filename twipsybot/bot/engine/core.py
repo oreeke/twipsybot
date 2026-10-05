@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -154,7 +155,7 @@ class Neuro:
         finally:
             logger.info("Services stopped")
 
-    async def _stop_scheduler(self) -> None:
+    def _stop_scheduler(self) -> None:
         if self.scheduler.running:
             self.scheduler.shutdown(wait=False)
 
@@ -170,7 +171,8 @@ class Neuro:
             ("closing database", self.db.close),
         ):
             try:
-                await step()
+                if inspect.isawaitable(result := step()):
+                    await result
             except Exception as e:
                 logger.exception(f"Error {action}: {e}")
 

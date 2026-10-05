@@ -1,5 +1,6 @@
 import time
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from cachetools import TTLCache
@@ -14,7 +15,7 @@ from ...clients.misskey.payloads import (
 from ...shared.config_keys import ConfigKeys
 from ...shared.constants import CHAT_CACHE_MAX_USERS, CHAT_CACHE_TTL
 from ...shared.utils import format_log_text, maybe_log_event_dump
-from ..engine.pipeline import Reply, Source, replied
+from ..engine.pipeline import Deliver, Reply, Source, replied
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro
@@ -31,6 +32,10 @@ class _ChatContext:
     conversation_id: str
     actor_id: str
     room_label: str | None
+
+    @property
+    def user_content(self) -> str:
+        return f"{self.username}: {self.text}" if self.room_id else self.text
 
 
 class ChatHandler:
@@ -133,56 +138,11 @@ class ChatHandler:
             return
         self._log_incoming_chat(ctx)
         limit: int = self.bot.config.get(ConfigKeys.REPLY_MEMORY)
-        handle = ctx.handle or ctx.mention_to
-        user_content = f"{ctx.username}: {ctx.text}" if ctx.room_id else ctx.text
-
-        async def deliver(reply: Reply, source: Source) -> None:
-            text = self._format_chat_reply_text(
-                room_id=ctx.room_id, mention_to=ctx.mention_to, text=reply.text
-            )
-            if ctx.room_id:
-                await self.bot.misskey.send_room_message(
-                    ctx.room_id, text, reply.file_id
-                )
-            else:
-                await self.bot.misskey.send_message(ctx.user_id, text, reply.file_id)
-            logger.info(
-                f"{replied(source)} to @{ctx.username}: {format_log_text(text)}"
-            )
-            if source in ("plugin", "ai") and ctx.text:
-                self.append_turn(ctx.conversation_id, user_content, reply.text, limit)
-
-        async def generate() -> str | None:
-            if not ctx.text:
-                return None
-            return await self._generate_ai_reply(
-                conversation_id=ctx.conversation_id,
-                user_id=ctx.user_id,
-                user_content=user_content,
-                room_id=ctx.room_id,
-                limit=limit,
-            )
-
+        deliver = partial(self._deliver, ctx, limit)
         async with self.bot.pipeline.hold(ctx.actor_id, ctx.username):
-            if ctx.text.startswith("^"):
-                if not ctx.room_id and (
-                    text := await self.bot.admin.on_message(message)
-                ):
-                    await deliver(Reply(text), "admin")
-                    logger.debug("Chat handled by Admin")
+            if await self._run_command(message, ctx, deliver):
                 return
-            if (
-                reply := await self.bot.admin.handle_slash_command(
-                    ctx.text,
-                    user_id=ctx.user_id,
-                    username=ctx.username,
-                    handle=handle,
-                    private=ctx.room_id is None,
-                )
-            ) is not None:
-                if reply.text:
-                    await deliver(reply, "command")
-                return
+            handle = ctx.handle or ctx.mention_to
             if self.bot.limits.is_response_blacklisted_user(
                 user_id=ctx.user_id, handle=handle
             ):
@@ -192,9 +152,44 @@ class ChatHandler:
                 handle=handle,
                 hook="on_message",
                 event=message,
-                generate=generate,
+                generate=partial(self._generate_ai_reply, ctx, limit),
                 deliver=deliver,
             )
+
+    async def _run_command(
+        self, message: dict[str, Any], ctx: _ChatContext, deliver: Deliver
+    ) -> bool:
+        if ctx.text.startswith("^"):
+            if not ctx.room_id and (text := await self.bot.admin.on_message(message)):
+                await deliver(Reply(text), "admin")
+                logger.debug("Chat handled by Admin")
+            return True
+        reply = await self.bot.admin.handle_slash_command(
+            ctx.text,
+            user_id=ctx.user_id,
+            username=ctx.username,
+            handle=ctx.handle or ctx.mention_to,
+            private=ctx.room_id is None,
+        )
+        if reply is None:
+            return False
+        if reply.text:
+            await deliver(reply, "command")
+        return True
+
+    async def _deliver(
+        self, ctx: _ChatContext, limit: int, reply: Reply, source: Source
+    ) -> None:
+        text = self._format_chat_reply_text(
+            room_id=ctx.room_id, mention_to=ctx.mention_to, text=reply.text
+        )
+        if ctx.room_id:
+            await self.bot.misskey.send_room_message(ctx.room_id, text, reply.file_id)
+        else:
+            await self.bot.misskey.send_message(ctx.user_id, text, reply.file_id)
+        logger.info(f"{replied(source)} to @{ctx.username}: {format_log_text(text)}")
+        if source in ("plugin", "ai") and ctx.text:
+            self.append_turn(ctx.conversation_id, ctx.user_content, reply.text, limit)
 
     def _parse_chat_context(self, message: dict[str, Any]) -> _ChatContext | None:
         text = extract_chat_text(message)
@@ -240,19 +235,17 @@ class ChatHandler:
                 return f"{mention}\n{text}"
         return text
 
-    async def _generate_ai_reply(
-        self,
-        *,
-        conversation_id: str,
-        user_id: str,
-        user_content: str,
-        room_id: str | None,
-        limit: int,
-    ) -> str:
+    async def _generate_ai_reply(self, ctx: _ChatContext, limit: int) -> str | None:
+        if not ctx.text:
+            return None
+        user_content = ctx.user_content
         token_budget = self.bot.config.get(ConfigKeys.REPLY_CTX_TOKENS)
         history = (
             await self.get_or_load_history(
-                conversation_id, limit=limit, user_id=user_id, room_id=room_id
+                ctx.conversation_id,
+                limit=limit,
+                user_id=ctx.user_id,
+                room_id=ctx.room_id,
             )
             if limit > 0 and isinstance(token_budget, int) and token_budget > 0
             else []

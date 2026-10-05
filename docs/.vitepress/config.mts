@@ -94,6 +94,7 @@ export default withMermaid(
               { text: "Radar", link: "/user-guide/plugins/radar" },
               { text: "Topics", link: "/user-guide/plugins/topics" },
               { text: "Vision", link: "/user-guide/plugins/vision" },
+              { text: "Web", link: "/user-guide/plugins/web" },
             ],
           },
         ],

@@ -34,5 +34,3 @@ timeline:
 | --- | --- |
 | Radar | 仅 `antenna` |
 | Iincho | 仅 `localTimeline` |
-| KeyAct、Vision | 提及与聊天 |
-| Topics | 自动发帖任务 |

@@ -227,6 +227,45 @@ async def test_chat_message_plugin_takeover(
     assert replies[0]["text"] == "echo: plugin took over"
 
 
+_CONTEXT_PLUGIN = (
+    "async def on_context(self, event):\n"
+    "    return {'context': 'CTX', 'text': event.text.replace('/web ', '', 1)}\n"
+)
+
+
+async def test_chat_context_hook_augments_prompt_but_not_history(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    bot = await make_bot(
+        write_config(),
+        plugins_dir=make_plugin_dir("context_test", body=_CONTEXT_PLUGIN),
+    )
+
+    await bot.chat.handle({**_CHAT_MESSAGE, "text": "/web 你好"})
+
+    assert openai_server.calls[0]["messages"][-1]["content"] == "CTX\n\n你好"
+    assert bot.chat._histories["user-2"][0] == {"role": "user", "content": "/web 你好"}
+
+
+async def test_mention_context_hook_augments_prompt(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    bot = await make_bot(
+        write_config(),
+        plugins_dir=make_plugin_dir("context_test", body=_CONTEXT_PLUGIN),
+    )
+
+    await bot.mention.handle({**_MENTION_NOTE, "text": "@testbot /web 你好"})
+
+    assert openai_server.calls[0]["messages"][-1]["content"] == "CTX\n\n@testbot 你好"
+
+
 async def test_image_only_chat_is_handled_by_vision_plugin(
     make_bot: MakeBot,
     make_plugin_dir: MakePluginDir,

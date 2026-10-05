@@ -93,6 +93,7 @@ example = "twipsybot_example:plugin"
 | --- | --- | --- |
 | `on_message` | `MessageEvent` | `HandledResult \| None` |
 | `on_mention` | `MentionEvent` | `HandledResult \| None` |
+| `on_context` | `MessageEvent \| MentionEvent` | `ContextResult \| None` |
 | `on_notification` | `NotificationEvent` | `None` |
 | `on_timeline_note` | `TimelineNoteEvent` | `None` |
 | `on_auto_post` | `AutoPostEvent` | `AutoPostResult \| PromptModificationResult \| None` |
@@ -108,11 +109,23 @@ example = "twipsybot_example:plugin"
 | `UserRef` | `id username host handle` |
 | `FileRef` | `id mime_type url thumbnail_url raw` |
 
-- 按 `priority` 降序调用。`on_message` / `on_mention` 返回 `HandledResult` 即终止后续插件与默认 AI；通知与时间线 Hook 仅观察，所有插件都会收到。
+- 按 `priority` 降序调用。`on_message` / `on_mention` 返回 `HandledResult` 即终止后续插件与默认 AI；`on_context`、通知与时间线 Hook 不截断，所有插件都会收到。
 - 返回值须严格符合公共 TypedDict，多余字段会使结果失效。
 - 消息、提及与时间线事件的 `id` 始终非空；`NotificationEvent.id`、`UserRef.id`、`cw`、`host`、文件 URL 等可能为空。
 - `UserRef.handle` 为 `username@host`，本地用户为 `username`。`channel` 通常为 `homeTimeline`、`localTimeline`、`hybridTimeline`、`globalTimeline` 或 `antenna`。
 - 事件数据类不可变；每个插件获得独立的 `raw` 副本，但嵌套值并非深度只读。`raw` 仅作只读后备，不保证长期兼容。
+
+### 补充上下文
+
+```python
+return {"context": "<参考资料>", "text": "去掉前缀后的用户文本"}
+```
+
+- 仅在没有插件接管 `on_message` / `on_mention` 时调用，所有插件按优先级都会被调用，不会互相截断。
+- `context` 在本次请求中置于用户内容之前，不写入聊天历史；多个插件的 `context` 按优先级以空行拼接。
+- `text` 用于替换事件中的原文（如去掉命令前缀），多个插件返回时取优先级最高者。
+- 两个字段均可省略，但至少返回其一，且须为非空字符串；返回其他字段使结果失效。
+- 事件类型与来源一致：聊天为 `MessageEvent`，提及为 `MentionEvent`。仅在默认 AI 回复前调用，须自设超时并容忍失败。
 
 ### 自动发帖
 

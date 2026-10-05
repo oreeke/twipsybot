@@ -10,6 +10,7 @@ from .contracts import (
 from .events import (
     AutoPostEvent,
     AutoPostResult,
+    ContextResult,
     FileRef,
     HandledResult,
     MentionEvent,
@@ -25,6 +26,7 @@ __all__ = (
     "AutoPostResult",
     "AutoPostEvent",
     "BotControl",
+    "ContextResult",
     "DriveService",
     "FileRef",
     "HandledResult",

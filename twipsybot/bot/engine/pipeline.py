@@ -11,13 +11,31 @@ from .limits import ResponseLimiter
 if TYPE_CHECKING:
     from ...plugin.manager import PluginManager
 
-__all__ = ("Deliver", "Reply", "ResponsePipeline", "Source", "replied")
+__all__ = ("Augment", "Deliver", "Reply", "ResponsePipeline", "Source", "replied")
 
 
 @dataclass(frozen=True, slots=True)
 class Reply:
     text: str
     file_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Augment:
+    context: str = ""
+    text: str | None = None
+
+    def rewrite(self, prompt: str, original: str) -> str:
+        if self.text is None or not original:
+            return prompt
+        head, found, tail = prompt.rpartition(original)
+        return f"{head}{self.text}{tail}" if found else prompt
+
+    def wrap(self, prompt: str) -> str:
+        return f"{self.context}\n\n{prompt}" if self.context else prompt
+
+    def apply(self, prompt: str, original: str) -> str:
+        return self.wrap(self.rewrite(prompt, original))
 
 
 Source = Literal["admin", "command", "limit", "plugin", "ai"]
@@ -39,6 +57,15 @@ class ResponsePipeline:
     ) -> AbstractAsyncContextManager[None]:
         return self._actor_locks.hold(actor_key(actor_id, actor_name))
 
+    async def _augment(self, hook: str, event: Any) -> Augment:
+        results = await self._plugins.call_plugin_hook(
+            "on_context", event, event_hook=hook
+        )
+        return Augment(
+            "\n\n".join(r["context"] for _, r in results if "context" in r),
+            next((r["text"] for _, r in results if "text" in r), None),
+        )
+
     async def respond(
         self,
         *,
@@ -46,7 +73,7 @@ class ResponsePipeline:
         handle: str | None,
         hook: str,
         event: Any,
-        generate: Callable[[], Awaitable[str | None]],
+        generate: Callable[[Augment], Awaitable[str | None]],
         deliver: Deliver,
     ) -> None:
         if user_id:
@@ -64,7 +91,7 @@ class ResponsePipeline:
             logger.debug(f"{hook} handled by plugin: {name}")
             text, source = result["response"], "plugin"
         else:
-            text, source = await generate(), "ai"
+            text, source = await generate(await self._augment(hook, event)), "ai"
         if not text:
             return
         await deliver(Reply(text), source)

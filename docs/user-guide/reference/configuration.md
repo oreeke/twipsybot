@@ -94,7 +94,7 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 | `enabled` | `false` | 启用插件 |
 | `priority` | 插件默认值 | 越大越先执行 |
 
-内置默认优先级：KeyAct `850` · Vision `750` · Topics `300` · Radar `50` · Iincho `40`。其余字段见各[插件](../plugins/)页面。
+内置默认优先级：KeyAct `850` · Vision `750` · Web `500` · Topics `300` · Radar `50` · Iincho `40`。其余字段见各[插件](../plugins/)页面。
 
 ```yaml
 plugins:
@@ -107,4 +107,4 @@ plugins:
       ping = pong
 ```
 
-多行字段（KeyAct `rules`、Topics `rss_list`）原样保存，也接受 YAML 列表。
+多行字段（KeyAct `rules`、Topics `rss_list`、Web `allow_domains` / `block_domains` / `trusted_proxy`）原样保存，也接受 YAML 列表。

@@ -15,6 +15,7 @@ __all__ = (
     "AutoPostEvent",
     "AutoPostResult",
     "AutoPostVisibility",
+    "ContextResult",
     "FileRef",
     "HandledResult",
     "MentionEvent",
@@ -41,6 +42,11 @@ class AutoPostResult(TypedDict):
 class PromptModificationResult(TypedDict):
     prompt: str
     timestamp: NotRequired[int]
+
+
+class ContextResult(TypedDict, total=False):
+    context: str
+    text: str
 
 
 @dataclass(frozen=True, slots=True)

@@ -15,7 +15,7 @@ from ...clients.misskey.payloads import (
 from ...shared.config_keys import ConfigKeys
 from ...shared.constants import CHAT_CACHE_MAX_USERS, CHAT_CACHE_TTL
 from ...shared.utils import format_log_text, maybe_log_event_dump
-from ..engine.pipeline import Deliver, Reply, Source, replied
+from ..engine.pipeline import Augment, Deliver, Reply, Source, replied
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro
@@ -235,7 +235,9 @@ class ChatHandler:
                 return f"{mention}\n{text}"
         return text
 
-    async def _generate_ai_reply(self, ctx: _ChatContext, limit: int) -> str | None:
+    async def _generate_ai_reply(
+        self, ctx: _ChatContext, limit: int, augment: Augment
+    ) -> str | None:
         if not ctx.text:
             return None
         user_content = ctx.user_content
@@ -262,7 +264,9 @@ class ChatHandler:
         if self.bot.system_prompt:
             messages.append({"role": "system", "content": self.bot.system_prompt})
         messages.extend(history)
-        messages.append({"role": "user", "content": user_content})
+        messages.append(
+            {"role": "user", "content": augment.apply(user_content, ctx.text)}
+        )
         return await self.bot.openai.generate_chat(messages, **self.bot.ai_config)
 
     async def get_chat_history(

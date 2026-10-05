@@ -23,6 +23,7 @@ from twipsybot.plugin import (
     PluginConfig,
 )
 from twipsybot.plugin.events import build_hook_event
+from twipsybot.plugin.manager import PluginManager
 from twipsybot.plugin.services import DriveServiceAdapter, MisskeyServiceAdapter
 from twipsybot.shared.exceptions import ConfigurationError
 
@@ -1172,3 +1173,19 @@ def test_mention_hook_event_preserves_note_files() -> None:
     assert event.files[0].id == "file-1"
     assert event.files[0].mime_type == "image/jpeg"
     assert event.files[0].url == "https://example.com/image.jpg"
+
+
+@pytest.mark.parametrize(
+    ("result", "valid"),
+    [
+        ({"context": "c"}, True),
+        ({"text": "t"}, True),
+        ({"context": "c", "text": "t"}, True),
+        ({}, False),
+        ({"context": " "}, False),
+        ({"context": "c", "extra": "x"}, False),
+        ({"context": 1}, False),
+    ],
+)
+def test_context_hook_result_validation(result: dict[str, Any], valid: bool) -> None:
+    assert PluginManager._validate_hook_result("on_context", result) is valid

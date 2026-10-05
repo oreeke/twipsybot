@@ -78,6 +78,13 @@ docker compose logs --tail 200 twipsybot
 - 细节不足时关闭 `use_thumbnail`。
 - 从日志区分 Drive 下载失败与模型拒绝。
 
+### Web 不检索
+
+- `endpoint` 已配置且可达；`searxng` 后端需已启用 `json` 输出。
+- `always_on` 关闭时需以 `/web <问题>` 发起；开启时问题去掉链接与提及后不少于 `min_chars`。
+- 链接为内网地址（Fake-IP 代理需配置 `trusted_proxy`）、被域名规则拦截或非文本网页时不会读取。
+- 检索失败不影响回复，详见日志中的 `Web search failed`。
+
 ### Iincho 无报告
 
 - 已开启 `timeline.local` 并重启。

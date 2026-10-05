@@ -4,6 +4,7 @@ import importlib.util
 import inspect
 import sys
 from collections import Counter
+from collections.abc import Callable
 from contextlib import contextmanager
 from copy import deepcopy
 from importlib.metadata import EntryPoint, entry_points
@@ -36,6 +37,7 @@ _PLUGIN_SHUTDOWN_GRACE_SECONDS = 3.0
 _EVENT_HOOKS = {
     "on_message",
     "on_mention",
+    "on_context",
     "on_notification",
     "on_timeline_note",
     "on_auto_post",
@@ -49,6 +51,54 @@ _ASYNC_PLUGIN_METHODS = {
     *_PLUGIN_HOOKS,
     "on_shutdown",
     "cleanup",
+}
+
+
+def _non_empty_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _valid_handled(result: dict[str, Any]) -> bool:
+    return (
+        set(result) == {"handled", "response"}
+        and result["handled"] is True
+        and isinstance(result["response"], str)
+    )
+
+
+def _valid_context(result: dict[str, Any]) -> bool:
+    return (
+        bool(result)
+        and set(result) <= {"context", "text"}
+        and all(_non_empty_text(value) for value in result.values())
+    )
+
+
+def _valid_auto_post(result: dict[str, Any]) -> bool:
+    keys = set(result)
+    if "contents" in keys and keys <= {"contents", "visibility"}:
+        contents = result["contents"]
+        visibility = result.get("visibility", "public")
+        return (
+            isinstance(contents, list)
+            and bool(contents)
+            and all(_non_empty_text(content) for content in contents)
+            and isinstance(visibility, str)
+            and visibility in _AUTO_POST_VISIBILITIES
+        )
+    if "prompt" in keys and keys <= {"prompt", "timestamp"}:
+        return (
+            _non_empty_text(result["prompt"])
+            and type(result.get("timestamp", 0)) is int
+        )
+    return False
+
+
+_RESULT_VALIDATORS: dict[str, Callable[[dict[str, Any]], bool]] = {
+    "on_message": _valid_handled,
+    "on_mention": _valid_handled,
+    "on_context": _valid_context,
+    "on_auto_post": _valid_auto_post,
 }
 
 
@@ -461,41 +511,11 @@ class PluginManager:
 
     @staticmethod
     def _validate_hook_result(hook_name: str, result: Any) -> bool:
-        if not isinstance(result, dict):
-            return False
-        if hook_name in {"on_message", "on_mention"}:
-            return (
-                set(result) == {"handled", "response"}
-                and result["handled"] is True
-                and isinstance(result["response"], str)
-            )
-        if hook_name == "on_auto_post":
-            if set(result) <= {"contents", "visibility"} and "contents" in result:
-                contents = result["contents"]
-                visibility = result.get("visibility")
-                visibility_valid = "visibility" not in result or (
-                    isinstance(visibility, str)
-                    and visibility in _AUTO_POST_VISIBILITIES
-                )
-                return (
-                    isinstance(contents, list)
-                    and bool(contents)
-                    and all(
-                        isinstance(content, str) and bool(content.strip())
-                        for content in contents
-                    )
-                    and visibility_valid
-                )
-            if set(result) <= {"prompt", "timestamp"} and "prompt" in result:
-                return (
-                    isinstance(result["prompt"], str)
-                    and bool(result["prompt"].strip())
-                    and type(result.get("timestamp", 0)) is int
-                )
-        return False
+        validator = _RESULT_VALIDATORS.get(hook_name)
+        return isinstance(result, dict) and validator is not None and validator(result)
 
     async def call_plugin_hook(
-        self, hook_name: str, payload: Any = None
+        self, hook_name: str, payload: Any = None, *, event_hook: str | None = None
     ) -> list[HookResult]:
         if not self._accepting_hooks or (task := asyncio.current_task()) is None:
             return []
@@ -506,7 +526,9 @@ class PluginManager:
         with self._track_hook_task(task):
             for plugin in self._iter_dispatch_plugins():
                 try:
-                    event = shared_event or build_hook_event(hook_name, payload)
+                    event = shared_event or build_hook_event(
+                        event_hook or hook_name, payload
+                    )
                 except ValueError as e:
                     logger.warning(f"Invalid plugin event: hook={hook_name}: {e}")
                     return []

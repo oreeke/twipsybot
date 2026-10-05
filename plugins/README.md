@@ -46,12 +46,13 @@ echo = "twipsybot_echo:plugin"
 | --- | --- | --- |
 | `on_message` | `MessageEvent` | `HandledResult \| None` |
 | `on_mention` | `MentionEvent` | `HandledResult \| None` |
+| `on_context` | `MessageEvent \| MentionEvent` | `ContextResult \| None` |
 | `on_notification` | `NotificationEvent` | `None` |
 | `on_timeline_note` | `TimelineNoteEvent` | `None` |
 | `on_auto_post` | `AutoPostEvent` | `AutoPostResult \| PromptModificationResult \| None` |
 | `on_auto_post_published` | `str` | `None` |
 
-按 `priority` 降序调用，`HandledResult` 终止后续插件与默认 AI。
+按 `priority` 降序调用，`HandledResult` 终止后续插件与默认 AI；无插件接管时，所有插件的 `on_context` 为默认 AI 补充上下文。
 
 ```text
 __init__ -> initialize -> on_startup -> hooks -> on_shutdown -> cleanup

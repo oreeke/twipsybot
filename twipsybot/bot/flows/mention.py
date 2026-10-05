@@ -12,7 +12,7 @@ from ...clients.misskey.payloads import (
 )
 from ...shared.config_keys import ConfigKeys
 from ...shared.utils import format_log_text, maybe_log_event_dump
-from ..engine.pipeline import Reply, Source, replied
+from ..engine.pipeline import Augment, Reply, Source, replied
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro
@@ -74,11 +74,9 @@ class MentionHandler:
             parts.append(t)
         return "\n\n".join(parts).strip()
 
-    async def _build_mention_prompt(
-        self, mention: MentionContext, note: dict[str, Any]
-    ) -> str:
+    async def _build_mention_prompt(self, text: str, note: dict[str, Any]) -> str:
         note_data = normalize_payload(note)
-        base = mention.text.strip()
+        base = text.strip()
         if not note_data:
             return base
         quoted_text = ""
@@ -151,7 +149,9 @@ class MentionHandler:
                     handle=mention.username,
                     hook="on_mention",
                     event=note,
-                    generate=lambda: self._generate_ai_reply(mention, note),
+                    generate=lambda augment: self._generate_ai_reply(
+                        mention, note, augment
+                    ),
                     deliver=deliver,
                 )
         except Exception:
@@ -211,9 +211,11 @@ class MentionHandler:
         return self.bot.bot_user_id in mentions
 
     async def _generate_ai_reply(
-        self, mention: MentionContext, note: dict[str, Any]
+        self, mention: MentionContext, note: dict[str, Any], augment: Augment
     ) -> str:
-        prompt = await self._build_mention_prompt(mention, note)
+        original = extract_note_text(normalize_payload(note), include_cw=False)
+        text = augment.rewrite(mention.text, original)
+        prompt = augment.wrap(await self._build_mention_prompt(text, note))
         return await self.bot.openai.generate_text(
             prompt, self.bot.system_prompt, **self.bot.ai_config
         )

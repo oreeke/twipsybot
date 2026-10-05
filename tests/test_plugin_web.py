@@ -144,12 +144,17 @@ async def test_web_rewrite_query(
     generate = AsyncMock(return_value='"weather beijing"\nextra')
     app = _app([{"title": "T", "url": "https://example.com/a"}])
     plugin, server = await make_web(
-        app, {"query_mode": "rewrite"}, generate_text=generate
+        app,
+        {"query_mode": "rewrite"},
+        generate_text=generate,
+        max_tokens=512,
+        temperature=0.7,
     )
 
     await _on_context(plugin, ("/web 北京天气如何"))
 
     assert app[QUERIES][0]["q"] == "weather beijing"
+    assert generate.call_args.args[2:] == (512, 0.7)
     generate.side_effect = RuntimeError("boom")
     await _on_context(plugin, ("/web 北京天气如何呀"))
     assert app[QUERIES][1]["q"] == "北京天气如何呀"

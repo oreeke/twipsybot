@@ -154,7 +154,7 @@ async def test_web_rewrite_query(
     await _on_context(plugin, ("/web 北京天气如何"))
 
     assert app[QUERIES][0]["q"] == "weather beijing"
-    assert generate.call_args.args[2:] == (512, 0.7)
+    assert generate.call_args.args[1:] == (web_plugin._REWRITE_PROMPT, 512, 0.7)
     generate.side_effect = RuntimeError("boom")
     await _on_context(plugin, ("/web 北京天气如何呀"))
     assert app[QUERIES][1]["q"] == "北京天气如何呀"
@@ -169,7 +169,17 @@ async def test_web_failed_search_degrades(
     assert await _on_context(plugin, ("普通的一句话")) is None
     result = await _on_context(plugin, ("/web 查询失败"))
 
-    assert result == {"context": web_plugin._EMPTY, "text": "查询失败"}
+    assert result == {
+        "context": f"<web_results>{web_plugin._EMPTY_PROMPT}</web_results>",
+        "text": "查询失败",
+    }
+
+    custom, custom_server = await make_web(
+        web.Application(), {"empty_prompt": "  没找到  "}
+    )
+    result = await _on_context(custom, ("/web 查询失败"))
+    assert result is not None
+    assert result["context"] == "<web_results>没找到</web_results>"
 
 
 async def test_web_fetches_links_without_always_on(
@@ -266,6 +276,11 @@ def test_web_render_budget_and_tag_escape() -> None:
     assert text.count("</web_results>") == 1
     assert text.count("x") == 250
     assert "yz" in text
+    assert web_plugin._PROMPT in text
+
+    custom = _plugin({"prompt": "仅供参考"})._render(sources[1:])
+    assert custom.split("\n")[1:3] == ["仅供参考", ""]
+    assert web_plugin._PROMPT not in custom
 
 
 async def test_web_uses_registered_provider_and_filters_results(

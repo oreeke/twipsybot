@@ -17,7 +17,7 @@ plugins:
     txt_start_line: 1
 ```
 
-`prompts/topics.txt` 每行一个主题，按顺序循环，经 `{topic}` 注入提示词（`txt_ai_prefix` 有内置默认值）：
+`prompts/topics.txt` 每行一个主题，按顺序循环，经 `{topic}` 注入提示词（`txt_ai_prefix` 留空使用内置提示）：
 
 ```text
 开源软件的长期维护
@@ -43,7 +43,7 @@ plugins:
 
 - `rss_list` 每行一个地址。
 - `rss_post_mode`：`rotate`（默认）每轮从一个源发一条并轮换；`batch` 每轮从每个源各发一条最新未发布内容。
-- `rss_ai: false` 发布摘要或标题加链接；开启后由模型基于摘要、标题与链接改写，仍附链接。`rss_ai_prefix` 支持 `{summary}`、`{title}`、`{link}`。
+- `rss_ai: false` 发布摘要或标题加链接；开启后由模型基于摘要、标题与链接改写，仍附链接。`rss_ai_prefix` 留空使用内置提示，支持 `{summary}`、`{title}`、`{link}`。
 - 条目需含标题与链接；发布成功后才记录标识，避免重复。
 - 请求总超时 60 秒，每个源检查前 20 条。
 

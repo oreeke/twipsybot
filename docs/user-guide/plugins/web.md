@@ -25,6 +25,9 @@ plugins:
 | `provider` | `searxng` | 检索后端，目前仅支持 `searxng` |
 | `endpoint` | 空 | 后端地址，`searxng` 必填，插件仅检索此实例 |
 | `always_on` | `false` | 开启后每条消息都先联网检索；关闭则仅 `/web` 触发 |
+| `prompt` | 内置 | 附在检索结果前的说明 |
+| `empty_prompt` | 内置 | 手动 `/web` 无结果时的提示 |
+| `rewrite_prompt` | 内置 | `query_mode: rewrite` 时改写关键词的系统提示词 |
 | `language` | `auto` | 检索语言，如 `zh-CN`；留空不指定 |
 | `max_results` | `5` | 注入的结果条数，1–10 |
 | `fetch_top` | `0` | 抓取前 N 条结果的正文（0–3）；0 仅使用摘要，最省 token |

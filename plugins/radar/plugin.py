@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 import durationpy
 from loguru import logger
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 
 from twipsybot.plugin import (
     PluginBase,
@@ -19,6 +19,12 @@ _DELAY_BOUNDS = (timedelta(minutes=1), timedelta(days=1))
 _DELAY_PATTERN = re.compile(r"(?:\d+[mhd])+")
 _DELAY_ERROR = "delay must be between 1m and 1d, e.g. 30m, 2h, 1d"
 _MAX_PENDING = 100
+_REPLY_AI_PROMPT = (
+    "根据帖子内容写一句自然回复。\n不要复述原文，不要加引号。\n不超过30字：\n{content}"
+)
+_QUOTE_AI_PROMPT = (
+    "根据帖子内容写一句简短感想。\n不要复述原文，不要加引号。\n不超过30字：\n{content}"
+)
 
 
 class _Config(PluginConfig):
@@ -27,7 +33,7 @@ class _Config(PluginConfig):
     reply_enabled: bool = Field(False, validation_alias="reply")
     reply_text: str | None = None
     reply_ai: bool = False
-    reply_ai_prompt: str = "根据帖子内容写一句自然回复。\n不要复述原文，不要加引号。\n不超过30字：\n{content}"
+    reply_ai_prompt: str = Field("", description=_REPLY_AI_PROMPT)
     reply_local_only: bool = False
     renote_enabled: bool = Field(False, validation_alias="renote")
     renote_visibility: Literal["public", "home", "followers"] | None = None
@@ -35,7 +41,7 @@ class _Config(PluginConfig):
     quote_enabled: bool = Field(False, validation_alias="quote")
     quote_text: str | None = None
     quote_ai: bool = False
-    quote_ai_prompt: str = "根据帖子内容写一句简短感想。\n不要复述原文，不要加引号。\n不超过30字：\n{content}"
+    quote_ai_prompt: str = Field("", description=_QUOTE_AI_PROMPT)
     quote_visibility: Literal["public", "home", "followers"] | None = None
     quote_local_only: bool = False
 
@@ -56,24 +62,6 @@ class _Config(PluginConfig):
         if not _DELAY_BOUNDS[0] <= delay <= _DELAY_BOUNDS[1]:
             raise ValueError(_DELAY_ERROR)
         return delay
-
-    @model_validator(mode="after")
-    def _validate_ai_prompts(self) -> "_Config":
-        if (
-            self.reply_enabled
-            and self.reply_ai
-            and not (self.reply_text or "").strip()
-            and not self.reply_ai_prompt.strip()
-        ):
-            raise ValueError("reply_ai_prompt must not be empty")
-        if (
-            self.quote_enabled
-            and self.quote_ai
-            and not (self.quote_text or "").strip()
-            and not self.quote_ai_prompt.strip()
-        ):
-            raise ValueError("quote_ai_prompt must not be empty")
-        return self
 
 
 class RadarPlugin(PluginBase):
@@ -205,7 +193,7 @@ class RadarPlugin(PluginBase):
             text = self._format_reply_text(text, note_data).strip()
             if text:
                 return text
-        if not ai_enabled or not ai_prompt.strip():
+        if not ai_enabled:
             return None
         try:
             return await self._generate_ai(note_data, ai_prompt)
@@ -222,7 +210,7 @@ class RadarPlugin(PluginBase):
             note_data,
             text=self.settings.reply_text,
             ai_enabled=self.settings.reply_ai,
-            ai_prompt=self.settings.reply_ai_prompt,
+            ai_prompt=self.settings.reply_ai_prompt.strip() or _REPLY_AI_PROMPT,
             action="reply",
         )
         if not text:
@@ -249,7 +237,7 @@ class RadarPlugin(PluginBase):
             note_data,
             text=self.settings.quote_text,
             ai_enabled=self.settings.quote_ai,
-            ai_prompt=self.settings.quote_ai_prompt,
+            ai_prompt=self.settings.quote_ai_prompt.strip() or _QUOTE_AI_PROMPT,
             action="quote",
         )
         if not text:

@@ -23,7 +23,7 @@ plugins:
 | `max_images` | 单次最多处理图片数，至少 1 |
 | `max_bytes` | 单张下载上限，支持 `KB`、`MB` 等单位 |
 | `use_thumbnail` | 优先缩略图，节省流量与延迟但损失细节 |
-| `default_prompt` | 仅发图片时的提示，有内置默认值；留空则只发送图片 |
+| `default_prompt` | 发图片时附带的提示，留空只发送图片 |
 
 ## 使用
 

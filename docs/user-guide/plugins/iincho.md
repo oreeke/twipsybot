@@ -48,7 +48,7 @@ plugins:
 | `moderation.cf_account_id` | 32 位十六进制账户 ID，见 Cloudflare 控制台概览页 |
 | `moderation.concurrency` | Cloudflare 并发数；按样本逐条计费，调小 `sample_size` 可降低用量 |
 
-`prompt` 与 `system_prompt` 有内置默认值，自定义时不能为空。
+`prompt` 与 `system_prompt` 留空使用内置提示。
 
 ## 数据范围
 

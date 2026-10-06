@@ -13,10 +13,10 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from plugins.iincho.plugin import IinchoPlugin, _Sample
+from plugins.iincho.plugin import _PROMPT, _SYSTEM_PROMPT, IinchoPlugin, _Sample
 from plugins.keyact.plugin import KeyActPlugin
-from plugins.radar.plugin import RadarPlugin
-from plugins.topics.plugin import TopicsPlugin
+from plugins.radar.plugin import _QUOTE_AI_PROMPT, _REPLY_AI_PROMPT, RadarPlugin
+from plugins.topics.plugin import _RSS_AI_PREFIX, _TXT_AI_PREFIX, TopicsPlugin
 from plugins.vision.plugin import VisionPlugin
 from twipsybot.plugin import (
     AutoPostEvent,
@@ -83,46 +83,28 @@ def test_builtin_plugins_parse_boolean_strings() -> None:
     assert vision.settings.use_thumbnail is False
 
 
-@pytest.mark.parametrize("field", ("prompt", "system_prompt"))
-def test_iincho_requires_prompts(field: str) -> None:
-    config = {
-        "interval": "5m",
-        "prompt": "summarize",
-        "system_prompt": "analyst",
-        field: " ",
-    }
-    context = _context(config)
+@pytest.mark.parametrize("prefix", ("", "  "))
+async def test_topics_blank_prompts_use_defaults(prefix: str) -> None:
+    generate_text = AsyncMock(return_value="rewritten")
+    openai = SimpleNamespace(
+        generate_text=generate_text, system_prompt="", max_tokens=1, temperature=0
+    )
+    plugin = TopicsPlugin(
+        _context(
+            {"enabled": True, "txt_ai_prefix": prefix, "rss_ai_prefix": prefix},
+            openai=openai,
+        )
+    )
+    plugin._get_next_topic = AsyncMock(return_value="science")
 
-    with pytest.raises(ValueError, match=rf"{field} must not be empty"):
-        IinchoPlugin(context)
+    result = await plugin.on_auto_post(AutoPostEvent(datetime.now(UTC)))
+    await plugin._rewrite_rss_title_with_ai("t", "l", summary="s")
 
-
-@pytest.mark.parametrize(
-    ("config", "field"),
-    [
-        ({"reply": True, "reply_ai": True, "reply_ai_prompt": ""}, "reply_ai_prompt"),
-        ({"quote": True, "quote_ai": True, "quote_ai_prompt": ""}, "quote_ai_prompt"),
-    ],
-)
-def test_radar_requires_enabled_ai_prompt(config: dict[str, Any], field: str) -> None:
-    context = _context(config)
-
-    with pytest.raises(ValueError, match=rf"{field} must not be empty"):
-        RadarPlugin(context)
-
-
-@pytest.mark.parametrize(
-    ("config", "field"),
-    [
-        ({"source": "txt", "txt_ai_prefix": ""}, "txt_ai_prefix"),
-        ({"source": "rss", "rss_ai": True, "rss_ai_prefix": ""}, "rss_ai_prefix"),
-    ],
-)
-def test_topics_requires_active_prompt(config: dict[str, Any], field: str) -> None:
-    context = _context(config)
-
-    with pytest.raises(ValueError, match=rf"{field} must not be empty"):
-        TopicsPlugin(context)
+    assert result == {"prompt": _TXT_AI_PREFIX.format(topic="science")}
+    assert generate_text.await_args is not None
+    assert generate_text.await_args.args[0] == _RSS_AI_PREFIX.format(
+        summary="s", title="t", link="l"
+    )
 
 
 async def test_keyact_matches_body_when_mention_has_cw() -> None:
@@ -905,6 +887,41 @@ async def test_radar_ai_uses_configured_prompt() -> None:
     )
 
 
+async def test_radar_blank_ai_prompts_use_defaults() -> None:
+    generate_text = AsyncMock(return_value="generated")
+    plugin = RadarPlugin(
+        _context(
+            {
+                "enabled": True,
+                "reply": True,
+                "reply_ai": True,
+                "reply_ai_prompt": " ",
+                "quote": True,
+                "quote_ai": True,
+                "quote_ai_prompt": "",
+            },
+            misskey=SimpleNamespace(
+                create_note=AsyncMock(return_value={}),
+                create_renote=AsyncMock(return_value={}),
+            ),
+            openai=SimpleNamespace(
+                generate_text=generate_text,
+                system_prompt="",
+                max_tokens=1,
+                temperature=0,
+            ),
+        )
+    )
+
+    await plugin._maybe_reply({"text": "hello"}, "note-1", "antenna")
+    await plugin._maybe_quote({"text": "hello"}, "note-1", "antenna")
+
+    assert [c.args[0] for c in generate_text.await_args_list] == [
+        _REPLY_AI_PROMPT.format(content="hello"),
+        _QUOTE_AI_PROMPT.format(content="hello"),
+    ]
+
+
 async def test_radar_preserves_specified_reply_visibility() -> None:
     create_note = AsyncMock(return_value={})
     plugin = RadarPlugin(
@@ -1042,6 +1059,20 @@ def test_iincho_accepts_empty_admin_ids(admin_ids: Any) -> None:
     plugin = IinchoPlugin(_iincho_context({"admin_ids": admin_ids}))
 
     assert plugin.settings.admin_ids == ()
+
+
+async def test_iincho_blank_prompts_use_defaults() -> None:
+    context = _iincho_context(
+        {"prompt": " ", "system_prompt": "", "admin_ids": ["admin-1"]}
+    )
+    _iincho_flag_all(context)
+    context.openai.generate_text.return_value = _iincho_result()
+
+    await IinchoPlugin(context)._generate([_Sample("1", "帖子")])
+
+    prompt, system = context.openai.generate_text.await_args.args
+    assert prompt.startswith(f"{_PROMPT}\nDATA=")
+    assert system == _SYSTEM_PROMPT
 
 
 async def test_iincho_collects_only_eligible_local_notes() -> None:

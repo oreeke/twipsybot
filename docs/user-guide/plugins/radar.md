@@ -33,7 +33,7 @@ plugins:
 
 - `reaction` 留空不反应，支持实例表情名或自定义表情格式；已有 `myReaction` 时跳过。
 - 回复：`reply_text` 优先（支持 `{username}`），为空且开启 `reply_ai` 时由模型生成。引用的 `quote_text` 与 `quote_ai` 同理。
-- `reply_ai_prompt`、`quote_ai_prompt` 有内置默认值，支持 `{content}`。
+- `reply_ai_prompt`、`quote_ai_prompt` 留空使用内置提示，支持 `{content}`。
 - 引用成功后不再转帖；引用未生成有效文本时仍可转帖。
 - `quote_visibility`、`renote_visibility` 支持 `public` / `home` / `followers`，默认沿用原帖；`*_local_only` 控制是否联合。
 - `delay` 留空时收到帖子后随机延迟 3–5 分钟执行；填写后按精确时间延迟，支持 `m` / `h` / `d` 及组合（如 `30m`、`2h`、`1h30m`、`1d`），范围 `1m`–`1d`。

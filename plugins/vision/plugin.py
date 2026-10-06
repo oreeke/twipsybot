@@ -18,7 +18,7 @@ class _Config(PluginConfig):
     max_images: int = Field(3, ge=1)
     max_bytes: ByteSize = ByteSize(6 * 1024 * 1024)
     use_thumbnail: bool = True
-    default_prompt: str = "请描述图片内容。"
+    default_prompt: str = ""
 
     @field_validator("max_bytes", mode="before")
     @classmethod

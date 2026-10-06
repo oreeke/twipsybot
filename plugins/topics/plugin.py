@@ -9,7 +9,7 @@ import aiohttp
 import feedparser
 from bs4 import BeautifulSoup
 from loguru import logger
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from twipsybot.plugin import (
     AutoPostEvent,
@@ -23,26 +23,23 @@ from twipsybot.plugin import (
 _RSS_TIMEOUT = aiohttp.ClientTimeout(total=60)
 _RSS_HEADERS = {"User-Agent": "Twipsy-RSS"}
 _RSS_RECENT_KEYS_LIMIT = 2000
+_TXT_AI_PREFIX = "以{topic}为主题，"
+_RSS_AI_PREFIX = (
+    "发表一段感想和相关知识，不超过150字。\n"
+    "不加链接，不加引号：\n\n{summary}\n\n{title}\n{link}"
+)
 
 
 class _Config(PluginConfig):
     source: Literal["txt", "rss"] = "txt"
-    txt_ai_prefix: str = "以{topic}为主题，"
+    txt_ai_prefix: str = Field("", description=_TXT_AI_PREFIX)
     txt_start_line: int = Field(1, ge=1)
     rss_list: Annotated[tuple[str, ...], LineText] = Field(
         default=(), description="https://example.com/feed.xml"
     )
     rss_ai: bool = False
     rss_post_mode: Literal["batch", "rotate"] = "rotate"
-    rss_ai_prefix: str = "发表一段感想和相关知识，不超过150字。\n不加链接，不加引号：\n\n{summary}\n\n{title}\n{link}"
-
-    @model_validator(mode="after")
-    def _validate_prompts(self) -> "_Config":
-        if self.source == "txt" and not self.txt_ai_prefix.strip():
-            raise ValueError("txt_ai_prefix must not be empty")
-        if self.source == "rss" and self.rss_ai and not self.rss_ai_prefix.strip():
-            raise ValueError("rss_ai_prefix must not be empty")
-        return self
+    rss_ai_prefix: str = Field("", description=_RSS_AI_PREFIX)
 
 
 class TopicsPlugin(PluginBase):
@@ -87,7 +84,9 @@ class TopicsPlugin(PluginBase):
                 return None
             topic = await self._get_next_topic()
             return {
-                "prompt": self.settings.txt_ai_prefix.format(topic=topic),
+                "prompt": (
+                    self.settings.txt_ai_prefix.strip() or _TXT_AI_PREFIX
+                ).format(topic=topic),
             }
         except Exception as e:
             logger.error(f"Topics plugin auto-post hook failed: {e}")
@@ -355,10 +354,8 @@ class TopicsPlugin(PluginBase):
     async def _rewrite_rss_title_with_ai(
         self, title: str, link: str, *, summary: str
     ) -> str:
-        if not self.settings.rss_ai_prefix.strip():
-            return title
         try:
-            prompt = self.settings.rss_ai_prefix.format(
+            prompt = (self.settings.rss_ai_prefix.strip() or _RSS_AI_PREFIX).format(
                 title=title, link=link, summary=summary
             )
         except Exception as e:

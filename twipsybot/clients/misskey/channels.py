@@ -1,10 +1,10 @@
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 ChannelSpec = str | tuple[str, dict[str, Any]]
 
 
-class ChannelType(str, Enum):
+class ChannelType(StrEnum):
     MAIN = "main"
     HOME_TIMELINE = "homeTimeline"
     LOCAL_TIMELINE = "localTimeline"

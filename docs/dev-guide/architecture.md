@@ -50,7 +50,7 @@ twipsybot/
 │   ├── shared/         配置模型、设置 IO、常量、异常、锁与工具
 │   └── tui/            Textual 配置界面
 ├── plugins/            内置插件
-├── tests/              单元、插件与端到端测试
+├── tests/              core/（核心）与 plugins/（内建插件）测试
 └── docs/               文档站点
 ```
 

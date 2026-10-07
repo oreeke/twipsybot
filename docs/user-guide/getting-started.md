@@ -20,6 +20,7 @@ description: 使用 Docker Compose 部署 TwipsyBot，并连接 Misskey 与 Open
 | `read:chat` · `write:chat` | 读写聊天 |
 | `read:drive` · `write:drive` | 读取图片、上传生成图 |
 | `write:reactions` | Radar 反应 |
+| `write:account` | Bond 个人备注同步（`memo_sync`） |
 
 ## 部署
 

@@ -1,6 +1,6 @@
 [project]
 name = "twipsybot"
-version = "0.15.4"
+version = "0.16.0"
 description = "AI-powered Misskey bot with OpenAI-compatible LLMs."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -60,6 +60,7 @@ asyncio_mode = "auto"
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
 include = ["twipsybot", "plugins", "tests"]
+extraPaths = ["tests"]
 exclude = ["data", "logs"]
 reportUnsupportedDunderAll = "none"
 reportAttributeAccessIssue = "error"

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.16.0 - 2026-10-07
+
+Bond 用户关系记录
+
+### Added
+
+- 新增 Bond 插件：按用户记录互动与亲密度，在 AI 回复前补充关系档案；支持 `/bond` 查看、`/forget` 删除，可选同步 Misskey 个人备注（需 `write:account`）
+- 插件 API 的 `misskey` 服务新增 `show_user()` 与 `update_user_memo()`
+
+### Changed
+
+- 以 `/` 开头的消息（含插件命令）仅关注机器人的用户与管理员可用，其他用户静默忽略
+
+<br>
+
 ## 0.15.0 - 2026-10-06
 
 Web 联网检索
@@ -7,7 +22,7 @@ Web 联网检索
 ### Added
 
 - 新增 Web 插件：通过可扩展的检索后端（目前为 SearXNG）在 AI 回复前联网检索，`always_on` 控制常开，关闭时以 `/web <问题>` 触发；消息中的链接默认读取，抓取拒绝非公网地址
-- 插件 API 新增 `on_context` Hook 与 `ContextResult`，在无插件接管时为默认 AI 补充上下文或改写用户文本，不写入聊天历史
+- 插件 API 新增 `on_context` Hook 与 `ContextResult`，在无插件接管时为 AI 补充上下文或改写用户文本，不写入聊天历史
 
 <br>
 

@@ -78,6 +78,12 @@ class MisskeyServiceAdapter:
     async def send_message(self, user_id: str, text: str) -> dict[str, Any]:
         return await self._misskey.send_message(user_id, text)
 
+    async def show_user(self, user_id: str) -> dict[str, Any]:
+        return await self._misskey.show_user(user_id)
+
+    async def update_user_memo(self, user_id: str, memo: str | None) -> None:
+        await self._misskey.update_user_memo(user_id, memo)
+
 
 class OpenAIServiceAdapter:
     def __init__(self, openai: Any, config: Any):

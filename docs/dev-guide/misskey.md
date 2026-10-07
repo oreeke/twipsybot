@@ -56,6 +56,9 @@ REST 负责查询与写入，Streaming 接收实时事件，协议适配集中�
 | `read:chat` · `write:chat` | 读写聊天 |
 | `read:drive` · `write:drive` | 读取、上传文件 |
 | `write:reactions` | 添加反应 |
+| `write:account` | 写入个人备注（`users/update-memo`） |
+
+`users/show` 无需特定权限，但须携带令牌才会返回 `isFollowed`、`memo` 等相对于机器人的字段。
 
 新增 API 能力时，同步更新[快速开始](../user-guide/getting-started.md)的权限表并保持最小权限。
 

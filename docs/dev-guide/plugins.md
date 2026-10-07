@@ -109,7 +109,7 @@ example = "twipsybot_example:plugin"
 | `UserRef` | `id username host handle` |
 | `FileRef` | `id mime_type url thumbnail_url raw` |
 
-- 按 `priority` 降序调用。`on_message` / `on_mention` 返回 `HandledResult` 即终止后续插件与默认 AI；`on_context`、通知与时间线 Hook 不截断，所有插件都会收到。
+- 按 `priority` 降序调用。`on_message` / `on_mention` 返回 `HandledResult` 即终止后续插件与 AI；`on_context`、通知与时间线 Hook 不截断，所有插件都会收到。
 - 返回值须严格符合公共 TypedDict，多余字段会使结果失效。
 - 消息、提及与时间线事件的 `id` 始终非空；`NotificationEvent.id`、`UserRef.id`、`cw`、`host`、文件 URL 等可能为空。
 - `UserRef.handle` 为 `username@host`，本地用户为 `username`。`channel` 通常为 `homeTimeline`、`localTimeline`、`hybridTimeline`、`globalTimeline` 或 `antenna`。
@@ -125,7 +125,7 @@ return {"context": "<参考资料>", "text": "去掉前缀后的用户文本"}
 - `context` 在本次请求中置于用户内容之前，不写入聊天历史；多个插件的 `context` 按优先级以空行拼接。
 - `text` 用于替换事件中的原文（如去掉命令前缀），多个插件返回时取优先级最高者。
 - 两个字段均可省略，但至少返回其一，且须为非空字符串；返回其他字段使结果失效。
-- 事件类型与来源一致：聊天为 `MessageEvent`，提及为 `MentionEvent`。仅在默认 AI 回复前调用，须自设超时并容忍失败。
+- 事件类型与来源一致：聊天为 `MessageEvent`，提及为 `MentionEvent`。仅在 AI 回复前调用，须自设超时并容忍失败。
 
 ### 自动发帖
 
@@ -150,7 +150,7 @@ return {"prompt": "围绕开源维护写一篇短文。"}
 | `name` | 插件 ID：本地为目录名，第三方为 Entry Point 名 |
 | `config` | `plugins.<name>` 原始配置的只读映射 |
 | `storage` | 按插件 ID 隔离的字符串存储 |
-| `misskey` | 发帖、转帖、反应、聊天、天线与 Drive |
+| `misskey` | 发帖、转帖、反应、聊天、用户、天线与 Drive |
 | `openai` | 文本、聊天与审核 |
 | `bot` | 机器人身份、用户锁与天线解析 |
 
@@ -178,6 +178,8 @@ async with self.context.bot.actor_lock(event.user.id, event.user.handle):
 | `misskey.create_renote(note_id, visibility, text, local_only)` | 转帖或引用 |
 | `misskey.create_reaction(note_id, reaction)` | 添加反应 |
 | `misskey.send_message(user_id, text)` | 发送私信 |
+| `misskey.show_user(user_id)` | 用户详情，含资料、个人备注与双方关系 |
+| `misskey.update_user_memo(user_id, memo)` | 写入个人备注，`None` 或空字符串删除；需 `write:account` 权限 |
 | `misskey.list_antennas()` | 获取天线 |
 | `misskey.get_note(note_id)` | 获取帖子最新数据 |
 | `misskey.instance_url` | 实例地址 |

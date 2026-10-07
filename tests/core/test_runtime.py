@@ -16,7 +16,7 @@ from conftest import MakeBot, MakePluginDir, WriteConfig, set_plugin_config
 
 from twipsybot import Neuro
 from twipsybot.admin import handlers
-from twipsybot.admin.service import _extract_slash_command
+from twipsybot.admin.service import _extract_slash_command, _is_slash_command
 from twipsybot.app import cli as app_cli
 from twipsybot.app import main as app_main
 from twipsybot.bot.engine.pipeline import Reply
@@ -265,6 +265,21 @@ def test_bot_mention_matches_complete_local_account(text: str, expected: bool) -
 )
 def test_slash_command_detection(text: str, expected: tuple[str, str] | None) -> None:
     assert _extract_slash_command(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("/bond", True),
+        ("@testbot @alice /web 新闻", True),
+        ("@testbot", False),
+        ("/", False),
+        ("你好 /web", False),
+        ("https://example.com/web", False),
+    ],
+)
+def test_slash_command_prefix_detection(text: str, expected: bool) -> None:
+    assert _is_slash_command(text) is expected
 
 
 async def test_image_service_downloads_url_before_upload() -> None:

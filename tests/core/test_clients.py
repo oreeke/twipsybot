@@ -307,6 +307,22 @@ async def test_create_note_does_not_turn_empty_visibility_public() -> None:
     request.assert_awaited_once_with("notes/create", {"text": "text", "visibility": ""})
 
 
+async def test_user_endpoints_use_misskey_api() -> None:
+    read = AsyncMock(return_value={"id": "u1"})
+    request = AsyncMock(return_value={})
+    api = object.__new__(MisskeyAPI)
+    api.make_read_request = read
+    api.make_request = request
+
+    assert await api.show_user("u1") == {"id": "u1"}
+    await api.update_user_memo("u1", None)
+
+    read.assert_awaited_once_with("users/show", {"userId": "u1"})
+    request.assert_awaited_once_with(
+        "users/update-memo", {"userId": "u1", "memo": None}
+    )
+
+
 @pytest.mark.parametrize(
     ("method", "identifier_key"),
     [("send_message", "toUserId"), ("send_room_message", "toRoomId")],

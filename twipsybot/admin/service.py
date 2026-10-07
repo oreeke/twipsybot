@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from cachetools import TTLCache
 from loguru import logger
 
 from ..bot.engine.pipeline import Reply
@@ -19,6 +20,8 @@ from . import handlers
 
 if TYPE_CHECKING:
     from ..bot.engine.core import Neuro
+
+_FOLLOWER_TTL = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,13 +42,21 @@ def _code_block(title: str, text: str) -> str:
     return "\n".join([heading, "```", *lines, "```"])
 
 
-def _extract_slash_command(text: str) -> tuple[str, str] | None:
+def _strip_mentions(text: str) -> str:
     value = text.strip()
     while value.startswith("@"):
-        if len(parts := value.split(maxsplit=1)) != 2:
-            return None
-        value = parts[1]
-    if len(parts := value.split(maxsplit=1)) != 2:
+        parts = value.split(maxsplit=1)
+        value = parts[1] if len(parts) == 2 else ""
+    return value
+
+
+def _is_slash_command(text: str) -> bool:
+    token = next(iter(_strip_mentions(text).split(maxsplit=1)), "")
+    return len(token) > 1 and token.startswith("/")
+
+
+def _extract_slash_command(text: str) -> tuple[str, str] | None:
+    if len(parts := _strip_mentions(text).split(maxsplit=1)) != 2:
         return None
     token, argument = parts
     if not token.startswith("/") or len(token) == 1:
@@ -107,6 +118,7 @@ class AdminCommandService:
                 private_only=True,
             ),
         }
+        self._followers = TTLCache[str, bool](maxsize=1024, ttl=_FOLLOWER_TTL)
         logger.info(f"Admin initialized: Command groups: {len(self._commands)}")
 
     def _help_text(self) -> str:
@@ -137,6 +149,19 @@ class AdminCommandService:
         if (normalized := user_id.strip().lower()) and normalized not in blacklist:
             await self.bot.settings.update({key: [*blacklist, normalized]})
 
+    async def _is_follower(self, user_id: str | None) -> bool:
+        if not user_id:
+            return False
+        if (cached := self._followers.get(user_id)) is not None:
+            return cached
+        try:
+            user = await self.bot.misskey.show_user(user_id)
+        except Exception as e:
+            logger.warning(f"Follower check failed: user={user_id}: {e}")
+            return False
+        self._followers[user_id] = followed = bool(user.get("isFollowed"))
+        return followed
+
     async def handle_slash_command(
         self,
         text: str,
@@ -146,15 +171,21 @@ class AdminCommandService:
         handle: str | None,
         private: bool,
     ) -> Reply | None:
+        if not _is_slash_command(text):
+            return None
+        handle = self._canonical_handle(username, handle) or handle
+        admin = bool(user_id and self._is_authorized(user_id, handle))
+        if not admin and not await self._is_follower(user_id):
+            logger.info(f"Ignored slash command from non-follower: @{username}")
+            return Reply("")
         if not (parsed := _extract_slash_command(text)):
             return None
         name, argument = parsed
-        if not argument or not (command := self._slash_commands.get(name)):
+        if not (command := self._slash_commands.get(name)):
             return None
         if command.private_only and not private:
             return Reply("")
-        handle = self._canonical_handle(username, handle) or handle
-        if not user_id or not self._is_authorized(user_id, handle):
+        if not admin:
             return Reply("您没有权限使用命令。")
         return await command.run(argument)
 

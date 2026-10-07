@@ -7,9 +7,12 @@ description: 运行 TwipsyBot 的 pytest、Pyright、锁文件与 pre-commit 检
 
 ```bash
 uv run --locked pytest -q
-uv run --locked pytest tests/test_plugin.py -q
+uv run --locked pytest tests/core -q
+uv run --locked pytest tests/plugins -q
 uv run --locked pytest -k auto_post -q
 ```
+
+`tests/core/` 覆盖核心与插件框架，`tests/plugins/` 按插件拆分。
 
 `tests/conftest.py` 提供配置工厂、临时插件目录、机器人构造器与模拟 Misskey 服务，网络行为一律通过模拟服务验证。
 

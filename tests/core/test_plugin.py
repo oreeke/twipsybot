@@ -67,6 +67,24 @@ async def test_misskey_service_adapter_sends_message() -> None:
     send_message.assert_awaited_once_with("admin-id", "alert")
 
 
+async def test_misskey_service_adapter_user_endpoints() -> None:
+    show_user = AsyncMock(return_value={"id": "u1"})
+    update_user_memo = AsyncMock(return_value=None)
+    service = MisskeyServiceAdapter(
+        SimpleNamespace(
+            drive=SimpleNamespace(),
+            show_user=show_user,
+            update_user_memo=update_user_memo,
+        )
+    )
+
+    assert await service.show_user("u1") == {"id": "u1"}
+    await service.update_user_memo("u1", "memo")
+
+    show_user.assert_awaited_once_with("u1")
+    update_user_memo.assert_awaited_once_with("u1", "memo")
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [

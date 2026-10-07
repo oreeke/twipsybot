@@ -4,6 +4,7 @@ import itertools
 from collections.abc import AsyncIterator
 from pathlib import Path
 from textwrap import indent
+from types import SimpleNamespace
 from typing import Any, Protocol
 
 import pytest
@@ -22,6 +23,7 @@ __all__ = (
     "MakeBot",
     "MakePluginDir",
     "WriteConfig",
+    "plugin_context",
     "set_plugin_config",
 )
 
@@ -87,6 +89,10 @@ def _build_misskey_app(
             "chat/messages/user-timeline": lambda payload: [],
             "chat/messages/room-timeline": lambda payload: [],
             "antennas/list": lambda payload: [],
+            "users/show": lambda payload: {
+                "id": payload.get("userId"),
+                "isFollowed": True,
+            },
         }
     )
 
@@ -293,3 +299,16 @@ async def make_bot(tmp_path: Path) -> AsyncIterator[MakeBot]:
         await bot.misskey.close()
         await bot.openai.close()
         await bot.db.close()
+
+
+def plugin_context(config: dict[str, Any], **services: Any) -> Any:
+    defaults = {
+        "name": "Test",
+        "config": config,
+        "storage": SimpleNamespace(),
+        "misskey": SimpleNamespace(),
+        "openai": SimpleNamespace(),
+        "bot": SimpleNamespace(),
+    }
+    defaults.update(services)
+    return SimpleNamespace(**defaults)

@@ -226,6 +226,12 @@ class MisskeyAPI:
     async def get_current_user(self) -> dict[str, Any]:
         return await self.make_read_request("i", {})
 
+    async def show_user(self, user_id: str) -> dict[str, Any]:
+        return await self.make_read_request("users/show", {"userId": user_id})
+
+    async def update_user_memo(self, user_id: str, memo: str | None) -> None:
+        await self.make_request("users/update-memo", {"userId": user_id, "memo": memo})
+
     async def list_antennas(self) -> list[dict[str, Any]]:
         now = time.monotonic()
         if now < self._antennas_cache_expires_at and self._antennas_cache:

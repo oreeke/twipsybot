@@ -750,6 +750,77 @@ async def test_slash_command_authentication_precedes_plugins(
     assert openai_server.calls == []
 
 
+@pytest.mark.parametrize(
+    ("handler", "event"),
+    [
+        ("chat", {**_CHAT_MESSAGE, "text": "/web 你好"}),
+        ("chat", {**_CHAT_MESSAGE, "text": "/bond"}),
+        ("mention", {**_MENTION_NOTE, "text": "@testbot /forget"}),
+    ],
+    ids=("chat-plugin", "chat-bare", "mention"),
+)
+async def test_slash_commands_ignore_non_followers(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+    handler: str,
+    event: dict[str, Any],
+) -> None:
+    misskey_server.set_response("users/show", lambda payload: {"isFollowed": False})
+    bot = await make_bot(write_config())
+    bot.plugin_manager.call_plugin_hook = AsyncMock()
+
+    await getattr(bot, handler).handle(event)
+
+    bot.plugin_manager.call_plugin_hook.assert_not_awaited()
+    assert openai_server.calls == []
+    assert "notes/create" not in misskey_server.calls
+    assert "chat/messages/create-to-user" not in misskey_server.calls
+
+
+async def test_slash_follower_gate_exempts_admins(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    misskey_server.set_response("users/show", lambda payload: {"isFollowed": False})
+    bot = await make_bot(
+        write_config(bot={"image_model": "gpt-image-1", "admins": ["user-2"]})
+    )
+    bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
+    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": "file-1"})
+
+    await bot.chat.handle({**_CHAT_MESSAGE, "text": "/img 一只猫"})
+
+    bot.openai.generate_image.assert_awaited_once_with("一只猫")
+    assert "users/show" not in misskey_server.calls
+
+
+async def test_slash_follower_check_is_cached_and_fails_closed(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    bot = await make_bot(write_config())
+
+    await bot.chat.handle(dict(_CHAT_MESSAGE))
+    assert "users/show" not in misskey_server.calls
+
+    for message_id, text in (("msg-2", "/web 你好"), ("msg-3", "/bond")):
+        await bot.chat.handle({**_CHAT_MESSAGE, "id": message_id, "text": text})
+    assert misskey_server.calls["users/show"] == [{"userId": "user-2"}]
+    assert len(openai_server.calls) == 3
+
+    bot.admin._followers.clear()
+    bot.misskey.show_user = AsyncMock(side_effect=RuntimeError("down"))
+    await bot.chat.handle({**_CHAT_MESSAGE, "id": "msg-4", "text": "/web 你好"})
+
+    assert len(openai_server.calls) == 3
+
+
 async def test_admin_and_slash_commands_bypass_response_limits(
     make_bot: MakeBot,
     write_config: WriteConfig,

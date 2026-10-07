@@ -62,6 +62,10 @@ class MisskeyService(Protocol):
 
     async def send_message(self, user_id: str, text: str) -> dict[str, Any]: ...
 
+    async def show_user(self, user_id: str) -> dict[str, Any]: ...
+
+    async def update_user_memo(self, user_id: str, memo: str | None) -> None: ...
+
 
 class OpenAIService(Protocol):
     @property

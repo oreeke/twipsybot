@@ -68,7 +68,7 @@ export default withMermaid(
             link: "/user-guide/features/",
             items: [
               {
-                text: "提及、聊天与访问控制",
+                text: "提及、聊天与限制",
                 link: "/user-guide/features/interactions",
               },
               {
@@ -89,6 +89,7 @@ export default withMermaid(
             text: "插件",
             link: "/user-guide/plugins/",
             items: [
+              { text: "Bond", link: "/user-guide/plugins/bond" },
               { text: "Iincho", link: "/user-guide/plugins/iincho" },
               { text: "KeyAct", link: "/user-guide/plugins/keyact" },
               { text: "Radar", link: "/user-guide/plugins/radar" },

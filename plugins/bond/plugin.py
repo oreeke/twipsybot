@@ -90,7 +90,6 @@ _Level = Annotated[
 
 
 class _Config(PluginConfig):
-    weights: _Weights = _Weights()
     daily_cap: NonNegativeFloat = 10.0
     half_life_days: PositiveFloat = 30.0
     levels: Annotated[tuple[_Level, ...], LineText] = Field(
@@ -101,6 +100,7 @@ class _Config(PluginConfig):
     context_max_chars: Annotated[int, Field(ge=100, le=3000)] = 600
     memo_sync: bool = False
     opt_out_tags: tuple[str, ...] = ("#nobot", "#noai")
+    weights: _Weights = _Weights()
 
 
 class _Profile(BaseModel):

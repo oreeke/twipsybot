@@ -13,15 +13,6 @@ description: 使用 Bond 记录 TwipsyBot 与用户的互动、亲密度与关�
 plugins:
   bond:
     enabled: true
-    weights:
-      chat: 1
-      mention: 1
-      reply: 1
-      quote: 1.5
-      renote: 1
-      reaction: 0.5
-      follow: 5
-      unfollow: 10
     daily_cap: 10
     half_life_days: 30
     levels: |-
@@ -37,11 +28,19 @@ plugins:
     opt_out_tags:
       - "#nobot"
       - "#noai"
+    weights:
+      chat: 1
+      mention: 1
+      reply: 1
+      quote: 1.5
+      renote: 1
+      reaction: 0.5
+      follow: 5
+      unfollow: 10
 ```
 
 | 字段 | 说明 |
 | --- | --- |
-| `weights` | 各类互动的加分；`unfollow` 为取消关注时的扣分 |
 | `daily_cap` | 每位用户每日最多加分，防止刷分 |
 | `half_life_days` | 亲密度半衰期，长期不互动会逐渐冷却 |
 | `levels` | 每行 `分数 = 名称`，亲密度达到分数即进入该等级 |
@@ -50,6 +49,7 @@ plugins:
 | `context_max_chars` | 关系档案最大字数 |
 | `memo_sync` | 等级变化时写入 Misskey 个人备注 |
 | `opt_out_tags` | 简介含任一标签的用户不被记录 |
+| `weights` | 各类互动的加分；`unfollow` 为取消关注时的扣分 |
 
 ## 记录
 

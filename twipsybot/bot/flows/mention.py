@@ -74,27 +74,31 @@ class MentionHandler:
             parts.append(t)
         return "\n\n".join(parts).strip()
 
+    async def _related_note_text(
+        self, note_data: dict[str, Any], key: str, label: str
+    ) -> str:
+        if isinstance(inline := note_data.get(key), dict):
+            return extract_note_text(inline, include_cw=True)
+        if not isinstance((note_id := note_data.get(f"{key}Id")), str) or not note_id:
+            return ""
+        try:
+            related = await self.bot.misskey.get_note(note_id)
+        except Exception as e:
+            logger.debug(f"Failed to fetch {label} note: {note_id} - {e}")
+            return ""
+        return extract_note_text(related, include_cw=True)
+
     async def _build_mention_prompt(self, text: str, note: dict[str, Any]) -> str:
         note_data = normalize_payload(note)
-        base = text.strip()
-        if not note_data:
-            return base
-        quoted_text = ""
-        quoted = note_data.get("renote")
-        if isinstance(quoted, dict):
-            quoted_text = extract_note_text(quoted, include_cw=True)
-        elif isinstance((quoted_id := note_data.get("renoteId")), str) and quoted_id:
-            try:
-                quoted_note = await self.bot.misskey.get_note(quoted_id)
-            except Exception as e:
-                logger.debug(f"Failed to fetch quoted note: {quoted_id} - {e}")
-            else:
-                quoted_text = extract_note_text(quoted_note, include_cw=True)
-        if not quoted_text:
-            return base
-        if base:
-            return f"{base}\n\nQuote:\n{quoted_text}".strip()
-        return f"Quote:\n{quoted_text}".strip()
+        parts = [text.strip()]
+        if note_data:
+            if quoted := await self._related_note_text(note_data, "renote", "quoted"):
+                parts.append(f"Quote:\n{quoted}")
+            if not self._is_reply_to_bot(note_data) and (
+                parent := await self._related_note_text(note_data, "reply", "parent")
+            ):
+                parts.append(f"Replying to:\n{parent}")
+        return "\n\n".join(p for p in parts if p)
 
     async def handle(self, note: dict[str, Any]) -> None:
         if not self.bot.config.get(ConfigKeys.REPLY_MENTION):

@@ -1017,6 +1017,53 @@ async def test_reply_to_bot_triggers_ai_reply(
     assert reply["text"] == DEFAULT_AI_REPLY
 
 
+@pytest.mark.parametrize("inline", (True, False))
+async def test_mention_in_reply_to_third_party_includes_parent(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    openai_server: FakeOpenAIServer,
+    monkeypatch: pytest.MonkeyPatch,
+    inline: bool,
+) -> None:
+    bot = await make_bot(write_config())
+    parent = {"text": "第三方原帖", "user": {"id": "user-9", "username": "carol"}}
+    get_note = AsyncMock(side_effect=lambda note_id: parent | {"id": note_id})
+    monkeypatch.setattr(bot.misskey, "get_note", get_note)
+    note = {
+        **_MENTION_NOTE,
+        "text": "@testbot 翻译一下",
+        "replyId": "parent-1",
+        **({"reply": parent} if inline else {}),
+    }
+
+    await bot.mention.handle({"type": "mention", "note": note})
+
+    prompt = openai_server.calls[0]["messages"][-1]["content"]
+    assert prompt == "@testbot 翻译一下\n\nReplying to:\n第三方原帖"
+    assert get_note.await_count == (1 if inline else 2)
+
+
+async def test_mention_ignores_unavailable_parent(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    openai_server: FakeOpenAIServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot = await make_bot(write_config())
+
+    async def get_note(note_id: str) -> dict[str, Any]:
+        if note_id == "parent-1":
+            raise APIBadRequestError("NO_SUCH_NOTE: No such note.")
+        return {"visibility": "public"}
+
+    monkeypatch.setattr(bot.misskey, "get_note", get_note)
+    note = {**_MENTION_NOTE, "replyId": "parent-1"}
+
+    await bot.mention.handle({"type": "mention", "note": note})
+
+    assert openai_server.calls[0]["messages"][-1]["content"] == "@testbot 你好"
+
+
 async def test_plugin_reply_to_bot_does_not_mention_sender(
     make_bot: MakeBot,
     make_plugin_dir: MakePluginDir,

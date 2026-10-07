@@ -26,7 +26,7 @@ description: TwipsyBot 使用的 OpenAI 兼容 API、接口模式、多模态能
 | `auto` · `responses` | 优先 Responses，不可用时回退 Chat Completions |
 | `chat` | 直接使用 Chat Completions |
 
-- Responses 返回 `404`、`405`、`501` 或明确不支持时，当前客户端实例改用 Chat Completions；认证、参数与响应格式错误不触发回退。
+- Responses 返回 `404`、`405`、`501` 时，当前客户端实例改用 Chat Completions；认证、参数与响应格式错误不触发回退。
 - 回退时多模态消息转换：`input_text` → `text`，`input_image` → `image_url`。
 - 仅提供 Chat Completions 的服务设为 `chat`，可省去首次探测。
 

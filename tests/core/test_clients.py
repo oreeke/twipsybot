@@ -989,18 +989,6 @@ async def test_streaming_startup_failure_closes_initialized_services(
     bot.db.close.assert_awaited_once()
 
 
-@pytest.mark.parametrize(
-    "message",
-    (
-        "Model does not support the Responses API",
-        "This model doesn't support the Responses API",
-        "Responses API is not supported",
-    ),
-)
-def test_responses_unavailable_recognizes_model_capability(message: str) -> None:
-    assert OpenAIAPI._is_responses_unavailable(_BadRequest(message))
-
-
 def test_responses_unavailable_rejects_parameter_error() -> None:
     assert not OpenAIAPI._is_responses_unavailable(
         _BadRequest("Invalid max_output_tokens")

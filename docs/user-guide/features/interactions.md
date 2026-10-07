@@ -5,7 +5,7 @@ description: 配置 TwipsyBot 的提及与聊天回复、上下文、回复限�
 
 # 提及、聊天与限制
 
-## 回复
+## 对话
 
 - `reply.mention` 控制帖子中的 `@提及`，`reply.chat` 控制私聊与群聊。
 - 群聊消息须提及机器人，才会触发回复、插件或 `/img`。
@@ -30,10 +30,6 @@ description: 配置 TwipsyBot 的提及与聊天回复、上下文、回复限�
 - 白名单与 `bot.admins` 豁免间隔和轮数限制；黑名单禁用普通 AI 回复。
 - 支持用户 ID、`username@host` 或 `@username@host`；推荐用户 ID，用户名不区分大小写。
 - 白名单不授予管理权限，管理权限仅由 `bot.admins` 决定。
-
-## 插件优先
-
-KeyAct（850）与 Vision（750）先于 AI 处理提及和聊天；插件返回回复后，后续插件与 AI 不再处理该事件。Web（500）不接管回复，仅在 AI 回复前补充联网检索资料。
 
 ## 示例
 

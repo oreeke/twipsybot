@@ -1,7 +1,7 @@
 <div align="center">
 
 <p>
-    <img src="assets/twipsybot.png" alt="TwipsyBot" width="200" height="200">
+    <img src="docs/public/twipsybot.png" alt="TwipsyBot" width="200" height="200">
 </p>
 
 <h1>TwipsyBot</h1>

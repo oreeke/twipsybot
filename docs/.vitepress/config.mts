@@ -29,8 +29,8 @@ export default withMermaid(
         "link",
         {
           rel: "icon",
-          type: "image/svg+xml",
-          href: "https://r2-img.oreeke.com/OREEkE-logo.svg",
+          type: "image/png",
+          href: "/favicon.png",
         },
       ],
       ["meta", { name: "author", content: "OREEkE" }],

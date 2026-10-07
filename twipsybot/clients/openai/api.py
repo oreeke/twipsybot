@@ -194,25 +194,7 @@ class OpenAIAPI:
 
     @staticmethod
     def _is_responses_unavailable(error: Any) -> bool:
-        if getattr(error, "status_code", None) in {404, 405, 501}:
-            return True
-        code = getattr(error, "code", None)
-        if code in {"unsupported_api", "unsupported_endpoint", "not_implemented"}:
-            return True
-        message = str(error).lower()
-        return any(
-            marker in message
-            for marker in (
-                "responses api is not supported",
-                "responses api not supported",
-                "does not support the responses api",
-                "doesn't support the responses api",
-                "does not support responses api",
-                "unsupported endpoint: /responses",
-                "unknown endpoint: /responses",
-                "unrecognized request url: /v1/responses",
-            )
-        )
+        return getattr(error, "status_code", None) in {404, 405, 501}
 
     async def _call_api(
         self,

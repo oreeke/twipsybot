@@ -8,7 +8,7 @@ services:
       - TZ=Asia/Shanghai                        # 时区，影响定时发帖、每日计数重置等
     volumes:
       - twipsybot:/app/data                     # 设置、连接信息、数据库与日志
-      - ./prompts:/app/prompts:ro               # 可选，提示词文件及 Topics 自定义 topics.txt
+      - ./prompts:/app/prompts:ro               # 可选，提示词文件及 Topics 自定义 topics.md
 
 # 启动后使用 TUI 修改设置：docker compose exec twipsybot twipsybot cfg
 

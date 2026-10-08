@@ -94,18 +94,29 @@ async def test_topics_txt_uses_configured_prompt(topic: str) -> None:
     assert result == {"prompt": f"Topic:\n{topic}"}
 
 
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        ({"topics.md": "md topic\n", "topics.txt": "txt topic\n"}, ["md topic"]),
+        ({"topics.txt": "txt topic\n"}, ["txt topic"]),
+    ],
+)
 async def test_topics_prefers_custom_file_from_prompts(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    files: dict[str, str],
+    expected: list[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
-    (prompts_dir / "topics.txt").write_text("custom topic\n", encoding="utf-8")
+    for name, text in files.items():
+        (prompts_dir / name).write_text(text, encoding="utf-8")
     plugin = TopicsPlugin(plugin_context({"enabled": True, "txt_ai_prefix": "{topic}"}))
 
     await plugin._load_topics()
 
-    assert plugin.topics == ["custom topic"]
+    assert plugin.topics == expected
 
 
 async def test_topics_txt_rotates_from_configured_start_line() -> None:

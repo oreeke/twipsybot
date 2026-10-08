@@ -31,10 +31,16 @@ docker compose up -d
 docker compose exec twipsybot twipsybot cfg
 ```
 
-首次启动缺少连接信息，日志提示 `Startup blocked` 并等待。在 `connect` 中填写 `misskey url`（实例根地址）、`misskey token` 与 `openai api key`，`Ctrl+S` 保存，约 2 秒后自动启动。按需修改 compose 中的 `TZ`。
+首次启动缺少连接信息，在 `connect` 中填写：
+
+`misskey url`、`misskey token`、`openai base url`、`openai api key`
+
+`bot` 中修改 `model`
+
+`Ctrl+S` 保存，约 2 秒后自动启动。按需修改 compose 中的 `TZ`。
 
 ::: tip 模型服务
-默认端点为 DeepSeek，`bot.model` 为 `deepseek-flash`。更换服务商时同时修改 `openai base url` 与 `bot.model`；留空 base url 即 OpenAI 官方。
+`connect.openai_base_url` 留空使用 OpenAI 官方端点，`bot.model` 默认使用 `gpt-6-luna`。
 :::
 
 令牌无效或权限不足时持续等待修正，实例不可达时每 60 秒重试。API 密钥与模型不在启动时校验，错误会在首次回复时写入日志：
@@ -55,13 +61,13 @@ docker compose logs -f twipsybot
 | 字段 | 作用 |
 | --- | --- |
 | `bot.model` | 文本模型 |
-| `bot.admins` | 管理员，可用 `^` 与 `/` 命令 |
+| `bot.admins` | 管理员名单，可用 `^` 与 `/` 命令 |
 | `autopost.rotation` · `autopost.schedule` | 轮转 / 定时发帖 |
 | `reply.mention` · `reply.chat` | 提及 / 聊天开关 |
 
 保存即热更新；带 `↻` 的字段（`connect`、`timeline.*`）需执行 `docker compose restart twipsybot`。详见[配置](configuration.md)。
 
-## 本地运行
+## 本地运行（可选）
 
 需要 Python 3.11+ 与 [uv](https://docs.astral.sh/uv/)：
 

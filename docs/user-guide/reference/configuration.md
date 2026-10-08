@@ -13,7 +13,7 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 | --- | --- | --- |
 | `misskey_url` | `MISSKEY_INSTANCE_URL` | 实例根地址，如 `https://misskey.example.com` |
 | `misskey_token` | `MISSKEY_ACCESS_TOKEN` | 机器人访问令牌 |
-| `openai_base_url` | `OPENAI_BASE_URL` | 默认 `https://api.deepseek.com`，留空为 OpenAI 官方 |
+| `openai_base_url` | `OPENAI_BASE_URL` | 留空使用 OpenAI 官方端点 |
 | `openai_api_key` | `OPENAI_API_KEY` | API 密钥 |
 
 环境变量（含工作目录 `.env`）优先于文件。`TZ` 决定日志与每日计数的本地时间。
@@ -22,9 +22,9 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |
-| `system_prompt` | `你是一个可爱的AI助手...` | 系统提示词，可引用 `prompts/*.txt` |
+| `system_prompt` | `你是一个可爱的AI助手...` | 系统提示词，可引用 `prompts/*.md`（或 `*.txt`） |
 | `admins` | `[]` | 管理员用户 ID 或 `username@host` |
-| `model` | `deepseek-flash` | 文本模型 |
+| `model` | `gpt-6-luna` | 文本模型 |
 | `api_mode` | `auto` | `auto` / `chat` / `responses` |
 | `max_tokens` | `2000` | 最大输出 token，须大于 0 |
 | `temperature` | `0.8` | 0–2 |
@@ -55,7 +55,7 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 | `times` | `[]` | `"HH:MM"`，主机时区，最多 24 个，相邻至少 5 分钟 |
 | `visibility` | `public` | `public` / `home` / `followers` |
 | `local_only` | `false` | 仅本地发布，不联合 |
-| `prompt` | `生成一篇有趣、有见解的社交媒体帖子。` | 可引用 `prompts/*.txt` |
+| `prompt` | `生成一篇有趣、有见解的社交媒体帖子。` | 可引用 `prompts/*.md`（或 `*.txt`） |
 
 ## reply
 

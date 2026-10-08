@@ -518,8 +518,8 @@ async def test_admin_commands_persist_to_settings(
 
     response = await handlers.set_model(bot, "reset")
 
-    assert response == "已恢复默认模型: deepseek-flash"
-    assert bot.openai.model == "deepseek-flash"
+    assert response == "已恢复默认模型: gpt-6-luna"
+    assert bot.openai.model == "gpt-6-luna"
     assert "model" not in read_settings(bot.config.settings_path)["bot"]
     assert bot.config.get(ConfigKeys.REPLY_CHAT) is False
 

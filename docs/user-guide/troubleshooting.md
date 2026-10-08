@@ -68,7 +68,7 @@ docker compose logs --tail 200 twipsybot
 ### Topics 不发帖
 
 - 已开启 `autopost.rotation` 或 `autopost.schedule`，轮转未达每日上限。
-- TXT 模式：`prompts/topics.txt` 存在。
+- TXT 模式：`prompts/topics.md`（或 `topics.txt`） 存在。
 - RSS 模式：检查 URL、网络与 HTTP 状态，条目需含标题与链接。已发布条目不会重复；AI 改写失败回退为标题，拉取失败跳过该源。
 
 ### Vision 不识图

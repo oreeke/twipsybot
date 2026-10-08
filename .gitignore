@@ -21,7 +21,9 @@ htmlcov/
 *.swp
 *.swo
 
-# Text files
+# prompt files
+prompts/
+topics.md
 *.txt
 
 # Logs

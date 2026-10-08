@@ -141,12 +141,9 @@ class _Section(BaseModel):
 
 
 class BotConfig(_Section):
-    system_prompt: str = (
-        "你是一个可爱的AI助手，运行在Misskey平台上。\n"
-        "请用简短、友好的方式发帖和回答问题。"
-    )
+    system_prompt: str = "你是一个可爱的AI助手..."
     admins: list[str] = []
-    model: str = Field(default="deepseek-flash", min_length=1)
+    model: str = Field(default="gpt-6-luna", min_length=1)
     api_mode: Literal["auto", "chat", "responses"] = "auto"
     max_tokens: int = Field(default=2000, gt=0)
     temperature: float = Field(default=0.8, ge=0, le=2)
@@ -235,7 +232,7 @@ class Secrets(BaseModel):
 
     misskey_url: str = ""
     misskey_token: SecretStr = SecretStr("")
-    openai_base_url: str = "https://api.deepseek.com"
+    openai_base_url: str = ""
     openai_api_key: SecretStr = SecretStr("")
 
     def resolve(self, field: str, env: str) -> str:
@@ -259,7 +256,7 @@ def _prompt_file(value: str, root: Path) -> Path | None:
     path = Path(value.strip())
     if (
         path.is_absolute()
-        or path.suffix.lower() != ".txt"
+        or path.suffix.lower() not in {".md", ".txt"}
         or ".." in path.parts
         or path.parts[:1] != ("prompts",)
     ):

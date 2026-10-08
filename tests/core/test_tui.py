@@ -147,7 +147,7 @@ async def test_cfg_loads_existing_values_and_resets_to_defaults(tmp_path: Path) 
         limit = app.query_one(f"#{app._ids['plugins.demo.limit']}", Input)
         assert (model.value, limit.value) == ("custom", "5")
 
-        model.value = "deepseek-flash"
+        model.value = "gpt-6-luna"
         limit.value = ""
         status = app.query_one("#status")
         await _until(pilot, lambda: "2 unsaved" in str(status.render()))

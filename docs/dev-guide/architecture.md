@@ -79,7 +79,7 @@ Linux 处理 `SIGINT`、`SIGTERM`、`SIGHUP`，Windows 处理 `SIGINT`、`SIGTER
 
 ## 热重载
 
-`SettingsReloader` 约每 2 秒检查 `settings.yaml`、`secrets.yaml` 及 `bot.system_prompt`、`autopost.prompt` 引用的 `prompts/*.txt`：
+`SettingsReloader` 约每 2 秒检查 `settings.yaml`、`secrets.yaml` 及 `bot.system_prompt`、`autopost.prompt` 引用的 `prompts/*.md`（或 `*.txt`）：
 
 - 有效变更即时应用，无效文件记录错误并保留当前设置。
 - `connect` 与 `timeline.*` 标记为需重启。

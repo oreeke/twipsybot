@@ -55,6 +55,6 @@ description: TwipsyBot 的部署、配置、功能、插件与开发文档。
 
 - 仅依赖 Misskey 访问令牌与 OpenAI 兼容 API，推荐 Docker Compose 部署。
 - 使用独立机器人账号，令牌与密钥切勿提交或公开。
-- 自动发帖、Radar、Iincho 会主动参与联邦互动，先用低频、窄天线与 `local_only` 验证。
+- 自动发帖、Radar、Iincho 会主动参与实例互动，先用低频、窄天线与 `local_only` 验证。
 - “OpenAI 兼容”仅指协议，图片、视觉与审核能力取决于所选模型和服务端。
 - 请遵守所在实例规则与联邦规范。

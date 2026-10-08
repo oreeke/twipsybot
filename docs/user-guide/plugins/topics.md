@@ -17,7 +17,7 @@ plugins:
     txt_start_line: 1
 ```
 
-`prompts/topics.txt` 每行一个主题，按顺序循环，经 `{topic}` 注入提示词（`txt_ai_prefix` 留空使用内置提示）：
+`prompts/topics.md`（或 `topics.txt`） 每行一个主题，按顺序循环，经 `{topic}` 注入提示词（`txt_ai_prefix` 留空使用内置提示）：
 
 ```text
 开源软件的长期维护

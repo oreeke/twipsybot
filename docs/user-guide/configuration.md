@@ -11,7 +11,7 @@ description: 通过 TUI 或 YAML 配置 TwipsyBot 的连接、模型、提示词
 | --- | --- |
 | `data/secrets.yaml` | `connect`：实例地址、令牌、API 密钥 |
 | `data/settings.yaml` | 其余运行设置 |
-| `prompts/*.txt` | 可被提示词字段引用 |
+| `prompts/*.md` | 可被提示词字段引用（也支持 `*.txt`） |
 
 字段详见[配置参考](reference/configuration.md)，各功能用法见[功能](features/)。
 
@@ -41,7 +41,7 @@ docker compose exec twipsybot twipsybot cfg    # Docker
 
 ```yaml
 bot:
-  model: gpt-5.4-mini
+  model: gpt-6-luna
 autopost:
   rotation: true
 reply:
@@ -58,13 +58,13 @@ reply:
 
 ## 连接信息
 
-`secrets.yaml` 与设置分离，分享 `settings.yaml` 不会泄露密钥。以下环境变量（或工作目录中的 `.env`）优先于文件，被覆盖字段在 TUI 中标为 `env` 且只读：
+以下环境变量（或工作目录中的 `.env`）优先于文件，被覆盖字段在 TUI 中标为 `env` 且只读：
 
 `MISSKEY_INSTANCE_URL` · `MISSKEY_ACCESS_TOKEN` · `OPENAI_BASE_URL` · `OPENAI_API_KEY`
 
 ## 模型
 
-- `connect.openai_base_url`：OpenAI 兼容地址，默认 DeepSeek，留空为 OpenAI 官方。
+- `connect.openai_base_url`：OpenAI 兼容地址，留空为 OpenAI 官方。
 - `bot.model`：文本模型 ID，同一端点下可用 `^model <名称>` 热切换。
 - `bot.api_mode`：通常保持 `auto`，服务仅支持某一接口时再固定为 `chat` 或 `responses`。
 
@@ -81,10 +81,12 @@ reply:
 
 ```yaml
 bot:
-  system_prompt: prompts/system.txt
+  system_prompt: prompts/system.md
 autopost:
-  prompt: prompts/auto-post.txt
+  prompt: prompts/auto-post.md
 ```
+
+支持 `.md` 与 `.txt`，文件内容原样作为提示词。
 
 Docker 示例将宿主机 `./prompts` 只读挂载到 `/app/prompts`。
 

@@ -91,7 +91,7 @@ def test_defaults_need_no_settings_file(
     )
     config.load()
 
-    assert config.get(ConfigKeys.BOT_MODEL) == "deepseek-flash"
+    assert config.get(ConfigKeys.BOT_MODEL) == "gpt-6-luna"
     assert config.get(ConfigKeys.POST_ROTATION) is False
     assert config.get(ConfigKeys.POST_SCHEDULE) is False
     assert config.get(ConfigKeys.TIMELINE_GLOBAL) is False
@@ -114,11 +114,11 @@ def test_prompt_files_resolve_from_root(
 ) -> None:
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
-    (prompts_dir / "system.txt").write_text("system from file", encoding="utf-8")
+    (prompts_dir / "system.md").write_text("system from file", encoding="utf-8")
     (prompts_dir / "post.txt").write_text("post from file", encoding="utf-8")
 
     config = write_config(
-        bot={"system_prompt": "prompts/system.txt"},
+        bot={"system_prompt": "prompts/system.md"},
         autopost={"prompt": "prompts/post.txt"},
     )
 
@@ -207,7 +207,7 @@ def test_response_limit_rejects_invalid_duration(
 
 def test_prune_drops_values_equal_to_defaults() -> None:
     raw = {
-        "bot": {"model": "deepseek-flash", "temperature": 1.1},
+        "bot": {"model": "gpt-6-luna", "temperature": 1.1},
         "autopost": {"interval": "180", "daily_max": 3},
         "timeline": {"global": False},
         "plugins": {"demo": {"enabled": True}},

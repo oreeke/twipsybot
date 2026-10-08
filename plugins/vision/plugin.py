@@ -3,6 +3,7 @@ from typing import Any
 
 from loguru import logger
 from pydantic import ByteSize, Field, field_validator
+from pydantic_core import PydanticCustomError
 
 from twipsybot.plugin import (
     FileRef,
@@ -24,7 +25,7 @@ class _Config(PluginConfig):
     @classmethod
     def _reject_boolean_size(cls, value: Any) -> Any:
         if isinstance(value, bool):
-            raise ValueError("must be a byte size")
+            raise PydanticCustomError("byte_size", "must be a byte size")
         return value
 
 

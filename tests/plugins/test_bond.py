@@ -23,7 +23,7 @@ ALICE = UserRef(id="u1", username="alice", host=None)
 
 class Clock:
     def __init__(self) -> None:
-        self.now = datetime(2026, 10, 7, 12).timestamp()
+        self.now = datetime(2026, 10, 7, 12).astimezone().timestamp()
 
     def time(self) -> float:
         return self.now
@@ -33,7 +33,7 @@ class Clock:
 
     @property
     def today(self) -> date:
-        return date.fromtimestamp(self.now)
+        return bond_module._day(self.now)
 
 
 @pytest.fixture
@@ -331,7 +331,7 @@ async def test_bond_adopts_migrated_alias(
 
 
 async def test_bond_retries_profile_after_failure(db: DBManager, clock: Clock) -> None:
-    plugin, misskey, users = await _plugin(db)
+    plugin, misskey, _ = await _plugin(db)
     misskey.show_user.side_effect = RuntimeError("down")
 
     await plugin.on_message(_chat())

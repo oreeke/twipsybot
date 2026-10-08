@@ -129,12 +129,12 @@ class RadarPlugin(PluginBase):
 
     async def on_timeline_note(self, event: TimelineNoteEvent) -> None:
         if event.channel != "antenna" or not event.id:
-            return None
+            return
         if self._should_skip_self(event) or event.id in self._pending:
-            return None
+            return
         if len(self._pending) >= _MAX_PENDING:
             logger.debug(f"Radar pending queue full; skipping {event.id}")
-            return None
+            return
         note_id = event.id
         task = asyncio.create_task(
             self._delayed_act(event), name=f"plugin-{self.context.name}-{note_id}"

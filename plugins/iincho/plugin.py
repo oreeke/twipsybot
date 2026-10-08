@@ -334,11 +334,9 @@ class IinchoPlugin(PluginBase):
 
     @staticmethod
     def _validate_trends(value: Any) -> list[str]:
-        if not isinstance(value, dict):
-            raise ValueError("AI result must be an object")
-        trends = value.get("trends")
-        if set(value) != {"trends"}:
+        if not isinstance(value, dict) or set(value) != {"trends"}:
             raise ValueError("AI result has invalid fields")
+        trends = value["trends"]
         if not isinstance(trends, list) or not 1 <= len(trends) <= 5:
             raise ValueError("AI result has invalid trends")
         if not all(isinstance(item, str) and item.strip() for item in trends):

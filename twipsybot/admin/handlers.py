@@ -106,13 +106,17 @@ def status_text(bot: "Neuro") -> str:
     events = bot.streaming.events.status()
     parts = [
         f"版本  {package_version('twipsybot')}",
-        f"状态  {_light(healthy=running)} {'运行中' if running else '未运行'}"
-        f" · {_format_duration(uptime)}",
+        (
+            f"状态  {_light(healthy=running)} {'运行中' if running else '未运行'}"
+            f" · {_format_duration(uptime)}"
+        ),
         f"连接  {connection} {bot.streaming.state}",
         task_status_text(bot),
-        f"事件  worker {events['workers_alive']}/{events['workers_total']}"
-        f" · busy {events['busy_workers']}"
-        f" · queue {events['queue_size']}/{events['queue_capacity']}",
+        (
+            f"事件  worker {events['workers_alive']}/{events['workers_total']}"
+            f" · busy {events['busy_workers']}"
+            f" · queue {events['queue_size']}/{events['queue_capacity']}"
+        ),
         "",
     ]
     if bot.bot_username:
@@ -217,7 +221,7 @@ def _created_at(note: dict[str, Any]) -> datetime | None:
     if not isinstance(value := note.get("createdAt"), str):
         return None
     try:
-        created_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        created_at = datetime.fromisoformat(value)
     except ValueError:
         return None
     return created_at if created_at.tzinfo else created_at.replace(tzinfo=UTC)

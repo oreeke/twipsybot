@@ -112,7 +112,7 @@ async def test_web_manual_command_searches_and_strips_prefix(
     make_web: Make,
 ) -> None:
     app = _app([{"title": "T", "url": "https://example.com/a", "content": "snip"}])
-    plugin, server = await make_web(app)
+    plugin, _ = await make_web(app)
 
     result = await _on_context(plugin, ("@bot /web  今天的新闻"))
 
@@ -126,12 +126,12 @@ async def test_web_always_on_toggle(
     make_web: Make,
 ) -> None:
     results = [{"title": "T", "url": "https://example.com/a", "content": "c"}]
-    plugin, server = await make_web(_app(results))
+    plugin, _ = await make_web(_app(results))
 
     assert await _on_context(plugin, ("今天天气怎么样")) is None
     assert await _on_context(plugin, ("/web")) is None
 
-    always, always_server = await make_web(_app(results), {"always_on": True})
+    always, _ = await make_web(_app(results), {"always_on": True})
     result = await _on_context(always, ("今天天气怎么样"))
     assert result is not None
     assert "text" not in result
@@ -143,7 +143,7 @@ async def test_web_rewrite_query(
 ) -> None:
     generate = AsyncMock(return_value='"weather beijing"\nextra')
     app = _app([{"title": "T", "url": "https://example.com/a"}])
-    plugin, server = await make_web(
+    plugin, _ = await make_web(
         app,
         {"query_mode": "rewrite"},
         generate_text=generate,
@@ -164,7 +164,7 @@ async def test_web_failed_search_degrades(
     make_web: Make,
 ) -> None:
     app = web.Application()
-    plugin, server = await make_web(app)
+    plugin, _ = await make_web(app)
 
     assert await _on_context(plugin, ("普通的一句话")) is None
     result = await _on_context(plugin, ("/web 查询失败"))
@@ -174,9 +174,7 @@ async def test_web_failed_search_degrades(
         "text": "查询失败",
     }
 
-    custom, custom_server = await make_web(
-        web.Application(), {"empty_prompt": "  没找到  "}
-    )
+    custom, _ = await make_web(web.Application(), {"empty_prompt": "  没找到  "})
     result = await _on_context(custom, ("/web 查询失败"))
     assert result is not None
     assert result["context"] == "<web_results>没找到</web_results>"

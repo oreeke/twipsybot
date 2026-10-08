@@ -79,7 +79,9 @@ class LogTail(Log):
     def search(self, keyword: str) -> None:
         if (keyword := keyword.strip()) != self._keyword:
             self._keyword, self._hit = keyword, None
-            self.pattern = re.compile(re.escape(keyword), re.I) if keyword else None
+            self.pattern = (
+                re.compile(re.escape(keyword), re.IGNORECASE) if keyword else None
+            )
             self.refresh_lines(0, len(self.lines))
         if not (pattern := self.pattern):
             return

@@ -337,7 +337,7 @@ class TopicsPlugin(PluginBase):
             if t:
                 try:
                     return int(calendar.timegm(t))
-                except Exception:
+                except (TypeError, ValueError, OverflowError):
                     continue
         return 0
 

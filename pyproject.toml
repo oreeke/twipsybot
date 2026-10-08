@@ -1,6 +1,6 @@
 [project]
 name = "twipsybot"
-version = "0.16.3"
+version = "0.16.4"
 description = "AI-powered Misskey bot with OpenAI-compatible LLMs."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -44,13 +44,11 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.ruff]
-target-version = "py311"
-line-length = 88
 extend-exclude = ["data", "logs"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
-ignore = ["E501"]
+ignore = ["BLE001"]
+per-file-ignores = { "twipsybot/tui/*" = ["RUF012"] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

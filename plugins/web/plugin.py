@@ -24,8 +24,10 @@ from twipsybot.plugin import (
     PluginConfig,
 )
 
-_COMMAND = re.compile(r"^(?P<head>(?:@\S+\s+)*)/web\s+(?P<rest>\S.*)$", re.I | re.S)
-_URL = re.compile(r"https?://[^\s<>\"'`\])）」]+", re.I)
+_COMMAND = re.compile(
+    r"^(?P<head>(?:@\S+\s+)*)/web\s+(?P<rest>\S.*)$", re.IGNORECASE | re.DOTALL
+)
+_URL = re.compile(r"https?://[^\s<>\"'`\])）」]+", re.IGNORECASE)
 _MENTION = re.compile(r"(?<!\S)@\S+")
 _NOISE = [
     "script",

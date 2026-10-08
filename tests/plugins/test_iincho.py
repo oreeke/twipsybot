@@ -4,7 +4,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from types import MappingProxyType, SimpleNamespace
-from typing import Any
+from typing import Any, Self
 from unittest.mock import AsyncMock
 
 import pytest
@@ -487,14 +487,14 @@ async def test_iincho_cloudflare_limits_concurrency() -> None:
         ok = True
         status = 200
 
-        async def __aenter__(self) -> _Response:
+        async def __aenter__(self) -> Self:
             nonlocal active, peak
             active += 1
             peak = max(peak, active)
             await asyncio.sleep(0.01)
             return self
 
-        async def __aexit__(self, *_: Any) -> None:
+        async def __aexit__(self, *_: object) -> None:
             nonlocal active
             active -= 1
 

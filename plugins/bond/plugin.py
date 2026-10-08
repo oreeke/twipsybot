@@ -2,7 +2,7 @@ import re
 import time
 from bisect import bisect_right
 from collections import Counter
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, cast
 
 from cachetools import TTLCache
@@ -145,6 +145,10 @@ def _key(user_id: str) -> str:
 def _command(text: str) -> str | None:
     words = _MENTION.sub(" ", text).split()
     return _COMMANDS.get(words[0].casefold()) if len(words) == 1 else None
+
+
+def _day(timestamp: float) -> date:
+    return datetime.fromtimestamp(timestamp, UTC).astimezone().date()
 
 
 def _clip(text: str) -> str:
@@ -328,7 +332,7 @@ class BondPlugin(PluginBase):
         bond.updated = now
 
     def _gain(self, bond: _Bond, kind: str, now: float) -> None:
-        today = date.fromtimestamp(now)
+        today = _day(now)
         if bond.day != (day := today.isoformat()):
             yesterday = (today - timedelta(days=1)).isoformat()
             bond.streak = bond.streak + 1 if bond.day == yesterday else 1
@@ -350,7 +354,7 @@ class BondPlugin(PluginBase):
             return
         previous, bond.level = bond.level, name
         if self.settings.memo_sync and (previous or index > 0):
-            tag = f"{_MEMO_TAG} {name} · {date.fromtimestamp(now)}" if name else None
+            tag = f"{_MEMO_TAG} {name} · {_day(now)}" if name else None
             await self._write_memo(user_id, tag, bond)
 
     async def _write_memo(
@@ -369,7 +373,7 @@ class BondPlugin(PluginBase):
     def _summary(self, bond: _Bond, now: float) -> list[str]:
         score = self._score(bond, now)
         _, level = self._level(score)
-        today = date.fromtimestamp(now)
+        today = _day(now)
         lines = [
             f"关系：{level}（亲密度 {score:.0f}）" if level else f"亲密度：{score:.0f}"
         ]
@@ -378,13 +382,16 @@ class BondPlugin(PluginBase):
                 f"{_LABELS.get(k, k)} {n}" for k, n in bond.counts.items()
             )
             lines.append(f"互动：{counts}")
-        facts = [f"相识于 {date.fromtimestamp(bond.first)}"] if bond.first else []
+        facts = [f"相识于 {_day(bond.first)}"] if bond.first else []
         recent = {today.isoformat(), (today - timedelta(days=1)).isoformat()}
         if bond.streak > 1 and bond.day in recent:
             facts.append(f"连续互动 {bond.streak} 天")
-        if bond.prev_day and bond.day == today.isoformat():
-            if (gap := (today - date.fromisoformat(bond.prev_day)).days) > 1:
-                facts.append(f"距上次来访 {gap} 天")
+        if (
+            bond.prev_day
+            and bond.day == today.isoformat()
+            and (gap := (today - date.fromisoformat(bond.prev_day)).days) > 1
+        ):
+            facts.append(f"距上次来访 {gap} 天")
         if facts:
             lines.append("；".join(facts))
         return lines
@@ -394,7 +401,7 @@ class BondPlugin(PluginBase):
         name = f"（{_clip(profile.name)}）" if profile and profile.name else ""
         lines = [f"对象：@{user.handle}{name}", *self._summary(bond, now)]
         if profile:
-            lines.extend(_profile_lines(profile, date.fromtimestamp(now)))
+            lines.extend(_profile_lines(profile, _day(now)))
         body = "\n".join(lines).replace("</bond>", "")[
             : self.settings.context_max_chars
         ]

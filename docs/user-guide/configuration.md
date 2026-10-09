@@ -10,7 +10,7 @@ description: 通过 TUI 或 YAML 配置 TwipsyBot 的连接、模型、提示词
 | 文件 | 内容 |
 | --- | --- |
 | `data/settings.yaml` | 一般运行设置 |
-| `data/secrets.yaml` | 所有密钥字段 |
+| `data/secrets.yaml` | 连接信息与凭据 |
 | `prompts/*.md` | 可被提示词字段引用（也支持 `*.txt`） |
 
 字段详见[配置参考](reference/configuration.md)，各功能用法见[功能](features/)。
@@ -43,7 +43,7 @@ docker compose exec twipsybot twipsybot cfg    # Docker
 bot:
   model: gpt-6-luna
 autopost:
-  rotation: true
+  mode: rotation
 reply:
   rate_limit: 30s
 ```

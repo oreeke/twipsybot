@@ -175,14 +175,14 @@ async def test_admin_status_reports_stream_task_state(
 @pytest.mark.parametrize(
     ("autopost", "count", "scheduler_state", "has_job", "expected"),
     (
-        ({"rotation": False}, 2, 1, True, "发帖  已关闭"),
+        ({"mode": "off"}, 2, 1, True, "发帖  已关闭"),
         ({}, 5, 1, True, "发帖  轮转 5/5 · 今日已达上限"),
         ({}, 2, 0, True, "发帖  轮转 2/5 · 未调度"),
         ({}, 2, 2, True, "发帖  轮转 2/5 · 未调度"),
         ({}, 2, 1, False, "发帖  轮转 2/5 · 未调度"),
         ({}, 2, 1, True, "发帖  轮转 2/5 · 下次"),
         (
-            {"rotation": False, "schedule": True, "times": ["09:00", "21:00"]},
+            {"mode": "schedule", "times": ["09:00", "21:00"]},
             9,
             1,
             True,
@@ -1021,7 +1021,7 @@ async def test_auto_post_suppresses_cancellation_during_shutdown() -> None:
     bot = SimpleNamespace(
         config=SimpleNamespace(
             get=lambda key, default=None: {
-                ConfigKeys.POST_ROTATION: True,
+                ConfigKeys.POST_MODE: "rotation",
                 ConfigKeys.POST_DAILY_MAX: 1,
                 ConfigKeys.POST_LOCAL_ONLY: False,
             }.get(key, default)
@@ -1043,7 +1043,7 @@ async def test_auto_post_propagates_cancellation_while_running() -> None:
     bot = SimpleNamespace(
         config=SimpleNamespace(
             get=lambda key, default=None: {
-                ConfigKeys.POST_ROTATION: True,
+                ConfigKeys.POST_MODE: "rotation",
                 ConfigKeys.POST_DAILY_MAX: 1,
                 ConfigKeys.POST_LOCAL_ONLY: False,
             }.get(key, default)
@@ -1068,8 +1068,7 @@ async def test_auto_post_schedule_follows_settings(
 
     settings = read_settings(bot.config.settings_path)
     settings["autopost"] = {
-        "rotation": False,
-        "schedule": True,
+        "mode": "schedule",
         "times": ["21:30", "08:00"],
     }
     write_settings(bot.config.settings_path, settings)
@@ -1083,7 +1082,7 @@ async def test_auto_post_schedule_follows_settings(
     assert (fire.hour, fire.minute) == (21, 30)
     assert bot.auto_post.mode == "schedule"
 
-    settings["autopost"] = {"rotation": False}
+    settings["autopost"] = {"mode": "off"}
     write_settings(bot.config.settings_path, settings)
     await bot.settings.reload()
 
@@ -1103,6 +1102,6 @@ async def test_admin_autopost_switches_mode(
     await bot.settings.update({ConfigKeys.POST_TIMES: ["09:00"]})
     assert await handlers.set_autopost(bot, "schedule") == "autopost: schedule"
     post = read_settings(bot.config.settings_path)["autopost"]
-    assert (post.get("rotation", False), post["schedule"]) == (False, True)
+    assert post["mode"] == "schedule"
     assert await handlers.set_autopost(bot, "off") == "autopost: off"
     assert bot.auto_post.mode == "off"

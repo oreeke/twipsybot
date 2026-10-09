@@ -5,7 +5,7 @@ import re
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import aiohttp
 import durationpy
@@ -16,6 +16,7 @@ from twipsybot.plugin import (
     PluginBase,
     PluginConfig,
     TimelineNoteEvent,
+    When,
 )
 
 _MAX_MESSAGE_LENGTH = 2000
@@ -84,9 +85,11 @@ class _Window:
 
 class _ModerationConfig(PluginConfig):
     provider: Literal["openai", "cloudflare"] = "openai"
-    cf_account_id: SecretStr = SecretStr("")
-    cf_api_token: SecretStr = SecretStr("")
-    cf_concurrency: int = Field(default=4, strict=True, ge=1, le=16)
+    cf_account_id: Annotated[SecretStr, When("provider", "cloudflare")] = SecretStr("")
+    cf_api_token: Annotated[SecretStr, When("provider", "cloudflare")] = SecretStr("")
+    cf_concurrency: Annotated[int, When("provider", "cloudflare")] = Field(
+        default=4, strict=True, ge=1, le=16
+    )
 
     @field_validator("cf_account_id")
     @classmethod

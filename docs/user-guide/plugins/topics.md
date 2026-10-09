@@ -7,24 +7,22 @@ description: 使用 Topics 从 TXT 主题或 RSS 订阅为 TwipsyBot 自动发�
 
 在自动发帖触发时提供内容源，无独立定时器，运行时机与上限遵循 `autopost`。
 
-## TXT
+## List
 
 ```yaml
 plugins:
   topics:
     enabled: true
-    source: txt
-    txt_start_line: 1
+    source: list
+    list: |-
+      开源软件的长期维护
+      prompts/topics.md
+    list_start_line: 1
 ```
 
-`prompts/topics.md`（或 `topics.txt`） 每行一个主题，按顺序循环，经 `{topic}` 注入提示词（`txt_ai_prefix` 留空使用内置提示）：
+`list` 每行一个主题或 `prompts/*.md`（`*.txt`）路径，不可为空，按顺序循环，经 `{topic}` 注入提示词（`list_ai_prefix` 留空使用内置提示）。
 
-```text
-开源软件的长期维护
-城市夜间公共交通
-```
-
-`txt_start_line` 仅在无保存进度时生效，此后进度保存在 SQLite。
+`list_start_line` 仅在无保存进度时生效，此后进度保存在 SQLite。
 
 ## RSS
 

@@ -169,12 +169,7 @@ async def set_autopost(bot: "Neuro", args: str) -> str | None:
         return None
     if mode == "schedule" and not bot.config.get(ConfigKeys.POST_TIMES):
         return "定时发帖需要先在 twipsybot cfg 中添加时间点"
-    await bot.settings.update(
-        {
-            ConfigKeys.POST_ROTATION: mode == "rotation",
-            ConfigKeys.POST_SCHEDULE: mode == "schedule",
-        }
-    )
+    await bot.settings.update({ConfigKeys.POST_MODE: mode})
     return f"autopost: {mode}"
 
 

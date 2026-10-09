@@ -20,18 +20,18 @@ docker compose logs -f --tail 200 twipsybot
 
 | 路径 | 内容 |
 | --- | --- |
-| `data/settings.yaml` | 运行设置 |
-| `data/secrets.yaml` | 连接信息与密钥 |
+| `data/settings.yaml` | 一般运行设置 |
+| `data/secrets.yaml` | 连接信息与凭据 |
 | `data/twipsybot.db` | 轮转发帖计数、回复限制状态、插件私有数据 |
 | `data/logs/twipsybot.log` | 日志 |
 
 `system.db_clear_days` 仅清理回复限制状态（最近回复时间、轮数、临时封禁）；删除数据库会重置全部状态。
 
-备份前先停止机器人，复制 `data/` 与 `prompts/`。Docker 下 `data/` 位于 `twipsybot` 命名卷，`prompts/` 在宿主机。`secrets.yaml` 含密钥，注意保密。
+备份前先停止机器人，复制 `data/` 与 `prompts/`。Docker 下 `data/` 位于 `twipsybot` 命名卷，`prompts/` 在宿主机。`secrets.yaml` 含凭据，注意保密。
 
 ## 升级
 
-先阅读 [CHANGELOG](https://github.com/oreeke/twipsybot/blob/main/CHANGELOG.md) 并备份。新增设置自动采用默认值，无需手动合并；若改过 `docker-compose.yaml`，对照最新版本保留自己的改动。
+先阅读 [CHANGELOG](https://github.com/oreeke/twipsybot/blob/main/CHANGELOG.md) 并备份。新增设置自动采用默认值，无需手动合并；已改名或移除的字段不再识别，启动被拦截时在 `twipsybot cfg` 中重新设置并保存，保存时会清除未知字段；若改过 `docker-compose.yaml`，对照最新版本保留自己的改动。
 
 ::: code-group
 

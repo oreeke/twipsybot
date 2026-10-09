@@ -29,7 +29,14 @@ from ..shared.config import (
     parse_clock,
     parse_seconds,
 )
-from ..shared.settings import deep_merge, field_key, get_dotted, prune, set_dotted
+from ..shared.settings import (
+    When,
+    deep_merge,
+    field_key,
+    get_dotted,
+    prune,
+    set_dotted,
+)
 
 __all__ = ("Kind", "Section", "Spec", "build_sections", "overlay", "to_widget")
 
@@ -62,6 +69,7 @@ class Spec:
     group: str = ""
     hint: str = ""
     file: File = "settings"
+    when: tuple[str, str] | None = None
 
     @property
     def key(self) -> str:
@@ -84,6 +92,19 @@ class Spec:
         return None if self.optional and not str(value).strip() else value
 
 
+def _unknown_paths(node: Any, known: set[str], prefix: str = "") -> Iterable[str]:
+    if not isinstance(node, Mapping):
+        return
+    for key, value in node.items():
+        rel = f"{prefix}{key}"
+        if rel in known:
+            continue
+        if any(k.startswith(f"{rel}.") for k in known):
+            yield from _unknown_paths(value, known, f"{rel}.")
+        else:
+            yield rel
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class Section:
     id: str
@@ -104,18 +125,30 @@ class Section:
     def _rel(self, spec: Spec) -> str:
         return ".".join(spec.path[len(self.path) :])
 
+    def _own(self, raw: Mapping[str, Any]) -> Any:
+        return (get_dotted(raw, self.key) if self.path else raw) or {}
+
+    def _known(self, file: File) -> set[str]:
+        return {self._rel(spec) for spec in self.specs if spec.file == file}
+
     def read(self, raws: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
         merged: dict[str, Any] = {}
         for file in self.files:
-            raw = raws[file]
-            value = deepcopy(
-                dict((get_dotted(raw, self.key) if self.path else raw) or {})
-            )
-            for spec in self.specs:
-                if spec.file != file:
-                    set_dotted(value, self._rel(spec), None)
-            merged = deep_merge(merged, value)
+            value, known = self._own(raws[file]), {}
+            for rel in self._known(file):
+                set_dotted(known, rel, deepcopy(get_dotted(value, rel)))
+            merged = deep_merge(merged, known)
         return merged
+
+    def unknown(self, raws: Mapping[str, Mapping[str, Any]]) -> list[str]:
+        found: list[str] = []
+        for file in self.files:
+            known = self._known(file) | (set() if self.path else {"plugins"})
+            found += (
+                ".".join(filter(None, (self.key, rel)))
+                for rel in _unknown_paths(self._own(raws[file]), known)
+            )
+        return sorted(found)
 
     def write(
         self, file: File, raw: dict[str, Any], pruned: Mapping[str, Any]
@@ -218,6 +251,7 @@ def _specs(
             kind, choices = "seconds", ()
         else:
             kind, choices = _classify(name, annotation, default)
+        when = next((m for m in field.metadata if isinstance(m, When)), None)
         yield Spec(
             path=sub_path,
             label=sub_path[-1].replace("_", " "),
@@ -229,6 +263,7 @@ def _specs(
             group=" ".join(sub_path[root:-1]).replace("_", " "),
             hint=field.description or "",
             file=file or ("secrets" if kind == "secret" else "settings"),
+            when=(".".join((*path, when.field)), when.value) if when else None,
         )
 
 

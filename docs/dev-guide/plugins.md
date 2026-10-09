@@ -45,7 +45,7 @@ plugins:
 
 ## 配置模型
 
-`PluginConfig` 基于 Pydantic，验证后通过只读的 `self.settings` 访问；`enabled`、`priority` 等框架字段不进入模型。TUI 依据模型自动生成表单。类型为 `SecretStr` 的字段视为密钥，只从 `data/secrets.yaml` 的 `plugins.<name>` 读取，其余字段存于 `settings.yaml`。
+`PluginConfig` 基于 Pydantic，验证后通过只读的 `self.settings` 访问；`enabled`、`priority` 等框架字段不进入模型。TUI 依据模型自动生成表单。类型为 `SecretStr` 的字段视为凭据，只从 `data/secrets.yaml` 的 `plugins.<name>` 读取，其余字段存于 `settings.yaml`。
 
 ```python
 from typing import Annotated
@@ -61,6 +61,8 @@ class ExampleConfig(PluginConfig):
 ```
 
 `LineText` 字段在 TUI 中以多行文本原样保存，验证时拆为非空行并忽略 `#` 注释行；元素需进一步解析时，可在元素类型上叠加 `BeforeValidator`。
+
+`When("mode", "a")` 加入 `Annotated`，TUI 仅在同级字段 `mode` 取值为 `a` 时显示该字段。
 
 ## Entry Points
 

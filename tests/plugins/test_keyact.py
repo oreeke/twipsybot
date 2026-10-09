@@ -12,16 +12,16 @@ def test_keyact_parses_boolean_strings() -> None:
         plugin_context(
             {
                 "enabled": True,
-                "mention_enabled": "false",
-                "chat_enabled": "true",
+                "mention": "false",
+                "chat": "true",
                 "case_sensitive": "false",
                 "rules": [],
             }
         )
     )
 
-    assert plugin.settings.mention_enabled is False
-    assert plugin.settings.chat_enabled is True
+    assert plugin.settings.mention is False
+    assert plugin.settings.chat is True
     assert plugin.settings.case_sensitive is False
 
 

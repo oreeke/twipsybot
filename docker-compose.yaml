@@ -1,14 +1,13 @@
 services:
   twipsybot:
     image: ghcr.io/oreeke/twipsybot:latest
-    # build: .                                  # 本地构建
     container_name: twipsybot
     restart: unless-stopped
     environment:
-      - TZ=Asia/Shanghai                        # 时区，影响定时发帖、每日计数重置等
+      - TZ=Asia/Shanghai                        # 时区，影响依赖本地时间的任务
     volumes:
-      - twipsybot:/app/data                     # 设置、连接信息、数据库与日志
-      - ./prompts:/app/prompts:ro               # 可选，提示词文件及 Topics 自定义 topics.md
+      - twipsybot:/app/data                     # 设置、连接凭据、数据库与日志
+      - ./prompts:/app/prompts:ro               # 可选，此目录存放 AI 提示词与发帖主题文件
 
 # 启动后使用 TUI 修改设置：docker compose exec twipsybot twipsybot cfg
 

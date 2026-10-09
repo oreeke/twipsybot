@@ -106,8 +106,7 @@ def test_defaults_need_no_settings_file(
     config.load()
 
     assert config.get(ConfigKeys.BOT_MODEL) == "gpt-6-luna"
-    assert config.get(ConfigKeys.POST_ROTATION) is False
-    assert config.get(ConfigKeys.POST_SCHEDULE) is False
+    assert config.get(ConfigKeys.POST_MODE) == "off"
     assert config.get(ConfigKeys.TIMELINE_GLOBAL) is False
     assert config.get("plugins") == {}
     assert config.log_path.parent.is_dir()
@@ -292,7 +291,7 @@ def test_fingerprint_is_taken_before_reading(
 
 def test_post_times_are_normalized_and_sorted(write_config: WriteConfig) -> None:
     config = write_config(
-        autopost={"rotation": False, "schedule": True, "times": ["21:15", 510, "7:05"]}
+        autopost={"mode": "schedule", "times": ["21:15", 510, "7:05"]}
     )
 
     assert config.get(ConfigKeys.POST_TIMES) == ["07:05", "08:30", "21:15"]
@@ -304,8 +303,8 @@ def test_post_times_are_normalized_and_sorted(write_config: WriteConfig) -> None
         ({"times": ["23:58", "00:02"]}, "at least 5m apart"),
         ({"times": [f"{h:02d}:00" for h in range(24)] + ["12:30"]}, "at most 24"),
         ({"times": ["24:00"]}, "HH:MM"),
-        ({"rotation": True, "schedule": True, "times": ["09:00"]}, "cannot both"),
-        ({"rotation": False, "schedule": True}, "at least one time"),
+        ({"mode": "schedule"}, "at least one time"),
+        ({"mode": "both"}, "mode"),
         ({"interval": "4m"}, "at least 5m"),
     ],
 )

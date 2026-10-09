@@ -5,10 +5,11 @@ from typing import Any, ClassVar
 from loguru import logger
 from pydantic import BaseModel, BeforeValidator, ConfigDict
 
+from ..shared.settings import When
 from .contracts import PluginContext
 from .events import HandledResult
 
-__all__ = ("PLUGIN_API_VERSION", "LineText", "PluginBase", "PluginConfig")
+__all__ = ("PLUGIN_API_VERSION", "LineText", "PluginBase", "PluginConfig", "When")
 
 PLUGIN_API_VERSION = 3
 

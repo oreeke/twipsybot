@@ -1312,8 +1312,7 @@ async def test_scheduled_auto_post_ignores_daily_limit(
     bot = await make_bot(
         write_config(
             autopost={
-                "rotation": False,
-                "schedule": True,
+                "mode": "schedule",
                 "times": ["09:00"],
                 "daily_max": 0,
             }

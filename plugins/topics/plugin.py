@@ -9,7 +9,7 @@ import aiohttp
 import feedparser
 from bs4 import BeautifulSoup
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from twipsybot.plugin import (
     AutoPostEvent,
@@ -18,12 +18,14 @@ from twipsybot.plugin import (
     PluginBase,
     PluginConfig,
     PromptModificationResult,
+    When,
 )
 
+_TOPIC_SUFFIXES = {".md", ".txt"}
 _RSS_TIMEOUT = aiohttp.ClientTimeout(total=60)
 _RSS_HEADERS = {"User-Agent": "Twipsy-RSS"}
 _RSS_RECENT_KEYS_LIMIT = 2000
-_TXT_AI_PREFIX = "以{topic}为主题，"
+_LIST_AI_PREFIX = "以{topic}为主题，"
 _RSS_AI_PREFIX = (
     "发表一段感想和相关知识，不超过150字。\n"
     "不加链接，不加引号：\n\n{summary}\n\n{title}\n{link}"
@@ -31,15 +33,31 @@ _RSS_AI_PREFIX = (
 
 
 class _Config(PluginConfig):
-    source: Literal["txt", "rss"] = "txt"
-    txt_ai_prefix: str = Field("", description=_TXT_AI_PREFIX)
-    txt_start_line: int = Field(1, ge=1)
-    rss_list: Annotated[tuple[str, ...], LineText] = Field(
+    source: Literal["list", "rss"] = "list"
+    topics: Annotated[tuple[str, ...], When("source", "list")] = Field(
+        (), validation_alias="list", description="topic per line, or prompts/*.md"
+    )
+    list_ai_prefix: Annotated[str, When("source", "list")] = Field(
+        "", description=_LIST_AI_PREFIX
+    )
+    list_start_line: Annotated[int, When("source", "list")] = Field(1, ge=1)
+    rss_list: Annotated[tuple[str, ...], LineText, When("source", "rss")] = Field(
         default=(), description="https://example.com/feed.xml"
     )
-    rss_ai: bool = False
-    rss_post_mode: Literal["batch", "rotate"] = "rotate"
-    rss_ai_prefix: str = Field("", description=_RSS_AI_PREFIX)
+    rss_ai: Annotated[bool, When("source", "rss")] = False
+    rss_post_mode: Annotated[Literal["batch", "rotate"], When("source", "rss")] = (
+        "rotate"
+    )
+    rss_ai_prefix: Annotated[str, When("source", "rss")] = Field(
+        "", description=_RSS_AI_PREFIX
+    )
+
+    @field_validator("topics", mode="before")
+    @classmethod
+    def _split_topics(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [s for line in value.splitlines() if (s := line.strip())]
+        return value
 
 
 class TopicsPlugin(PluginBase):
@@ -61,10 +79,10 @@ class TopicsPlugin(PluginBase):
                 )
                 details = f"RSS feeds: {len(self.settings.rss_list)}"
             else:
-                await self._load_topics()
-                initial_index = max(0, self.settings.txt_start_line - 1)
-                if self.topics:
-                    initial_index %= len(self.topics)
+                self.topics = self._configured_topics()
+                if not self.topics:
+                    raise ValueError("list is empty")
+                initial_index = (self.settings.list_start_line - 1) % len(self.topics)
                 await self._initialize_storage({"last_used_line": str(initial_index)})
                 details = f"Custom topics: {len(self.topics)}"
             self._log_plugin_action("initialized", details)
@@ -85,7 +103,7 @@ class TopicsPlugin(PluginBase):
             topic = await self._get_next_topic()
             return {
                 "prompt": (
-                    self.settings.txt_ai_prefix.strip() or _TXT_AI_PREFIX
+                    self.settings.list_ai_prefix.strip() or _LIST_AI_PREFIX
                 ).format(topic=topic),
             }
         except Exception as e:
@@ -101,36 +119,27 @@ class TopicsPlugin(PluginBase):
             logger.warning(f"Topics plugin storage initialization failed: {e}")
             raise
 
-    def _use_default_topics(self) -> None:
-        self.topics = ["Technology", "Life", "Learning", "Reflection", "Innovation"]
-        logger.info(f"Using default topics: {self.topics}")
+    def _configured_topics(self) -> list[str]:
+        topics: list[str] = []
+        for entry in self.settings.topics:
+            path = Path(entry)
+            if (
+                path.parts[:1] == ("prompts",)
+                and path.suffix.lower() in _TOPIC_SUFFIXES
+                and ".." not in path.parts
+            ):
+                try:
+                    topics += self._read_lines(path)
+                except OSError as e:
+                    logger.warning(f"Failed to read topics file {entry}: {e}")
+            else:
+                topics.append(entry)
+        return topics
 
-    async def _load_topics(self) -> None:
-        try:
-            topics_file_path = next(
-                (
-                    path
-                    for base in (Path("prompts"), Path(__file__).parent)
-                    for name in ("topics.md", "topics.txt")
-                    if (path := base / name).is_file()
-                ),
-                None,
-            )
-            if topics_file_path is None:
-                logger.warning("Topics file not found")
-                self._use_default_topics()
-                return
-            content = topics_file_path.read_text(encoding="utf-8")
-            self.topics = [
-                line.strip() for line in content.splitlines() if line.strip()
-            ]
-            if not self.topics:
-                logger.warning("Topics file is empty")
-                self._use_default_topics()
-                return
-        except Exception as e:
-            logger.warning(f"Failed to load topics file: {e}")
-            self._use_default_topics()
+    @staticmethod
+    def _read_lines(path: Path) -> list[str]:
+        text = path.read_text(encoding="utf-8")
+        return [s for line in text.splitlines() if (s := line.strip())]
 
     async def _get_next_rss_posts(self) -> list[str]:
         self._pending_rss.clear()
@@ -424,9 +433,6 @@ class TopicsPlugin(PluginBase):
         return keys
 
     async def _get_next_topic(self) -> str:
-        fallback = self.topics[0] if self.topics else "Life"
-        if not self.topics:
-            return fallback
         try:
             last_used_line = await self._get_stored_int("last_used_line")
             index = last_used_line % len(self.topics)
@@ -438,7 +444,7 @@ class TopicsPlugin(PluginBase):
             return topic
         except Exception as e:
             logger.warning(f"Failed to get next topic: {e}")
-            return fallback
+            return self.topics[0]
 
 
 plugin = TopicsPlugin

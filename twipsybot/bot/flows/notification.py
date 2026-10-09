@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from ...shared.config_keys import ConfigKeys
-from ...shared.utils import maybe_log_event_dump
+from ...shared.logs import maybe_log_event_dump
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro

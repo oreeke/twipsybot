@@ -1,4 +1,4 @@
-from .base import PLUGIN_API_VERSION, LineText, PluginBase, PluginConfig
+from .base import PLUGIN_API_VERSION, LineText, PluginBase, PluginConfig, When
 from .contracts import (
     BotControl,
     DriveService,
@@ -43,4 +43,5 @@ __all__ = (
     "PromptModificationResult",
     "TimelineNoteEvent",
     "UserRef",
+    "When",
 )

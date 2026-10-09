@@ -14,7 +14,7 @@ from ...clients.misskey.payloads import (
 )
 from ...shared.config_keys import ConfigKeys
 from ...shared.constants import CHAT_CACHE_MAX_USERS, CHAT_CACHE_TTL
-from ...shared.utils import format_log_text, maybe_log_event_dump
+from ...shared.logs import format_log_text, maybe_log_event_dump
 from ..engine.pipeline import Augment, Deliver, Reply, Source, replied
 
 if TYPE_CHECKING:

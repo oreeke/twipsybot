@@ -23,7 +23,6 @@ htmlcov/
 
 # prompt files
 prompts/
-topics.md
 *.txt
 
 # Logs

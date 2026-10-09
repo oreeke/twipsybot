@@ -5,7 +5,7 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 
 # 配置参考
 
-`connect` 与插件的密钥字段存于 `data/secrets.yaml`，其余存于 `data/settings.yaml`。缺省即默认值，未知字段会校验失败。除标注 <Badge type="warning" text="重启" /> 的分区外均热更新。
+`connect` 与插件的凭据字段存于 `data/secrets.yaml`，其余存于 `data/settings.yaml`。缺省即默认值，未知字段会校验失败。除标注 <Badge type="warning" text="重启" /> 的分区外均热更新。
 
 ## connect <Badge type="warning" text="重启" />
 
@@ -48,14 +48,13 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |
-| `rotation` | `false` | 轮转：每 `interval` 发帖，与 `schedule` 互斥 |
-| `interval` | `3h` | 分钟数或 `30m`、`2h`、`1d`，至少 5 分钟，不支持秒 |
-| `daily_max` | `8` | 轮转每日上限，`0` 不发帖；定时不受限 |
-| `schedule` | `false` | 定时：在 `times` 各时间点发帖 |
-| `times` | `[]` | `"HH:MM"`，主机时区，最多 24 个，相邻至少 5 分钟 |
+| `prompt` | `生成一篇有趣的社交帖子...` | 可引用 `prompts/*.md`（或 `*.txt`） |
 | `visibility` | `public` | `public` / `home` / `followers` |
 | `local_only` | `false` | 仅本地发布，不联合 |
-| `prompt` | `生成一篇有趣、有见解的社交媒体帖子。` | 可引用 `prompts/*.md`（或 `*.txt`） |
+| `mode` | `off` | `off` / `rotation`（每 `interval` 发帖）/ `schedule`（在 `times` 各时间点发帖） |
+| `interval` | `3h` | 仅 `rotation`；`30m`、`2h`、`1d`，相邻至少 5 分钟 |
+| `daily_max` | `8` | 仅 `rotation`；每日上限，`0` 不发帖 |
+| `times` | `[]` | 仅 `schedule`；`"HH:MM"`，主机时区，最多 24 个，相邻至少 5 分钟 |
 
 ## reply
 

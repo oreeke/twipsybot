@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.18.0 - 2026-10-10
+
+TUI 易用性更新
+
+### Added
+
+- Radar 新增 `reply_visibility`
+- 插件配置字段可用 `When` 声明条件显示；`twipsybot cfg` 中插件总开关显示 `on` / `off`
+
+### Changed
+
+- `autopost.rotation` / `autopost.schedule` 合并为 `autopost.mode`
+- Radar：`renote` / `quote` 合并为 `repeat`
+- KeyAct：`mention_enabled` / `chat_enabled` 改为 `mention` / `chat`
+- Topics：`source: txt` 改为 `list`，可填主题或 `prompts/*.md` 且不可为空
+- `twipsybot cfg` 仅显示所选模式的子配置；保存时清除未知字段，无效的选项值重置为默认
+- 旧字段不再识别，升级后需在 `twipsybot cfg` 中重新设置并保存
+
+<br>
+
 ## 0.17.0 - 2026-10-09
 
 插件凭据保存位置变更

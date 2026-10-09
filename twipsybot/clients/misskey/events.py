@@ -14,7 +14,7 @@ from ...shared.constants import (
     STREAM_QUEUE_PUT_TIMEOUT,
     STREAM_WORKERS,
 )
-from ...shared.utils import maybe_log_event_dump
+from ...shared.logs import maybe_log_event_dump
 from .channels import CHAT_CHANNELS, NOTE_CHANNELS, ChannelType
 
 if TYPE_CHECKING:

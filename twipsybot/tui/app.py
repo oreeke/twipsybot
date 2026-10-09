@@ -28,7 +28,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from ..plugin.manager import discover_plugin_classes
-from ..shared.config import EXCLUSIVE, SECRETS, Config
+from ..shared.config import SECRETS, Config
 from ..shared.exceptions import ConfigurationError
 from ..shared.settings import get_dotted, read_settings, set_dotted, write_settings
 from .logs import LogsPage
@@ -47,6 +47,7 @@ _BLURBS = {
 }
 
 
+_INVALID = object()
 _CHANGES = (
     Input.Changed,
     Switch.Changed,
@@ -97,6 +98,7 @@ class ConfigApp(App[None]):
         self._raw: dict[str, dict[str, Any]] = {}
         self._saved: dict[str, Any] = {}
         self._errors: dict[str, dict[str, str]] = {}
+        self._unknown: dict[str, list[str]] = {}
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
@@ -161,7 +163,7 @@ class ConfigApp(App[None]):
 
     def _row(self, spec: Spec) -> ComposeResult:
         wid = self._ids[spec.key]
-        with Horizontal(classes="row"):
+        with Horizontal(classes="row", id=f"r{wid}"):
             yield Label(
                 self._label_text(spec, dirty=False), id=f"l{wid}", classes="label"
             )
@@ -181,7 +183,7 @@ class ConfigApp(App[None]):
                 )
             case "multiline" | "list" | "lines" | "yaml":
                 placeholder = {
-                    "list": "one per line",
+                    "list": spec.hint or "one per line",
                     "lines": f"{spec.hint or 'one per line'}  · # comment",
                     "yaml": "yaml",
                 }.get(spec.kind, spec.hint)
@@ -198,7 +200,13 @@ class ConfigApp(App[None]):
         mark = "[$warning]●[/] " if dirty else "  "
         tail = " [$warning]↻[/]" if spec.restart else ""
         tail += " [dim]env[/]" if spec.key in self._env else ""
-        return f"{mark}{spec.label}{tail}"
+        return f"{mark}{self._caption(spec)}{tail}"
+
+    def _caption(self, spec: Spec) -> str:
+        if spec.path[0] == "plugins" and spec.path[2:] == ("enabled",):
+            on = bool(self._saved) and self._get(spec.key)
+            return "[$success]on[/]" if on else "[dim]off[/]"
+        return spec.label
 
     def _nav_text(self, section: Section) -> str:
         ready = bool(self._saved)
@@ -209,7 +217,10 @@ class ConfigApp(App[None]):
         tail = ""
         if self._errors.get(section.id):
             tail = " [$error]![/]"
-        elif ready and any(self._is_dirty(s.key) for s in section.specs):
+        elif ready and (
+            section.id in self._unknown
+            or any(self._is_dirty(s.key) for s in section.specs)
+        ):
             tail = " [$warning]•[/]"
         return f"{dot} {section.title}{tail}"
 
@@ -252,6 +263,12 @@ class ConfigApp(App[None]):
             case Input():
                 widget.value = value
 
+    def _shown(self, spec: Spec) -> bool:
+        if spec.when is None:
+            return True
+        key, value = spec.when
+        return self._get(key) == value
+
     def _is_dirty(self, key: str) -> bool:
         return self._get(key) != self._saved[key]
 
@@ -262,15 +279,33 @@ class ConfigApp(App[None]):
             except ConfigurationError as e:
                 self._raw[name] = {}
                 self.notify(str(e), title="unreadable", severity="error", markup=False)
+        self._unknown = {
+            s.id: found for s in self.sections if (found := s.unknown(self._raw))
+        }
+        if self._unknown:
+            names = ", ".join(n for found in self._unknown.values() for n in found)
+            self.notify(
+                names,
+                title="unknown settings, removed on save",
+                severity="warning",
+                markup=False,
+            )
         with self.prevent(*_CHANGES):
             for key, spec in self._specs.items():
                 raw = get_dotted(self._raw[spec.file], key)
                 value = spec.default if raw is None else to_widget(spec.kind, raw)
+                invalid = (
+                    spec.kind == "choice"
+                    and raw is not None
+                    and value not in spec.choices
+                )
+                if invalid:
+                    value = spec.default
                 if env := self._env.get(key):
                     value = os.environ[env].strip()
                     self._widget_of(key).disabled = True
                 self._set(key, value)
-                self._saved[key] = self._get(key)
+                self._saved[key] = _INVALID if invalid else self._get(key)
         for section in self.sections:
             self._validate(section)
             self._refresh(section)
@@ -287,6 +322,7 @@ class ConfigApp(App[None]):
         errors = self._errors.get(section.id, {})
         for spec in section.specs:
             wid = self._ids[spec.key]
+            self.query_one(f"#r{wid}").display = self._shown(spec) or spec.key in errors
             label = self.query_one(f"#l{wid}", Label)
             label.update(self._label_text(spec, dirty=self._is_dirty(spec.key)))
             label.set_class(spec.key in errors, "-invalid")
@@ -307,6 +343,9 @@ class ConfigApp(App[None]):
         parts = [f"{len(dirty)} unsaved" if dirty else "[dim]no changes[/]"]
         if invalid:
             parts.append(f"[$error]{invalid} invalid[/]")
+        if self._unknown:
+            count = sum(len(found) for found in self._unknown.values())
+            parts.append(f"[$warning]{count} unknown[/]")
         if restart:
             parts.append(f"[$warning]↻ restart: {', '.join(restart)}[/]")
         parts.append(f"[dim]{escape(str(self.config.settings_path.parent))}[/]")
@@ -323,8 +362,6 @@ class ConfigApp(App[None]):
             return
         section = self._owner[key]
         with suppress(NoMatches):
-            if (other := EXCLUSIVE.get(key)) and self._get(key):
-                self._set(other, False)
             self._validate(section)
             self._refresh(section)
 
@@ -352,6 +389,7 @@ class ConfigApp(App[None]):
 
     def _write(self, dirty: set[str]) -> None:
         sections = {self._owner[k] for k in dirty}
+        sections |= {s for s in self.sections if s.id in self._unknown}
         names = {file for s in sections for file in s.files}
         raws = {name: read_settings(self._files[name]) for name in names}
         for section in sections:
@@ -369,7 +407,8 @@ class ConfigApp(App[None]):
             self._goto(invalid[0])
             self.notify("Fix invalid fields first", severity="error")
             return False
-        if not (dirty := {k for k in self._specs if self._is_dirty(k)}):
+        dirty = {k for k in self._specs if self._is_dirty(k)}
+        if not dirty and not self._unknown:
             self.notify("Nothing to save")
             return True
         try:
@@ -377,6 +416,7 @@ class ConfigApp(App[None]):
         except (OSError, ValidationError, ConfigurationError) as e:
             self.notify(str(e), title="save failed", severity="error", markup=False)
             return False
+        self._unknown.clear()
         for key in dirty:
             self._saved[key] = self._get(key)
         for section in self.sections:

@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from conftest import plugin_context
 
-from plugins.topics.plugin import _RSS_AI_PREFIX, _TXT_AI_PREFIX, TopicsPlugin
+from plugins.topics.plugin import _LIST_AI_PREFIX, _RSS_AI_PREFIX, TopicsPlugin
 from twipsybot.plugin import AutoPostEvent
 
 
@@ -22,7 +22,7 @@ async def test_topics_blank_prompts_use_defaults(prefix: str) -> None:
     )
     plugin = TopicsPlugin(
         plugin_context(
-            {"enabled": True, "txt_ai_prefix": prefix, "rss_ai_prefix": prefix},
+            {"enabled": True, "list_ai_prefix": prefix, "rss_ai_prefix": prefix},
             openai=openai,
         )
     )
@@ -31,7 +31,7 @@ async def test_topics_blank_prompts_use_defaults(prefix: str) -> None:
     result = await plugin.on_auto_post(AutoPostEvent(datetime.now(UTC)))
     await plugin._rewrite_rss_title_with_ai("t", "l", summary="s")
 
-    assert result == {"prompt": _TXT_AI_PREFIX.format(topic="science")}
+    assert result == {"prompt": _LIST_AI_PREFIX.format(topic="science")}
     assert generate_text.await_args is not None
     assert generate_text.await_args.args[0] == _RSS_AI_PREFIX.format(
         summary="s", title="t", link="l"
@@ -83,9 +83,9 @@ async def test_topics_rss_ai_uses_public_openai_service() -> None:
 
 
 @pytest.mark.parametrize("topic", ("science", "https://example.com/article"))
-async def test_topics_txt_uses_configured_prompt(topic: str) -> None:
+async def test_topics_list_uses_configured_prompt(topic: str) -> None:
     plugin = TopicsPlugin(
-        plugin_context({"enabled": True, "txt_ai_prefix": "Topic:\n{topic}"})
+        plugin_context({"enabled": True, "list_ai_prefix": "Topic:\n{topic}"})
     )
     plugin._get_next_topic = AsyncMock(return_value=topic)
 
@@ -94,32 +94,33 @@ async def test_topics_txt_uses_configured_prompt(topic: str) -> None:
     assert result == {"prompt": f"Topic:\n{topic}"}
 
 
-@pytest.mark.parametrize(
-    ("files", "expected"),
-    [
-        ({"topics.md": "md topic\n", "topics.txt": "txt topic\n"}, ["md topic"]),
-        ({"topics.txt": "txt topic\n"}, ["txt topic"]),
-    ],
-)
-async def test_topics_prefers_custom_file_from_prompts(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    files: dict[str, str],
-    expected: list[str],
+async def test_topics_list_mixes_inline_topics_and_prompt_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    prompts_dir = tmp_path / "prompts"
-    prompts_dir.mkdir()
-    for name, text in files.items():
-        (prompts_dir / name).write_text(text, encoding="utf-8")
-    plugin = TopicsPlugin(plugin_context({"enabled": True, "txt_ai_prefix": "{topic}"}))
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "extra.md").write_text("a\n\n b \n", encoding="utf-8")
+    plugin = TopicsPlugin(
+        plugin_context(
+            {
+                "enabled": True,
+                "list": ["#tag", "prompts/extra.md", "prompts/missing.txt", "../x.md"],
+            }
+        )
+    )
 
-    await plugin._load_topics()
-
-    assert plugin.topics == expected
+    assert plugin._configured_topics() == ["#tag", "a", "b", "../x.md"]
 
 
-async def test_topics_txt_rotates_from_configured_start_line() -> None:
+def test_topics_list_accepts_single_string() -> None:
+    plugin = TopicsPlugin(
+        plugin_context({"enabled": True, "list": "prompts/topics.md\n"})
+    )
+
+    assert plugin.settings.topics == ("prompts/topics.md",)
+
+
+async def test_topics_list_rotates_from_configured_start_line() -> None:
     values: dict[str, str] = {}
 
     async def get_value(key: str) -> str | None:
@@ -135,17 +136,13 @@ async def test_topics_txt_rotates_from_configured_start_line() -> None:
         plugin_context(
             {
                 "enabled": True,
-                "txt_ai_prefix": "Topic: {topic}",
-                "txt_start_line": 2,
+                "list_ai_prefix": "Topic: {topic}",
+                "list": ["first", "second", "third"],
+                "list_start_line": 2,
             },
             storage=storage,
         )
     )
-
-    async def load_topics() -> None:
-        plugin.topics = ["first", "second", "third"]
-
-    plugin._load_topics = load_topics
 
     assert await plugin.initialize() is True
     event = AutoPostEvent(datetime.now(UTC))
@@ -153,6 +150,14 @@ async def test_topics_txt_rotates_from_configured_start_line() -> None:
     assert await plugin.on_auto_post(event) == {"prompt": "Topic: third"}
     assert await plugin.on_auto_post(event) == {"prompt": "Topic: first"}
     assert values["last_used_line"] == "1"
+
+
+async def test_topics_list_must_not_be_empty() -> None:
+    plugin = TopicsPlugin(
+        plugin_context({"enabled": True, "list": ["prompts/none.md"]})
+    )
+
+    assert await plugin.initialize() is False
 
 
 async def test_topics_initializes_rss_storage_defaults() -> None:
@@ -450,7 +455,7 @@ async def test_topics_rotate_advances_only_after_publish() -> None:
 def test_topics_parses_boolean_strings() -> None:
     plugin = TopicsPlugin(
         plugin_context(
-            {"enabled": "true", "rss_ai": "false", "txt_ai_prefix": "{topic}"}
+            {"enabled": "true", "rss_ai": "false", "list_ai_prefix": "{topic}"}
         )
     )
 

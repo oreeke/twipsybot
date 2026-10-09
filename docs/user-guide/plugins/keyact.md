@@ -13,8 +13,8 @@ description: 使用 KeyAct 为 TwipsyBot 配置精确关键词匹配与固定回
 plugins:
   keyact:
     enabled: true
-    mention_enabled: true
-    chat_enabled: true
+    mention: true
+    chat: true
     case_sensitive: false
     rules: |-
       ping = pong

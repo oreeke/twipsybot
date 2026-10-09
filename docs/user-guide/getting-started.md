@@ -61,8 +61,8 @@ docker compose logs -f twipsybot
 | 字段 | 作用 |
 | --- | --- |
 | `bot.model` | 文本模型 |
-| `bot.admins` | 管理员名单，可用 `^` 与 `/` 命令 |
-| `autopost.rotation` · `autopost.schedule` | 轮转 / 定时发帖 |
+| `bot.admins` | 管理员名单 |
+| `autopost.mode` | `off` / `rotation` / `schedule` |
 | `reply.mention` · `reply.chat` | 提及 / 聊天开关 |
 
 保存即热更新；带 `↻` 的字段（`connect`、`timeline.*`）需执行 `docker compose restart twipsybot`。详见[配置](configuration.md)。

@@ -19,15 +19,7 @@ docker compose logs --tail 200 twipsybot
 
 ## `Configuration error`
 
-运行 `twipsybot config-check` 定位字段，常见原因：
-
-- 未知字段，或布尔值无法识别。
-- `autopost.interval` 使用秒或小于 5 分钟。
-- `rotation` 与 `schedule` 同时开启，或定时但 `times` 为空、非 `HH:MM`、间隔小于 5 分钟。
-- `bot.max_tokens` 不大于 0，或 `bot.temperature` 超出 0–2。
-- 可见性不是 `public`、`home`、`followers`。
-- KeyAct 规则缺少 `=`。
-- Iincho `interval` 小于 5 分钟，或 `sample_size < min_notes`。
+运行 `twipsybot config-check`，报错会指出具体字段。
 
 ## 无法连接 Misskey
 
@@ -67,8 +59,8 @@ docker compose logs --tail 200 twipsybot
 
 ### Topics 不发帖
 
-- 已开启 `autopost.rotation` 或 `autopost.schedule`，轮转未达每日上限。
-- TXT 模式：`prompts/topics.md`（或 `topics.txt`） 存在。
+- `autopost.mode` 为 `rotation` 或 `schedule`，轮转未达每日上限。
+- list 模式下 `list` 不能为空，引用的 `prompts/` 文件需存在，否则插件启动失败。
 - RSS 模式：检查 URL、网络与 HTTP 状态，条目需含标题与链接。已发布条目不会重复；AI 改写失败回退为标题，拉取失败跳过该源。
 
 ### Vision 不识图

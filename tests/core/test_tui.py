@@ -97,7 +97,26 @@ def test_sections_are_generated_from_models() -> None:
     assert specs["reply.rate_limit"].default == "-1"
     assert "system.db_clear_days" in specs
     radar = [k.split(".")[-1] for k in specs if k.startswith("plugins.radar.")]
-    assert radar.index("renote") < radar.index("quote")
+    assert radar.index("reply_visibility") < radar.index("reply_local_only")
+    assert radar.index("reply_local_only") < radar.index("repeat")
+    assert specs["plugins.radar.repeat"].choices == ("off", "renote", "quote")
+    assert specs["plugins.radar.quote_text"].when == (
+        "plugins.radar.repeat",
+        "quote",
+    )
+    assert specs["plugins.iincho.moderation.cf_api_token"].when == (
+        "plugins.iincho.moderation.provider",
+        "cloudflare",
+    )
+    assert specs["plugins.topics.list"].kind == "list"
+    assert specs["plugins.topics.source"].choices == ("list", "rss")
+    keys = [k for k in specs if k.startswith("autopost.")]
+    assert keys[:4] == [
+        "autopost.prompt",
+        "autopost.visibility",
+        "autopost.local_only",
+        "autopost.mode",
+    ]
     assert specs["autopost.interval"].default == "3h"
     assert specs["timeline.global"].kind == "bool"
     assert specs["bot.system_prompt"].kind == "multiline"
@@ -237,16 +256,69 @@ async def test_cfg_line_fields_keep_comments(tmp_path: Path) -> None:
         assert feeds.text == text
 
 
-async def test_cfg_times_field_and_exclusive_switches(tmp_path: Path) -> None:
+async def test_cfg_plugin_switch_label_shows_on_off(tmp_path: Path) -> None:
+    app = ConfigApp(Config(_root(tmp_path)))
+    async with app.run_test() as pilot:
+        await _until(pilot, lambda: bool(app._saved))
+        label = app.query_one(f"#l{app._ids['plugins.demo.enabled']}")
+
+        assert str(label.render()).split()[-1] == "off"
+
+        app._set("plugins.demo.enabled", True)
+        await _until(pilot, lambda: str(label.render()).split()[-1] == "on")
+
+
+async def test_cfg_drops_unknown_settings_on_save(tmp_path: Path) -> None:
+    config = Config(_root(tmp_path))
+    write_settings(
+        config.settings_path,
+        {
+            "autopost": {"rotation": True, "prompt": "p"},
+            "plugins": {"demo": {"limit": 5, "old": 1}},
+        },
+    )
+    app = ConfigApp(config)
+    async with app.run_test() as pilot:
+        await _until(pilot, lambda: bool(app._saved))
+        assert app._unknown == {
+            "autopost": ["autopost.rotation"],
+            "plugins.demo": ["plugins.demo.old"],
+        }
+        assert not any(app._errors.values())
+        assert app.action_save() is True
+        assert app._unknown == {}
+
+    assert read_settings(config.settings_path) == {
+        "autopost": {"prompt": "p"},
+        "plugins": {"demo": {"limit": 5}},
+    }
+
+
+async def test_cfg_resets_invalid_choice_on_save(tmp_path: Path) -> None:
+    config = Config(_root(tmp_path))
+    write_settings(config.settings_path, {"autopost": {"mode": "both", "prompt": "p"}})
+    app = ConfigApp(config)
+    async with app.run_test() as pilot:
+        await _until(pilot, lambda: bool(app._saved))
+        assert app._get("autopost.mode") == "off"
+        assert app._is_dirty("autopost.mode")
+        assert app.action_save() is True
+
+    assert read_settings(config.settings_path) == {"autopost": {"prompt": "p"}}
+
+
+async def test_cfg_times_field_and_mode_visibility(tmp_path: Path) -> None:
     config = Config(_root(tmp_path))
     app = ConfigApp(config)
     async with app.run_test() as pilot:
         await _until(pilot, lambda: bool(app._saved))
         field = app._widget_of("autopost.times")
-        assert app.query_one(f"#{app._ids['autopost.schedule']}", Switch).value is False
+        row = app.query_one(f"#r{app._ids['autopost.times']}")
+        assert app._get("autopost.mode") == "off"
+        assert row.display is False
 
-        app._set("autopost.schedule", True)
-        await _until(pilot, lambda: app._get("autopost.rotation") is False)
+        app._set("autopost.mode", "schedule")
+        await _until(pilot, lambda: row.display is True)
         await _until(pilot, lambda: bool(app._errors["autopost"]))
         assert app.action_save() is False
 
@@ -262,7 +334,7 @@ async def test_cfg_times_field_and_exclusive_switches(tmp_path: Path) -> None:
         assert app.action_save() is True
 
     assert read_settings(config.settings_path)["autopost"] == {
-        "schedule": True,
+        "mode": "schedule",
         "times": ["10:00", "11:00"],
     }
 

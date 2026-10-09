@@ -199,7 +199,7 @@ def write_config(
     def _write(*, load: bool = True, **overrides: Any) -> Config:
         data: dict[str, Any] = {
             "bot": {"system_prompt": "你是测试机器人", "api_mode": "chat"},
-            "autopost": {"prompt": "写一条随笔", "rotation": True},
+            "autopost": {"prompt": "写一条随笔", "mode": "rotation"},
         }
         if plugins := read_settings(settings_path).get("plugins"):
             data["plugins"] = plugins

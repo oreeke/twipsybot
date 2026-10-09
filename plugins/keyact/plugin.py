@@ -51,8 +51,8 @@ class _RuleConfig(PluginConfig):
 
 
 class _Config(PluginConfig):
-    mention_enabled: bool = True
-    chat_enabled: bool = True
+    mention: bool = True
+    chat: bool = True
     case_sensitive: bool = False
     rules: Annotated[
         tuple[Annotated[_RuleConfig, BeforeValidator(_parse_rule)], ...], LineText
@@ -87,8 +87,8 @@ class KeyActPlugin(PluginBase):
         )
         self._log_plugin_action(
             "initialized",
-            f"rules={len(self.rules)}, mention={self.settings.mention_enabled}, "
-            f"chat={self.settings.chat_enabled}",
+            f"rules={len(self.rules)}, mention={self.settings.mention}, "
+            f"chat={self.settings.chat}",
         )
         return True
 
@@ -104,12 +104,12 @@ class KeyActPlugin(PluginBase):
         return None
 
     async def on_mention(self, event: MentionEvent) -> HandledResult | None:
-        if not self.settings.mention_enabled:
+        if not self.settings.mention:
             return None
         return self._handle(event.text)
 
     async def on_message(self, event: MessageEvent) -> HandledResult | None:
-        if not self.settings.chat_enabled:
+        if not self.settings.chat:
             return None
         return self._handle(event.text)
 

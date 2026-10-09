@@ -10,7 +10,7 @@ from loguru import logger
 
 from ...plugin.manager import HookResult
 from ...shared.config_keys import ConfigKeys
-from ...shared.utils import format_log_text
+from ...shared.logs import format_log_text
 from ..engine.pipeline import Reply
 
 if TYPE_CHECKING:
@@ -36,10 +36,7 @@ class AutoPostService:
 
     @property
     def mode(self) -> str:
-        get = self.bot.config.get
-        if get(ConfigKeys.POST_ROTATION):
-            return "rotation"
-        return "schedule" if get(ConfigKeys.POST_SCHEDULE) else "off"
+        return self.bot.config.get(ConfigKeys.POST_MODE)
 
     def _trigger(self) -> BaseTrigger | None:
         get = self.bot.config.get

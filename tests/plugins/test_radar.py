@@ -222,7 +222,7 @@ async def test_radar_blank_ai_prompts_use_defaults() -> None:
                 "reply": True,
                 "reply_ai": True,
                 "reply_ai_prompt": " ",
-                "quote": True,
+                "repeat": "quote",
                 "quote_ai": True,
                 "quote_ai_prompt": "",
             },
@@ -269,7 +269,65 @@ async def test_radar_preserves_specified_reply_visibility() -> None:
     )
 
 
-async def test_radar_preserves_reply_and_quote_precedence() -> None:
+async def test_radar_applies_reply_visibility() -> None:
+    create_note = AsyncMock(return_value={})
+    plugin = RadarPlugin(
+        plugin_context(
+            {
+                "enabled": True,
+                "reply": True,
+                "reply_text": "reply",
+                "reply_visibility": "home",
+            },
+            misskey=SimpleNamespace(create_note=create_note),
+        )
+    )
+
+    await plugin._maybe_reply({"text": "hello"}, "note-1", "antenna")
+
+    create_note.assert_awaited_once_with(
+        text="reply", visibility="home", reply_id="note-1", local_only=False
+    )
+
+
+async def test_radar_repeat_quote_falls_back_to_renote() -> None:
+    misskey = SimpleNamespace(create_renote=AsyncMock(return_value={}))
+    plugin = RadarPlugin(
+        plugin_context(
+            {
+                "enabled": True,
+                "repeat": "quote",
+                "quote_visibility": "home",
+                "quote_local_only": True,
+            },
+            misskey=misskey,
+        )
+    )
+
+    await plugin._act({"text": "hello"}, "note-1", "antenna")
+
+    misskey.create_renote.assert_awaited_once_with(
+        "note-1", visibility="home", local_only=True
+    )
+
+
+async def test_radar_repeat_renotes_without_quote() -> None:
+    misskey = SimpleNamespace(create_renote=AsyncMock(return_value={}))
+    plugin = RadarPlugin(
+        plugin_context(
+            {"enabled": True, "repeat": "renote", "quote_text": "quote"},
+            misskey=misskey,
+        )
+    )
+
+    await plugin._act({}, "note-1", "antenna")
+
+    misskey.create_renote.assert_awaited_once_with(
+        "note-1", visibility=None, local_only=False
+    )
+
+
+async def test_radar_repeat_quote_does_not_renote() -> None:
     misskey = SimpleNamespace(
         create_reaction=AsyncMock(return_value={}),
         create_note=AsyncMock(return_value={}),
@@ -281,9 +339,8 @@ async def test_radar_preserves_reply_and_quote_precedence() -> None:
                 "enabled": True,
                 "reply": True,
                 "reply_text": "hello {username}",
-                "quote": True,
+                "repeat": "quote",
                 "quote_text": "quote",
-                "renote": True,
             },
             misskey=misskey,
         )
@@ -301,9 +358,9 @@ async def test_radar_preserves_reply_and_quote_precedence() -> None:
 
 def test_radar_parses_boolean_strings() -> None:
     plugin = RadarPlugin(
-        plugin_context({"enabled": "true", "reply": "false", "quote": "true"})
+        plugin_context({"enabled": "true", "reply": "false", "repeat": "quote"})
     )
 
     assert plugin._enabled is True
     assert plugin.settings.reply_enabled is False
-    assert plugin.settings.quote_enabled is True
+    assert plugin.settings.repeat == "quote"

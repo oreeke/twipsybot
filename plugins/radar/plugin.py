@@ -2,7 +2,7 @@ import asyncio
 import random
 import re
 from datetime import timedelta
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import durationpy
 from loguru import logger
@@ -12,8 +12,10 @@ from twipsybot.plugin import (
     PluginBase,
     PluginConfig,
     TimelineNoteEvent,
+    When,
 )
 
+Visibility = Literal["public", "home", "followers"]
 _DELAY_RANGE = (180.0, 300.0)
 _DELAY_BOUNDS = (timedelta(minutes=1), timedelta(days=1))
 _DELAY_PATTERN = re.compile(r"(?:\d+[mhd])+")
@@ -34,16 +36,18 @@ class _Config(PluginConfig):
     reply_text: str | None = None
     reply_ai: bool = False
     reply_ai_prompt: str = Field("", description=_REPLY_AI_PROMPT)
+    reply_visibility: Visibility | None = None
     reply_local_only: bool = False
-    renote_enabled: bool = Field(False, validation_alias="renote")
-    renote_visibility: Literal["public", "home", "followers"] | None = None
-    renote_local_only: bool = False
-    quote_enabled: bool = Field(False, validation_alias="quote")
-    quote_text: str | None = None
-    quote_ai: bool = False
-    quote_ai_prompt: str = Field("", description=_QUOTE_AI_PROMPT)
-    quote_visibility: Literal["public", "home", "followers"] | None = None
-    quote_local_only: bool = False
+    repeat: Literal["off", "renote", "quote"] = "off"
+    renote_visibility: Annotated[Visibility | None, When("repeat", "renote")] = None
+    renote_local_only: Annotated[bool, When("repeat", "renote")] = False
+    quote_text: Annotated[str | None, When("repeat", "quote")] = None
+    quote_ai: Annotated[bool, When("repeat", "quote")] = False
+    quote_ai_prompt: Annotated[str, When("repeat", "quote")] = Field(
+        "", description=_QUOTE_AI_PROMPT
+    )
+    quote_visibility: Annotated[Visibility | None, When("repeat", "quote")] = None
+    quote_local_only: Annotated[bool, When("repeat", "quote")] = False
 
     @field_validator("delay", mode="before")
     @classmethod
@@ -223,6 +227,8 @@ class RadarPlugin(PluginBase):
             }
             if note_data.get("visibility") == "specified":
                 kwargs["visibility"] = "specified"
+            elif self.settings.reply_visibility:
+                kwargs["visibility"] = self.settings.reply_visibility
             await self.context.misskey.create_note(**kwargs)
             self._log_plugin_action("replied", f"{note_id} [{channel}]")
         except Exception as e:
@@ -231,8 +237,6 @@ class RadarPlugin(PluginBase):
     async def _maybe_quote(
         self, note_data: dict[str, Any], note_id: str, channel: str
     ) -> bool:
-        if not self.settings.quote_enabled:
-            return False
         text = await self._build_action_text(
             note_data,
             text=self.settings.quote_text,
@@ -258,18 +262,15 @@ class RadarPlugin(PluginBase):
             logger.error(f"Radar quote failed: {e!r}")
             return False
 
-    async def _maybe_renote(self, note_id: str, channel: str) -> None:
-        if not self.settings.renote_enabled:
-            return
+    async def _renote(
+        self, note_id: str, channel: str, visibility: str | None, local_only: bool
+    ) -> None:
         try:
             await self.context.misskey.create_renote(
-                note_id,
-                visibility=self.settings.renote_visibility,
-                local_only=self.settings.renote_local_only,
+                note_id, visibility=visibility, local_only=local_only
             )
             self._log_plugin_action(
-                "renoted",
-                f"{note_id} {self.settings.renote_visibility or ''} [{channel}]",
+                "renoted", f"{note_id} {visibility or ''} [{channel}]"
             )
         except Exception as e:
             logger.error(f"Radar renote failed: {e!r}")
@@ -277,9 +278,22 @@ class RadarPlugin(PluginBase):
     async def _act(self, note_data: dict[str, Any], note_id: str, channel: str) -> None:
         await self._maybe_react(note_data, note_id, channel)
         await self._maybe_reply(note_data, note_id, channel)
-        did_quote = await self._maybe_quote(note_data, note_id, channel)
-        if not did_quote:
-            await self._maybe_renote(note_id, channel)
+        match self.settings.repeat:
+            case "quote":
+                if not await self._maybe_quote(note_data, note_id, channel):
+                    await self._renote(
+                        note_id,
+                        channel,
+                        self.settings.quote_visibility,
+                        self.settings.quote_local_only,
+                    )
+            case "renote":
+                await self._renote(
+                    note_id,
+                    channel,
+                    self.settings.renote_visibility,
+                    self.settings.renote_local_only,
+                )
 
 
 plugin = RadarPlugin

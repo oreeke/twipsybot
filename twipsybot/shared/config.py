@@ -19,10 +19,9 @@ from pydantic import (
 
 from .config_keys import ConfigKeys
 from .exceptions import ConfigurationError
-from .settings import deep_merge, get_dotted, read_settings, set_dotted
+from .settings import When, deep_merge, get_dotted, read_settings, set_dotted
 
 __all__ = (
-    "EXCLUSIVE",
     "POST_MAX_TIMES",
     "POST_MIN_GAP",
     "PROMPT_KEYS",
@@ -47,10 +46,6 @@ SECRETS = {
 _REQUIRED_SECRETS = ("misskey_url", "misskey_token", "openai_api_key")
 PROMPT_KEYS = (ConfigKeys.BOT_SYSTEM_PROMPT, ConfigKeys.POST_PROMPT)
 _RESTART_PREFIXES = ("connect.", "timeline.")
-EXCLUSIVE = {
-    ConfigKeys.POST_ROTATION: ConfigKeys.POST_SCHEDULE,
-    ConfigKeys.POST_SCHEDULE: ConfigKeys.POST_ROTATION,
-}
 POST_MIN_GAP = timedelta(minutes=5)
 POST_MAX_TIMES = 24
 
@@ -162,14 +157,13 @@ class TimelineConfig(_Section):
 
 
 class PostConfig(_Section):
-    rotation: bool = False
-    interval: Interval = timedelta(hours=3)
-    daily_max: int = Field(default=8, ge=0)
-    schedule: bool = False
-    times: list[ClockTime] = []
+    prompt: str = "生成一篇有趣的社交帖子..."
     visibility: Visibility = "public"
     local_only: bool = False
-    prompt: str = "生成一篇有趣、有见解的社交媒体帖子。"
+    mode: Literal["off", "rotation", "schedule"] = "off"
+    interval: Annotated[Interval, When("mode", "rotation")] = timedelta(hours=3)
+    daily_max: Annotated[int, When("mode", "rotation")] = Field(default=8, ge=0)
+    times: Annotated[list[ClockTime], When("mode", "schedule")] = []
 
     @field_validator("times")
     @classmethod
@@ -187,9 +181,7 @@ class PostConfig(_Section):
 
     @model_validator(mode="after")
     def _validate_mode(self) -> "PostConfig":
-        if self.rotation and self.schedule:
-            raise ValueError("rotation and schedule cannot both be on")
-        if self.schedule and not self.times:
+        if self.mode == "schedule" and not self.times:
             raise ValueError("schedule needs at least one time")
         return self
 

@@ -480,7 +480,7 @@ async def test_iincho_cloudflare_failure_skips_cycle(
 
 
 async def test_iincho_cloudflare_limits_concurrency() -> None:
-    plugin = IinchoPlugin(_iincho_context(_cloudflare_config(concurrency=2)))
+    plugin = IinchoPlugin(_iincho_context(_cloudflare_config(cf_concurrency=2)))
     active = peak = 0
 
     class _Response:

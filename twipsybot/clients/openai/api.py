@@ -34,6 +34,8 @@ from .requests import (
 
 __all__ = ("OpenAIAPI",)
 
+_MODERATION_BATCH = 100
+
 
 class OpenAIAPI:
     @staticmethod
@@ -273,16 +275,22 @@ class OpenAIAPI:
         )
 
     async def moderate_texts(self, texts: list[str]) -> list[frozenset[str]]:
-        async with self._semaphore, asyncio.timeout(REQUEST_TIMEOUT):
-            response = await self.client.moderations.create(
-                model="omni-moderation-latest", input=texts
+        results: list[frozenset[str]] = []
+        for start in range(0, len(texts), _MODERATION_BATCH):
+            async with self._semaphore, asyncio.timeout(REQUEST_TIMEOUT):
+                response = await self.client.moderations.create(
+                    model="omni-moderation-latest",
+                    input=texts[start : start + _MODERATION_BATCH],
+                )
+            results.extend(
+                frozenset(
+                    name
+                    for name, flagged in result.categories.to_dict().items()
+                    if flagged
+                )
+                for result in response.results
             )
-        return [
-            frozenset(
-                name for name, flagged in result.categories.to_dict().items() if flagged
-            )
-            for result in response.results
-        ]
+        return results
 
     async def generate_image(self, prompt: str) -> bytes | str:
         if not self.image_model:

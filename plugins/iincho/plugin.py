@@ -84,14 +84,22 @@ class _Window:
 
 class _ModerationConfig(PluginConfig):
     provider: Literal["openai", "cloudflare"] = "openai"
-    cf_account_id: str = Field(default="", pattern=r"^(?:[0-9a-fA-F]{32})?$")
+    cf_account_id: SecretStr = SecretStr("")
     cf_api_token: SecretStr = SecretStr("")
-    concurrency: int = Field(default=4, strict=True, ge=1, le=16)
+    cf_concurrency: int = Field(default=4, strict=True, ge=1, le=16)
+
+    @field_validator("cf_account_id")
+    @classmethod
+    def _validate_account_id(cls, value: SecretStr) -> SecretStr:
+        if not re.fullmatch(r"(?:[0-9a-fA-F]{32})?", value.get_secret_value()):
+            raise ValueError("cf_account_id must be 32 hex characters")
+        return value
 
     @model_validator(mode="after")
     def _validate_cloudflare(self) -> "_ModerationConfig":
         if self.provider == "cloudflare" and not (
-            self.cf_account_id and self.cf_api_token.get_secret_value()
+            self.cf_account_id.get_secret_value()
+            and self.cf_api_token.get_secret_value()
         ):
             raise ValueError(
                 "cloudflare moderation requires cf_account_id and cf_api_token"
@@ -269,8 +277,9 @@ class IinchoPlugin(PluginBase):
         session = self._cf_session
         if session is None:
             raise RuntimeError("Cloudflare moderation is not initialized")
-        url = f"{_CF_API}/accounts/{self.settings.moderation.cf_account_id}/ai/run/{_CF_MODEL}"
-        semaphore = asyncio.Semaphore(self.settings.moderation.concurrency)
+        account = self.settings.moderation.cf_account_id.get_secret_value()
+        url = f"{_CF_API}/accounts/{account}/ai/run/{_CF_MODEL}"
+        semaphore = asyncio.Semaphore(self.settings.moderation.cf_concurrency)
 
         async def classify(text: str) -> frozenset[str]:
             body = {

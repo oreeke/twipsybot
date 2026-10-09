@@ -264,7 +264,7 @@ class ConfigApp(App[None]):
                 self.notify(str(e), title="unreadable", severity="error", markup=False)
         with self.prevent(*_CHANGES):
             for key, spec in self._specs.items():
-                raw = get_dotted(self._raw[self._owner[key].file], key)
+                raw = get_dotted(self._raw[spec.file], key)
                 value = spec.default if raw is None else to_widget(spec.kind, raw)
                 if env := self._env.get(key):
                     value = os.environ[env].strip()
@@ -277,7 +277,7 @@ class ConfigApp(App[None]):
 
     def _validate(self, section: Section) -> dict[str, str]:
         values = {spec.key: self._get(spec.key) for spec in section.specs}
-        merged, errors = overlay(section, self._raw[section.file], values)
+        merged, errors = overlay(section, self._raw, values)
         for key, message in section.errors(merged).items():
             errors.setdefault(key, message)
         self._errors[section.id] = errors
@@ -338,22 +338,25 @@ class ConfigApp(App[None]):
         nav.highlighted = nav.get_option_index(self._pages[section.id])
 
     def _merge(
-        self, section: Section, raw: dict[str, Any], dirty: set[str]
-    ) -> dict[str, Any]:
-        current = section.read(raw)
+        self, section: Section, raws: dict[str, dict[str, Any]], dirty: set[str]
+    ) -> None:
+        current = section.read(raws)
         root = len(section.path)
         for spec in section.specs:
             if spec.key in dirty:
                 rel = ".".join(spec.path[root:])
                 set_dotted(current, rel, spec.parse(self._get(spec.key)))
-        return section.write(raw, section.prune(current))
+        pruned = section.prune(current)
+        for file in section.files:
+            raws[file] = section.write(file, raws[file], pruned)
 
     def _write(self, dirty: set[str]) -> None:
         sections = {self._owner[k] for k in dirty}
-        for name in {s.file for s in sections}:
-            raw = read_settings(self._files[name])
-            for section in (s for s in sections if s.file == name):
-                raw = self._merge(section, raw, dirty)
+        names = {file for s in sections for file in s.files}
+        raws = {name: read_settings(self._files[name]) for name in names}
+        for section in sections:
+            self._merge(section, raws, dirty)
+        for name, raw in raws.items():
             if raw.get("plugins") == {}:
                 raw.pop("plugins")
             write_settings(self._files[name], raw)

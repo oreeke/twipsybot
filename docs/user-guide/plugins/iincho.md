@@ -5,7 +5,7 @@ description: 使用 Iincho 抽样 Misskey 本地时间线，发布内容风险�
 
 # Iincho：本地时间线观察
 
-定期均匀抽样本地时间线，发布内容风险概览。配置 `admin_ids` 且发现疑似违规时，额外生成热点趋势并私聊管理员（含相关帖子 ID）；公开概览不含原帖、用户或帖子 ID。
+定期均匀抽样本地时间线，发布内容风险概览。配置 `admin_ids` 且发现疑似违规时，额外生成热点趋势并私聊管理员（含相关帖子 ID）。公开概览不含原帖、用户或帖子 ID。
 
 ## 前置条件
 
@@ -32,9 +32,17 @@ plugins:
       - "9abcdef012345678"
     moderation:
       provider: openai
-      cf_account_id: ""
-      cf_api_token: ""
-      concurrency: 4
+      cf_concurrency: 4
+```
+
+Cloudflare 凭据存于 `data/secrets.yaml`：
+
+```yaml
+plugins:
+  iincho:
+    moderation:
+      cf_account_id: "0123456789abcdef0123456789abcdef"
+      cf_api_token: "..."
 ```
 
 | 字段 | 说明 |
@@ -44,9 +52,10 @@ plugins:
 | `sample_size` | 每周期最多样本数，不小于 `min_notes` |
 | `max_input_chars` | 送入趋势模型的文本上限 |
 | `local_only` | 报告不联合，建议保持 `true` |
-| `admin_ids` | 接收私聊的用户 ID，列表或逗号、空格分隔；未发现违规时不调用趋势模型也不私聊 |
-| `moderation.cf_account_id` | 32 位十六进制账户 ID，见 Cloudflare 控制台概览页 |
-| `moderation.concurrency` | Cloudflare 并发数；按样本逐条计费，调小 `sample_size` 可降低用量 |
+| `admin_ids` | 接收私信报告的用户 ID，列表或逗号、空格分隔 |
+| `moderation.cf_account_id` | Cloudflare 账户 ID |
+| `moderation.cf_api_token` | Cloudflare 帐户 API 令牌 |
+| `moderation.cf_concurrency` | Cloudflare 并发数 |
 
 `prompt` 与 `system_prompt` 留空使用内置提示。
 

@@ -9,8 +9,8 @@ description: 通过 TUI 或 YAML 配置 TwipsyBot 的连接、模型、提示词
 
 | 文件 | 内容 |
 | --- | --- |
-| `data/secrets.yaml` | `connect`：实例地址、令牌、API 密钥 |
-| `data/settings.yaml` | 其余运行设置 |
+| `data/settings.yaml` | 一般运行设置 |
+| `data/secrets.yaml` | 所有密钥字段 |
 | `prompts/*.md` | 可被提示词字段引用（也支持 `*.txt`） |
 
 字段详见[配置参考](reference/configuration.md)，各功能用法见[功能](features/)。

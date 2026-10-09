@@ -23,12 +23,13 @@ from ..shared.config import (
     SECONDS,
     ClockTime,
     Secrets,
+    SecretsFile,
     Settings,
     needs_restart,
     parse_clock,
     parse_seconds,
 )
-from ..shared.settings import field_key, get_dotted, prune, set_dotted
+from ..shared.settings import deep_merge, field_key, get_dotted, prune, set_dotted
 
 __all__ = ("Kind", "Section", "Spec", "build_sections", "overlay", "to_widget")
 
@@ -46,6 +47,7 @@ Kind = Literal[
     "times",
 ]
 _MULTILINE_HINTS = ("prompt", "prefix")
+File = Literal["settings", "secrets"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +61,7 @@ class Spec:
     restart: bool = False
     group: str = ""
     hint: str = ""
+    file: File = "settings"
 
     @property
     def key(self) -> str:
@@ -89,21 +92,44 @@ class Section:
     models: tuple[type[BaseModel], ...]
     specs: tuple[Spec, ...]
     plugin: bool = False
-    file: Literal["settings", "secrets"] = "settings"
 
     @property
     def key(self) -> str:
         return ".".join(self.path)
 
-    def read(self, raw: Mapping[str, Any]) -> dict[str, Any]:
-        value = get_dotted(raw, self.key) if self.path else raw
-        return deepcopy(dict(value or {}))
+    @property
+    def files(self) -> tuple[File, ...]:
+        return tuple(sorted({spec.file for spec in self.specs}))
 
-    def write(self, raw: dict[str, Any], value: dict[str, Any]) -> dict[str, Any]:
-        if not self.path:
-            return value
-        set_dotted(raw, self.key, value or None)
-        return raw
+    def _rel(self, spec: Spec) -> str:
+        return ".".join(spec.path[len(self.path) :])
+
+    def read(self, raws: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+        merged: dict[str, Any] = {}
+        for file in self.files:
+            raw = raws[file]
+            value = deepcopy(
+                dict((get_dotted(raw, self.key) if self.path else raw) or {})
+            )
+            for spec in self.specs:
+                if spec.file != file:
+                    set_dotted(value, self._rel(spec), None)
+            merged = deep_merge(merged, value)
+        return merged
+
+    def write(
+        self, file: File, raw: dict[str, Any], pruned: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        mine: dict[str, Any] = {}
+        for spec in self.specs:
+            if spec.file == file:
+                rel = self._rel(spec)
+                set_dotted(mine, rel, get_dotted(pruned, rel))
+        if self.path:
+            set_dotted(raw, self.key, mine or None)
+            return raw
+        owned = {spec.path[0] for spec in self.specs}
+        return {k: v for k, v in raw.items() if k not in owned} | mine
 
     def errors(self, raw: Mapping[str, Any]) -> dict[str, str]:
         found: dict[str, str] = {}
@@ -177,12 +203,13 @@ def _specs(
     path: tuple[str, ...],
     root: int,
     restart: Callable[[str], bool],
+    file: File | None = None,
 ) -> Iterable[Spec]:
     for name, field in model.model_fields.items():
         sub_path = (*path, field_key(name, field))
         annotation, optional = _unwrap(field.annotation)
         if _is_model(annotation):
-            yield from _specs(annotation, sub_path, root, restart)
+            yield from _specs(annotation, sub_path, root, restart, file)
             continue
         default = field.get_default(call_default_factory=True)
         if LineText in field.metadata:
@@ -201,6 +228,7 @@ def _specs(
             restart=restart(".".join(sub_path)),
             group=" ".join(sub_path[root:-1]).replace("_", " "),
             hint=field.description or "",
+            file=file or ("secrets" if kind == "secret" else "settings"),
         )
 
 
@@ -214,8 +242,8 @@ def _plugin_meta(plugin: type[PluginBase]) -> type[BaseModel]:
 
 
 def build_sections(plugins: Mapping[str, type[PluginBase]]) -> list[Section]:
-    secrets = tuple(_specs(Secrets, (), 0, lambda _: True))
-    sections = [Section("connect", "connect", (), (Secrets,), secrets, file="secrets")]
+    secrets = tuple(_specs(Secrets, (), 0, lambda _: True, "secrets"))
+    sections = [Section("connect", "connect", (), (SecretsFile,), secrets)]
     for name, field in Settings.model_fields.items():
         if _is_model(model := field.annotation):
             specs = tuple(_specs(model, (name,), 1, needs_restart))
@@ -305,9 +333,11 @@ def to_widget(kind: Kind, value: Any) -> Any:
 
 
 def overlay(
-    section: Section, raw: Mapping[str, Any], values: Mapping[str, Any]
+    section: Section,
+    raws: Mapping[str, Mapping[str, Any]],
+    values: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, str]]:
-    merged = section.read(raw)
+    merged = section.read(raws)
     errors: dict[str, str] = {}
     root = len(section.path)
     for spec in section.specs:

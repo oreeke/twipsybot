@@ -75,6 +75,20 @@ def test_secrets_come_from_file_with_env_override(
         config.load()
 
 
+def test_plugin_secrets_merge_into_plugin_config(write_config: WriteConfig) -> None:
+    config = write_config(plugins={"demo": {"enabled": True, "limit": 5}})
+    write_settings(
+        config.secrets_path,
+        {"plugins": {"demo": {"token": "tok"}, "other": {"token": "t2"}}},
+    )
+    config.load()
+
+    assert config.get("plugins") == {
+        "demo": {"enabled": True, "limit": 5, "token": "tok"},
+        "other": {"token": "t2"},
+    }
+
+
 def test_defaults_need_no_settings_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

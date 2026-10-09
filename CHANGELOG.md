@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.0 - 2026-10-09
+
+插件凭据保存位置变更
+
+### Changed
+
+- 插件配置中类型为 `SecretStr` 的字段只存于 `data/secrets.yaml`，`twipsybot cfg` 分文件读写
+- Iincho：`moderation.concurrency` 改为 `moderation.cf_concurrency`
+- OpenAI `moderate_texts()` 每 100 条文本拆为一个 `/moderations` 请求
+
+<br>
+
 ## 0.16.0 - 2026-10-07
 
 Bond 用户关系记录

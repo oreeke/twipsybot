@@ -1177,6 +1177,28 @@ async def test_openai_moderates_texts_in_batch() -> None:
     create.assert_awaited_once_with(model="omni-moderation-latest", input=["text"])
 
 
+async def test_openai_moderation_splits_large_batches() -> None:
+    categories = SimpleNamespace(to_dict=lambda: {"hate": True})
+
+    async def create(*, model: str, input: list[str]) -> SimpleNamespace:
+        return SimpleNamespace(
+            results=[SimpleNamespace(categories=categories) for _ in input]
+        )
+
+    mock = AsyncMock(side_effect=create)
+    api = OpenAIAPI("test", "m")
+    api.client = cast(Any, SimpleNamespace(moderations=SimpleNamespace(create=mock)))
+
+    result = await api.moderate_texts([str(i) for i in range(250)])
+
+    assert len(result) == 250
+    assert [len(call.kwargs["input"]) for call in mock.await_args_list] == [
+        100,
+        100,
+        50,
+    ]
+
+
 async def test_streaming_awaits_wrapped_async_handler(
     make_bot: MakeBot, write_config: WriteConfig
 ) -> None:

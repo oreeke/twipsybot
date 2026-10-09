@@ -5,7 +5,7 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 
 # 配置参考
 
-`connect` 存于 `data/secrets.yaml`，其余存于 `data/settings.yaml`。缺省即默认值，保存时自动省略默认值字段，未知字段校验失败。除标注 <Badge type="warning" text="重启" /> 的分区外均热更新。
+`connect` 与插件的密钥字段存于 `data/secrets.yaml`，其余存于 `data/settings.yaml`。缺省即默认值，未知字段会校验失败。除标注 <Badge type="warning" text="重启" /> 的分区外均热更新。
 
 ## connect <Badge type="warning" text="重启" />
 

@@ -18,13 +18,14 @@ from twipsybot.tui.schema import build_sections
 _DEMO_PLUGIN = """\
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 
 from twipsybot.plugin import LineText, PLUGIN_API_VERSION, PluginBase, PluginConfig
 
 
 class _Config(PluginConfig):
     greeting: str = "hi"
+    token: SecretStr = SecretStr("")
     tags: tuple[str, ...] = ()
     feeds: Annotated[tuple[str, ...], LineText] = ()
     limit: int = Field(3, ge=1)
@@ -69,7 +70,12 @@ def test_sections_are_generated_from_models() -> None:
         "reply",
         "system",
     ]
-    assert sections["connect"].file == "secrets"
+    assert sections["connect"].files == ("secrets",)
+    assert sections["plugins.iincho"].files == ("secrets", "settings")
+    assert sections["bot"].files == ("settings",)
+    assert specs["plugins.iincho.moderation.cf_api_token"].file == "secrets"
+    assert specs["plugins.iincho.moderation.cf_account_id"].file == "secrets"
+    assert specs["plugins.iincho.min_notes"].file == "settings"
     assert specs["misskey_token"].kind == "secret"
     assert specs["misskey_url"].restart
     assert {"plugins.keyact", "plugins.vision"} <= sections.keys()
@@ -181,6 +187,35 @@ async def test_cfg_connect_writes_secrets_and_locks_env(
         "misskey_token": "tok",
     }
     assert not config.settings_path.exists()
+
+
+async def test_cfg_saves_plugin_secrets_to_secrets_file(tmp_path: Path) -> None:
+    config = Config(_root(tmp_path))
+    write_settings(
+        config.settings_path, {"plugins": {"demo": {"token": "stale", "limit": 5}}}
+    )
+    write_settings(
+        config.secrets_path,
+        {"misskey_url": "https://m.example", "plugins": {"other": {"token": "keep"}}},
+    )
+    app = ConfigApp(config)
+    async with app.run_test() as pilot:
+        await _until(pilot, lambda: bool(app._saved))
+        token = app.query_one(f"#{app._ids['plugins.demo.token']}", Input)
+        assert token.value == ""
+
+        token.value = "s3cret"
+        app.query_one(f"#{app._ids['plugins.demo.greeting']}", Input).value = "yo"
+        await _until(pilot, lambda: app._is_dirty("plugins.demo.token"))
+        assert app.action_save() is True
+
+    assert read_settings(config.settings_path) == {
+        "plugins": {"demo": {"limit": 5, "greeting": "yo"}}
+    }
+    assert read_settings(config.secrets_path) == {
+        "misskey_url": "https://m.example",
+        "plugins": {"other": {"token": "keep"}, "demo": {"token": "s3cret"}},
+    }
 
 
 async def test_cfg_line_fields_keep_comments(tmp_path: Path) -> None:

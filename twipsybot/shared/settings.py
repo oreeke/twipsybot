@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 from .exceptions import ConfigurationError
 
 __all__ = (
+    "deep_merge",
     "field_key",
     "get_dotted",
     "patch_settings",
@@ -54,6 +55,16 @@ def set_dotted(data: dict[str, Any], dotted: str, value: Any) -> None:
         cur.pop(leaf, None)
     else:
         cur[leaf] = value
+
+
+def deep_merge(base: Mapping[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for key, value in over.items():
+        current = out.get(key)
+        if isinstance(current, Mapping) and isinstance(value, Mapping):
+            value = deep_merge(current, value)
+        out[key] = value
+    return out
 
 
 def field_key(name: str, field: Any) -> str:

@@ -19,7 +19,7 @@ from pydantic import (
 
 from .config_keys import ConfigKeys
 from .exceptions import ConfigurationError
-from .settings import get_dotted, read_settings, set_dotted
+from .settings import deep_merge, get_dotted, read_settings, set_dotted
 
 __all__ = (
     "EXCLUSIVE",
@@ -31,6 +31,7 @@ __all__ = (
     "ClockTime",
     "Config",
     "Secrets",
+    "SecretsFile",
     "Settings",
     "needs_restart",
     "parse_clock",
@@ -242,6 +243,10 @@ class Secrets(BaseModel):
         return os.environ.get(env, "").strip() or value.strip()
 
 
+class SecretsFile(Secrets):
+    plugins: dict[str, dict[str, Any]] = {}
+
+
 _M = TypeVar("_M", bound=BaseModel)
 
 
@@ -296,7 +301,8 @@ class Config:
                 stats.append(_stat(path))
                 set_dotted(raw, key, path.read_text(encoding="utf-8").strip())
         data = _validate(Settings, raw).model_dump(by_alias=True)
-        secrets = _validate(Secrets, read_settings(self.secrets_path))
+        secrets = _validate(SecretsFile, read_settings(self.secrets_path))
+        data["plugins"] = deep_merge(data["plugins"], secrets.plugins)
         data["connect"] = {f: secrets.resolve(f, env) for f, env in SECRETS.items()}
         if missing := [f for f in _REQUIRED_SECRETS if not data["connect"][f]]:
             raise ConfigurationError(

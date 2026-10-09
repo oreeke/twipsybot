@@ -29,7 +29,7 @@ plugins:
 
 - 模块级 `plugin` 导出插件类；单文件加载，不支持相对导入，多模块插件用 Entry Points。
 - `api_version` 写字面量；覆盖的生命周期与 Hook 须为 `async def`。
-- 自定义配置继承 `PluginConfig` 并挂到 `config_class`，经只读的 `self.settings` 访问。
+- 自定义配置继承 `PluginConfig` 并挂到 `config_class`，经只读的 `self.settings` 访问；`SecretStr` 字段存于 `data/secrets.yaml`。
 
 ### 第三方包
 

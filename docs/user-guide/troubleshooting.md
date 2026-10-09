@@ -91,4 +91,4 @@ docker compose logs --tail 200 twipsybot
 - 有效样本少于 `min_notes` 时正常跳过；不补采启动前帖子，不补发失败周期。
 - 配置 `admin_ids` 且发现违规时，文本模型需支持 JSON 输出。
 - `openai` 后端需端点支持 `/moderations` 与 `omni-moderation-latest`，否则改用 `cloudflare`。
-- `cloudflare` 后端：401/403 检查账户 ID 与 Workers AI 权限，429 调小 `concurrency` 或 `sample_size`。
+- `cloudflare` 后端：401/403 检查账户 ID 与 Workers AI 权限，429 调小 `cf_concurrency` 或 `sample_size`。

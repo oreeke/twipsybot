@@ -45,7 +45,7 @@ plugins:
 
 ## 配置模型
 
-`PluginConfig` 基于 Pydantic，验证后通过只读的 `self.settings` 访问；`enabled`、`priority` 等框架字段不进入模型。TUI 依据模型自动生成表单。
+`PluginConfig` 基于 Pydantic，验证后通过只读的 `self.settings` 访问；`enabled`、`priority` 等框架字段不进入模型。TUI 依据模型自动生成表单。类型为 `SecretStr` 的字段视为密钥，只从 `data/secrets.yaml` 的 `plugins.<name>` 读取，其余字段存于 `settings.yaml`。
 
 ```python
 from typing import Annotated

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.19.0 - 2026-10-10
+
+Fetch 安全加固
+
+### Added
+
+- `PluginContext.http`：插件下载外部 URL 的下载器
+- `system.allow_nets`：允许访问的 CIDR
+
+### Changed
+
+- Web：`trusted_proxy` 移至 `system.allow_nets`，旧字段不再识别
+
+### Fixed
+
+- 外部 URL（附件、图片生成结果、Web 抓取）仅允许公网地址，重定向同样校验
+
+<br>
+
 ## 0.18.0 - 2026-10-10
 
 TUI 易用性更新

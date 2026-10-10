@@ -21,6 +21,7 @@ from ...shared.exceptions import (
     APIResponseError,
     AuthenticationError,
 )
+from ..fetch.public import PublicFetcher
 from .drive import MisskeyDrive
 from .transport import TCPClient
 
@@ -38,10 +39,12 @@ class MisskeyAPI:
         access_token: str,
         *,
         transport: TCPClient | None = None,
+        fetcher: PublicFetcher | None = None,
     ):
         self.instance_url = instance_url.rstrip("/")
         self.access_token = access_token
         self.transport: TCPClient = transport or TCPClient()
+        self.fetcher = fetcher or PublicFetcher(origin=self.instance_url)
         self.drive: MisskeyDrive = MisskeyDrive(self)
         self._semaphore = asyncio.Semaphore(MISSKEY_MAX_CONCURRENCY)
         self._antennas_cache: list[dict[str, Any]] = []
@@ -50,6 +53,7 @@ class MisskeyAPI:
 
     async def close(self) -> None:
         await self.transport.close_session(silent=True)
+        await self.fetcher.close()
         logger.debug("Misskey API client closed")
 
     @property

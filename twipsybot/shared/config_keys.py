@@ -38,3 +38,4 @@ class ConfigKeys:
     SYSTEM_LOG_LEVEL = "system.log_level"
     SYSTEM_DUMP_EVENTS = "system.dump_events"
     SYSTEM_DB_CLEAR_DAYS = "system.db_clear_days"
+    SYSTEM_ALLOW_NETS = "system.allow_nets"

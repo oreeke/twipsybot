@@ -11,7 +11,10 @@ from aiohttp.test_utils import TestServer
 
 from plugins.web import plugin as web_plugin
 from plugins.web.plugin import WebPlugin
+from twipsybot.clients.fetch.public import PublicFetcher
 from twipsybot.plugin import MessageEvent, UserRef
+from twipsybot.plugin.services import HttpServiceAdapter
+from twipsybot.shared.exceptions import BlockedURLError
 
 _HTML = (
     "<html><head><title>Doc</title><style>p{}</style></head><body>"
@@ -19,7 +22,7 @@ _HTML = (
 )
 
 
-_LOOPBACK = {"trusted_proxy": "127.0.0.0/8\n::1/128"}
+_LOOPBACK = ("127.0.0.0/8", "::1/128")
 QUERIES = web.AppKey("queries", list)
 
 
@@ -34,13 +37,16 @@ def _event(text: str) -> MessageEvent:
     )
 
 
-def _context(config: dict[str, Any], **services: Any) -> Any:
+def _context(
+    config: dict[str, Any], fetcher: PublicFetcher | None = None, **services: Any
+) -> Any:
     return SimpleNamespace(
         name="web",
         config={"enabled": True, **config},
         storage=SimpleNamespace(),
         misskey=SimpleNamespace(),
         openai=SimpleNamespace(**services),
+        http=HttpServiceAdapter(fetcher or PublicFetcher()),
         bot=SimpleNamespace(),
     )
 
@@ -58,26 +64,32 @@ Make = Callable[..., Awaitable[tuple[WebPlugin, TestServer]]]
 
 @pytest.fixture
 async def make_web() -> AsyncIterator[Make]:
-    created: list[tuple[WebPlugin, TestServer]] = []
+    created: list[tuple[WebPlugin, TestServer, PublicFetcher]] = []
 
     async def make(
-        app: web.Application, config: dict[str, Any] | None = None, **services: Any
+        app: web.Application,
+        config: dict[str, Any] | None = None,
+        nets: tuple[str, ...] = (),
+        **services: Any,
     ) -> tuple[WebPlugin, TestServer]:
         server = TestServer(app)
         await server.start_server()
+        fetcher = PublicFetcher(nets)
         plugin = WebPlugin(
             _context(
                 {"endpoint": str(server.make_url("/")), **(config or {})},
+                fetcher,
                 **services,
             )
         )
         assert await plugin.initialize()
-        created.append((plugin, server))
+        created.append((plugin, server, fetcher))
         return plugin, server
 
     yield make
-    for plugin, server in created:
+    for plugin, server, fetcher in created:
         await plugin.cleanup()
+        await fetcher.close()
         await server.close()
 
 
@@ -183,7 +195,7 @@ async def test_web_failed_search_degrades(
 async def test_web_fetches_links_without_always_on(
     make_web: Make,
 ) -> None:
-    plugin, server = await make_web(_app(), _LOOPBACK)
+    plugin, server = await make_web(_app(), nets=_LOOPBACK)
     url = str(server.make_url("/page"))
 
     result = await _on_context(plugin, (f"看看 [这个]({url}) 说了啥"))
@@ -199,7 +211,7 @@ async def test_web_follows_redirects_and_fetch_top(
     make_web: Make,
 ) -> None:
     server_app = _app()
-    plugin, server = await make_web(server_app, {**_LOOPBACK, "fetch_top": 1})
+    plugin, server = await make_web(server_app, {"fetch_top": 1}, _LOOPBACK)
     url = str(server.make_url("/redirect"))
     server_app[QUERIES].clear()
     plugin._cache.clear()
@@ -220,17 +232,18 @@ async def test_web_blocks_private_targets(
 ) -> None:
     plugin, server = await make_web(_app())
 
-    assert await plugin._fetch(str(server.make_url("/page"))) is None
+    with pytest.raises(BlockedURLError):
+        await plugin._fetch(str(server.make_url("/page")))
     assert await plugin._page("http://localhost:1/") is None
     assert await plugin._page("http://[::1]/") is None
     assert await plugin._page("http://169.254.169.254/latest") is None
     assert await plugin._page("file:///etc/passwd") is None
 
 
-async def test_web_trusted_proxy_applies_to_resolved_hosts(
+async def test_web_allow_nets_apply_to_resolved_hosts(
     make_web: Make,
 ) -> None:
-    plugin, server = await make_web(_app(), _LOOPBACK)
+    plugin, server = await make_web(_app(), nets=_LOOPBACK)
     blocked, _ = await make_web(_app())
     url = f"http://localhost:{server.port}/page"
 
@@ -246,7 +259,6 @@ async def test_web_trusted_proxy_applies_to_resolved_hosts(
         ("https://sub.blocked.org/x", False),
         ("https://notblocked.org/x", True),
         ("ftp://example.com/x", False),
-        ("http://10.0.0.1/", False),
     ],
 )
 def test_web_domain_and_scheme_filters(url: str, expected: bool) -> None:

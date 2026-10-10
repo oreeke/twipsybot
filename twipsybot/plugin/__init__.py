@@ -1,7 +1,9 @@
+from ..shared.exceptions import BlockedURLError
 from .base import PLUGIN_API_VERSION, LineText, PluginBase, PluginConfig, When
 from .contracts import (
     BotControl,
     DriveService,
+    HttpService,
     MisskeyService,
     OpenAIService,
     PluginContext,
@@ -25,11 +27,13 @@ __all__ = (
     "PLUGIN_API_VERSION",
     "AutoPostEvent",
     "AutoPostResult",
+    "BlockedURLError",
     "BotControl",
     "ContextResult",
     "DriveService",
     "FileRef",
     "HandledResult",
+    "HttpService",
     "LineText",
     "MentionEvent",
     "MessageEvent",

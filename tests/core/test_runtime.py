@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -538,7 +539,7 @@ async def test_settings_reload_applies_live_and_flags_restart(
         "api_mode": "responses",
     }
     settings["timeline"] = {"home": True}
-    settings["system"] = {"dump_events": True}
+    settings["system"] = {"dump_events": True, "allow_nets": ["198.18.0.1/15"]}
     write_settings(bot.config.settings_path, settings)
 
     assert await bot.settings.reload() == {}
@@ -548,6 +549,8 @@ async def test_settings_reload_applies_live_and_flags_restart(
     assert bot.system_prompt == "新的人设"
     assert handlers.admins(bot) == ["user-9"]
     assert bot.streaming.log_dump_events is True
+    assert bot.config.get(ConfigKeys.SYSTEM_ALLOW_NETS) == ["198.18.0.0/15"]
+    assert bot.fetcher.is_public(ipaddress.ip_address("198.19.1.1"))
     warning.assert_called_once_with("Restart required for: timeline.home")
 
 

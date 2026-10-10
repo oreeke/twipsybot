@@ -154,6 +154,7 @@ return {"prompt": "围绕开源维护写一篇短文。"}
 | `storage` | 按插件 ID 隔离的字符串存储 |
 | `misskey` | 发帖、转帖、反应、聊天、用户、天线与 Drive |
 | `openai` | 文本、聊天与审核 |
+| `http` | 下载外部 URL，拒绝内网目标 |
 | `bot` | 机器人身份、用户锁与天线解析 |
 
 ### Storage
@@ -186,11 +187,20 @@ async with self.context.bot.actor_lock(event.user.id, event.user.handle):
 | `misskey.get_note(note_id)` | 获取帖子最新数据 |
 | `misskey.instance_url` | 实例地址 |
 | `misskey.drive.show_file(file_id)` | 文件信息 |
-| `misskey.drive.fetch_bytes(url, max_bytes=...)` | 从 URL 下载 |
+| `misskey.drive.fetch_bytes(url, max_bytes=...)` | 从 URL 下载，上限默认 32 MiB |
 | `misskey.drive.download_bytes(file_id, thumbnail=..., max_bytes=...)` | 下载文件 |
 | `misskey.drive.upload_bytes(data, name=..., content_type=...)` | 上传文件，结果 `id` 为文件 ID |
 
 `visibility`：`public`、`home`、`followers`。`create_note` 与 `HandledResult` 暂不支持附件。
+
+### HTTP
+
+```python
+async with self.context.http.open(url) as resp:
+    body = await self.context.http.read(resp, 1024 * 1024)
+```
+
+下载外部 URL 一律用 `http`，不要自建会话：仅访问公网 `http(s)`，重定向逐跳校验，违规抛出 `BlockedURLError`。可传 `allow=lambda url: bool` 追加自己的规则；`read` 超限抛出 `ValueError`，`truncate=True` 则截断。管理员配置的固定端点可自建会话。
 
 ### OpenAI 与 Bot
 

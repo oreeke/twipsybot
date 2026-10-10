@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
+from ...shared.constants import FETCH_MAX_BYTES
 from ...shared.exceptions import APIConnectionError
 
 if TYPE_CHECKING:
@@ -39,22 +40,15 @@ class MisskeyDrive:
             raise APIConnectionError() from e
 
     async def fetch_bytes(self, url: str, *, max_bytes: int | None = None) -> bytes:
+        fetcher = self._api.fetcher
+        limit = FETCH_MAX_BYTES if max_bytes is None else max_bytes
         try:
-            session: aiohttp.ClientSession = self._api.session
-            async with self._api.semaphore, session.get(url) as response:
+            async with self._api.semaphore, fetcher.open(url) as response:
                 if response.status != 200:
-                    await self._api._process_response(response, "drive/files/download")
-                    raise APIConnectionError()
-                if max_bytes is None:
-                    return await response.read()
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in response.content.iter_chunked(65536):
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise ValueError("file size exceeds limit")
-                    chunks.append(chunk)
-                return b"".join(chunks)
+                    raise self._api._response_error(
+                        response, "drive/files/download", ""
+                    )
+                return await fetcher.read(response, limit)
         except (aiohttp.ClientError, OSError) as e:
             raise APIConnectionError() from e
 

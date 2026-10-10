@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from ..bot.engine.core import Neuro
-from ..shared.banner import BANNER
 from ..shared.config import Config
 from ..shared.config_keys import ConfigKeys
 from ..shared.exceptions import (
@@ -21,6 +20,7 @@ from ..shared.exceptions import (
     WebSocketConnectionError,
 )
 from ..shared.logs import set_log_level, setup_logging
+from .banner import BANNER
 
 _RETRY_POLL_SECONDS = 2.0
 _RETRY_CONNECT_SECONDS = 60.0

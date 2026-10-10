@@ -8,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
 from ...admin.service import AdminCommandService
+from ...clients.fetch.public import PublicFetcher
 from ...clients.misskey.api import MisskeyAPI
 from ...clients.misskey.streaming import StreamingClient
 from ...clients.misskey.transport import TCPClient
@@ -40,8 +41,14 @@ class Neuro:
             instance_url = config.get_required(ConfigKeys.MISSKEY_URL)
             access_token = config.get_required(ConfigKeys.MISSKEY_TOKEN)
             self._misskey_transport = TCPClient()
+            self.fetcher = PublicFetcher(
+                config.get(ConfigKeys.SYSTEM_ALLOW_NETS, []), origin=instance_url
+            )
             self.misskey = MisskeyAPI(
-                instance_url, access_token, transport=self._misskey_transport
+                instance_url,
+                access_token,
+                transport=self._misskey_transport,
+                fetcher=self.fetcher,
             )
             self.streaming = StreamingClient(
                 instance_url,
@@ -75,6 +82,7 @@ class Neuro:
             db=self.db,
             misskey=self.misskey,
             openai=self.openai,
+            fetcher=self.fetcher,
             bot=self,
         )
         self.pipeline = ResponsePipeline(

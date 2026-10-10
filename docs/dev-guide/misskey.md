@@ -26,7 +26,7 @@ REST 负责查询与写入，Streaming 接收实时事件，协议适配集中�
 | `chat/messages/room-timeline` | 群聊记录 | `get_room_messages()` |
 | `drive/files/show` | 文件信息 | `drive.show_file()` |
 | `drive/files/create` | 上传文件 | `drive.upload_bytes()` |
-| 文件 URL（`GET`） | 下载文件 | `drive.fetch_bytes()`、`drive.download_bytes()` |
+| 文件 URL（`GET`） | 下载文件 | `drive.fetch_bytes()`、`drive.download_bytes()`，经 `clients/fetch` 校验目标 |
 
 - 共享 32 并发槽位，单次超时 60 秒，统一经 `MisskeyAPI` / `MisskeyDrive` 复用会话与约束。
 - 读请求对连接错误与限流最多重试 2 次（指数退避加抖动）；写请求不重试，避免重复提交。

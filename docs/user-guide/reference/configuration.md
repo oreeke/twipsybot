@@ -81,8 +81,15 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 | `log_level` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `dump_events` | `false` | 记录原始 Streaming 事件 |
 | `db_clear_days` | `-1` | 回复限制状态保留天数，`-1` 不清理 |
+| `allow_nets` | `[]` | 允许访问的 CIDR 列表，见[链接下载安全](#链接下载安全) |
 
 数据库 `data/twipsybot.db` 与日志 `data/logs/twipsybot.log` 路径固定。
+
+### 链接下载安全
+
+附件、图片生成结果与 Web 抓取的外部 URL 仅允许公网 `http(s)` 地址，重定向同样校验；Misskey 实例与管理员配置的端点不受限。
+
+Fake-IP 代理等环境会把域名解析到保留网段，需将其填入 `allow_nets`。仅填信任的网段，内网网段会让机器人可访问这些内网地址。
 
 ## plugins
 
@@ -106,4 +113,4 @@ plugins:
       ping = pong
 ```
 
-多行字段（KeyAct `rules`、Topics `rss_list`、Web `allow_domains` / `block_domains` / `trusted_proxy`）原样保存，也接受 YAML 列表。
+多行字段（KeyAct `rules`、Topics `rss_list`、Web `allow_domains` / `block_domains`）原样保存，也接受 YAML 列表。

@@ -20,6 +20,7 @@ from .contracts import PluginContext
 from .events import AutoPostVisibility, build_hook_event
 from .services import (
     BotControlAdapter,
+    HttpServiceAdapter,
     MisskeyServiceAdapter,
     NamespacedPluginStorage,
     OpenAIServiceAdapter,
@@ -173,6 +174,7 @@ class PluginManager:
         db: Any,
         misskey: Any,
         openai: Any,
+        fetcher: Any,
         bot: Any,
     ):
         self.config = config
@@ -182,6 +184,7 @@ class PluginManager:
         self.db = db
         self.misskey = misskey
         self.openai = openai
+        self.fetcher = fetcher
         self.bot = bot
         self._master_config: dict[str, Any] = {}
         self._accepting_hooks = False
@@ -299,6 +302,7 @@ class PluginManager:
             storage=NamespacedPluginStorage(self.db, plugin_name),
             misskey=MisskeyServiceAdapter(self.misskey),
             openai=OpenAIServiceAdapter(self.openai, self.config),
+            http=HttpServiceAdapter(self.fetcher),
             bot=BotControlAdapter(self.bot),
         )
         return plugin_class(context)

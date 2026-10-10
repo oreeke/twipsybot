@@ -120,6 +120,15 @@ def test_reply_limit_defaults(write_config: WriteConfig) -> None:
     assert config.get(ConfigKeys.REPLY_TURNS_RELEASE) == 3600
     assert config.get(ConfigKeys.BOT_MAX_TOKENS) == 2000
     assert config.get(ConfigKeys.SYSTEM_DB_CLEAR_DAYS) == -1
+    assert config.get(ConfigKeys.SYSTEM_ALLOW_NETS) == []
+
+
+def test_allow_nets_are_normalized_and_validated(write_config: WriteConfig) -> None:
+    config = write_config(system={"allow_nets": ["198.18.0.1/15", "::1"]})
+
+    assert config.get(ConfigKeys.SYSTEM_ALLOW_NETS) == ["198.18.0.0/15", "::1/128"]
+    with pytest.raises(ConfigurationError, match="allow_nets"):
+        write_config(load=False, system={"allow_nets": ["nope"]}).load()
 
 
 def test_prompt_files_resolve_from_root(

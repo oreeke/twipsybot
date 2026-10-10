@@ -1,18 +1,15 @@
 import asyncio
-import ipaddress
 import re
-import socket
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol
 
 import aiohttp
-from aiohttp.abc import AbstractResolver, ResolveResult
 from bs4 import BeautifulSoup
 from cachetools import TTLCache
 from loguru import logger
-from pydantic import ByteSize, Field, IPvAnyNetwork
+from pydantic import ByteSize, Field
 from yarl import URL
 
 from twipsybot.plugin import (
@@ -40,9 +37,7 @@ _NOISE = [
     "header",
     "aside",
 ]
-_REDIRECTS = frozenset({301, 302, 303, 307, 308})
 _MAX_URLS = 3
-_MAX_REDIRECTS = 3
 _SNIPPET_CHARS = 500
 _CLOSING_TAG = "</web_results>"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; TwipsyWeb)"}
@@ -55,10 +50,6 @@ _REWRITE_PROMPT = (
     "将用户消息改写为一条简洁的网络搜索关键词，使用适合搜索的语言。"
     "只输出关键词，不要解释。"
 )
-
-
-_IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
-_IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 
 
 class _Config(PluginConfig):
@@ -79,7 +70,6 @@ class _Config(PluginConfig):
     cache_ttl: int = Field(600, ge=0)
     allow_domains: Annotated[tuple[str, ...], LineText] = ()
     block_domains: Annotated[tuple[str, ...], LineText] = ()
-    trusted_proxy: Annotated[tuple[IPvAnyNetwork, ...], LineText] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,10 +77,6 @@ class _Source:
     title: str
     url: str
     body: str
-
-
-def _is_public(ip: _IPAddress, trusted: tuple[_IPNetwork, ...]) -> bool:
-    return ip.is_global or any(ip in network for network in trusted)
 
 
 class _Provider(Protocol):
@@ -123,41 +109,6 @@ class _SearXNG:
 _PROVIDERS: dict[str, Callable[[aiohttp.ClientSession, _Config], _Provider]] = {
     "searxng": _SearXNG,
 }
-
-
-class _PublicResolver(AbstractResolver):
-    def __init__(self, trusted: tuple[_IPNetwork, ...]) -> None:
-        self._inner = aiohttp.DefaultResolver()
-        self._trusted = trusted
-
-    async def resolve(
-        self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_INET
-    ) -> list[ResolveResult]:
-        hosts = await self._inner.resolve(host, port, family)
-        if public := [
-            h
-            for h in hosts
-            if _is_public(ipaddress.ip_address(h["host"]), self._trusted)
-        ]:
-            return public
-        raise OSError(f"blocked non-public address: {host}")
-
-    async def close(self) -> None:
-        await self._inner.close()
-
-
-def _public_url(value: str, trusted: tuple[_IPNetwork, ...] = ()) -> URL | None:
-    try:
-        url = URL(value)
-    except ValueError:
-        return None
-    if url.scheme not in {"http", "https"} or not url.host:
-        return None
-    try:
-        ip = ipaddress.ip_address(url.host)
-    except ValueError:
-        return url
-    return url if _is_public(ip, trusted) else None
 
 
 def _compact(text: str) -> str:
@@ -193,16 +144,11 @@ class WebPlugin(PluginBase):
         )
 
     async def initialize(self) -> bool:
-        timeout = aiohttp.ClientTimeout(total=self.settings.timeout)
-        resolver = _PublicResolver(self.settings.trusted_proxy)
-        client = aiohttp.ClientSession(timeout=timeout, headers=_HEADERS)
-        self._fetcher = aiohttp.ClientSession(
-            timeout=timeout,
+        client = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.settings.timeout),
             headers=_HEADERS,
-            connector=aiohttp.TCPConnector(resolver=resolver),
         )
-        for resource in (client, self._fetcher, resolver):
-            self._register_resource(resource)
+        self._register_resource(client)
         try:
             self._provider = _PROVIDERS[self.settings.provider](client, self.settings)
         except ValueError as e:
@@ -304,12 +250,14 @@ class WebPlugin(PluginBase):
             logger.warning(f"Web fetch failed: {url}: {e!r}")
             return None
 
-    def _allowed(self, url: str) -> URL | None:
-        if not (safe := _public_url(url, self.settings.trusted_proxy)) or not (
-            host := safe.host
-        ):
-            return None
-        host = host.casefold()
+    def _allowed(self, url: str | URL) -> bool:
+        try:
+            parsed = URL(url)
+        except ValueError:
+            return False
+        if parsed.scheme not in {"http", "https"} or not parsed.host:
+            return False
+        host = parsed.host.casefold()
 
         def listed(domains: tuple[str, ...]) -> bool:
             return any(
@@ -318,42 +266,23 @@ class WebPlugin(PluginBase):
             )
 
         if listed(self.settings.block_domains):
-            return None
-        if self.settings.allow_domains and not listed(self.settings.allow_domains):
-            return None
-        return safe
+            return False
+        return not self.settings.allow_domains or listed(self.settings.allow_domains)
 
     async def _fetch(self, url: str) -> _Source | None:
-        for _ in range(_MAX_REDIRECTS + 1):
-            if not (safe := self._allowed(url)):
+        http = self.context.http
+        async with (
+            asyncio.timeout(self.settings.timeout),
+            http.open(url, allow=self._allowed) as resp,
+        ):
+            kind = resp.content_type
+            html = "html" in kind
+            if resp.status != 200 or not (html or kind.startswith("text/")):
                 return None
-            async with self._fetcher.get(safe, allow_redirects=False) as resp:
-                if resp.status in _REDIRECTS and (
-                    target := resp.headers.get("Location")
-                ):
-                    url = str(safe.join(URL(target)))
-                    continue
-                kind = resp.content_type
-                html = "html" in kind
-                if resp.status != 200 or not (html or kind.startswith("text/")):
-                    return None
-                body = await self._read(resp)
-            title, text = await asyncio.to_thread(_extract, body, html=html)
-            return _Source(
-                title or safe.host or url, url, text[: self.settings.max_chars]
-            )
-        return None
-
-    async def _read(self, resp: aiohttp.ClientResponse) -> bytes:
-        limit = int(self.settings.max_bytes)
-        chunks: list[bytes] = []
-        size = 0
-        async for chunk in resp.content.iter_chunked(65536):
-            chunks.append(chunk)
-            size += len(chunk)
-            if size >= limit:
-                break
-        return b"".join(chunks)[:limit]
+            body = await http.read(resp, int(self.settings.max_bytes), truncate=True)
+            host = resp.url.host
+        title, text = await asyncio.to_thread(_extract, body, html=html)
+        return _Source(title or host or url, url, text[: self.settings.max_chars])
 
     def _render(self, sources: list[_Source]) -> str:
         budget = self.settings.max_chars

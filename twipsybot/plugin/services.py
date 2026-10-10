@@ -1,9 +1,22 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from typing import Any
 
+from yarl import URL
+
 from ..shared.config_keys import ConfigKeys
 from ..shared.locks import KeyedAsyncLock, actor_key
+
+
+class HttpServiceAdapter:
+    def __init__(self, fetcher: Any):
+        self._fetcher = fetcher
+
+    def open(self, url: str | URL, *, allow: Callable[[URL], bool] | None = None):
+        return self._fetcher.open(url, allow=allow)
+
+    async def read(self, response: Any, max_bytes: int, *, truncate: bool = False):
+        return await self._fetcher.read(response, max_bytes, truncate=truncate)
 
 
 class DriveServiceAdapter:

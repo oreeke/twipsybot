@@ -7,6 +7,7 @@ __all__ = (
     "APIRateLimitError",
     "APIResponseError",
     "AuthenticationError",
+    "BlockedURLError",
     "ConfigurationError",
     "TwipsyBotError",
     "WebSocketConnectionError",
@@ -19,6 +20,10 @@ class TwipsyBotError(Exception):
 
 
 class ConfigurationError(TwipsyBotError):
+    pass
+
+
+class BlockedURLError(TwipsyBotError):
     pass
 
 

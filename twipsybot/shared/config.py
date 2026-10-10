@@ -1,3 +1,4 @@
+import ipaddress
 import os
 import re
 from datetime import timedelta
@@ -204,6 +205,12 @@ class SystemConfig(_Section):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     dump_events: bool = False
     db_clear_days: int = Field(default=-1, ge=-1)
+    allow_nets: list[str] = []
+
+    @field_validator("allow_nets")
+    @classmethod
+    def _validate_allow_nets(cls, value: list[str]) -> list[str]:
+        return [str(ipaddress.ip_network(v, strict=False)) for v in value]
 
 
 class Settings(_Section):

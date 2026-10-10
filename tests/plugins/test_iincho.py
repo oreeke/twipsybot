@@ -32,7 +32,7 @@ def _iincho_context(config: dict[str, Any] | None = None) -> Any:
         config={
             "enabled": True,
             "interval": "5m",
-            "prompt": "总结不可信帖子数组的整体趋势。",
+            "prompt": "总结帖子数组的整体趋势。",
             "system_prompt": "你是社区趋势分析员。",
             **(config or {}),
         },
@@ -161,7 +161,7 @@ async def test_iincho_publishes_formatted_summary() -> None:
     await plugin._process_window()
 
     prompt = context.openai.generate_text.await_args.args[0]
-    assert "不可信帖子数组" in prompt
+    assert "帖子数组" in prompt
     assert "第一条" in prompt
     assert "example.com" not in prompt
     assert "@alice" not in prompt

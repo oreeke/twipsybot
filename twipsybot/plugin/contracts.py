@@ -1,16 +1,34 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import aiohttp
+from yarl import URL
+
 __all__ = (
     "BotControl",
     "DriveService",
+    "HttpService",
     "MisskeyService",
     "OpenAIService",
     "PluginContext",
     "PluginStorage",
 )
+
+
+class HttpService(Protocol):
+    def open(
+        self, url: str | URL, *, allow: Callable[[URL], bool] | None = None
+    ) -> AbstractAsyncContextManager[aiohttp.ClientResponse]: ...
+
+    async def read(
+        self,
+        response: aiohttp.ClientResponse,
+        max_bytes: int,
+        *,
+        truncate: bool = False,
+    ) -> bytes: ...
 
 
 class DriveService(Protocol):
@@ -130,4 +148,5 @@ class PluginContext:
     storage: PluginStorage
     misskey: MisskeyService
     openai: OpenAIService
+    http: HttpService
     bot: BotControl

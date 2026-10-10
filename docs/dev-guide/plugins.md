@@ -5,7 +5,7 @@ description: 使用 TwipsyBot 插件 API 编写事件 Hook、配置、存储与�
 
 # 插件开发
 
-本地插件位于 `plugins/<name>/plugin.py`，以模块级 `plugin` 导出插件类。入口按单文件加载，不支持相对导入，多模块插件请用 [Entry Points](#entry-points)。配置来自 `plugins.<name>`，可由 `twipsybot cfg` 编辑。
+本地插件位于 `plugins/<name>/plugin.py`，以模块级 `plugin` 导出插件类。插件目录按包加载，多模块插件可用相对导入（如 `from .helper import x`）。如需自动安装依赖或独立版本管理时请用 [Entry Points](#entry-points)。配置来自 `plugins.<name>`，可由 `twipsybot cfg` 编辑。
 
 ## 最小插件
 
@@ -149,7 +149,7 @@ return {"prompt": "围绕开源维护写一篇短文。"}
 
 | `self.context.*` | 说明 |
 | --- | --- |
-| `name` | 插件 ID：本地为目录名，第三方为 Entry Point 名 |
+| `name` | 插件 ID：本地为目录名，外部为 Entry Point 名 |
 | `config` | `plugins.<name>` 原始配置的只读映射 |
 | `storage` | 按插件 ID 隔离的字符串存储 |
 | `misskey` | 发帖、转帖、反应、聊天、用户、天线与 Drive |

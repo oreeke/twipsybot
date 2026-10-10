@@ -116,19 +116,27 @@ def _plugin_sources(plugins_dir: Path) -> dict[str, Path | EntryPoint]:
     return sources
 
 
+def _drop_modules(package: str) -> None:
+    for name in [n for n in sys.modules if n == package or n.startswith(f"{package}.")]:
+        del sys.modules[name]
+
+
 def _load_plugin_module(plugin_dir: Path, plugin_file: Path):
     digest = hashlib.sha256(str(plugin_file.resolve()).encode()).hexdigest()[:12]
     spec = importlib.util.spec_from_file_location(
-        f"_twipsybot_plugin_{plugin_dir.name}_{digest}", plugin_file
+        f"_twipsybot_plugin_{plugin_dir.name}_{digest}",
+        plugin_file,
+        submodule_search_locations=[str(plugin_dir)],
     )
     if spec is None or spec.loader is None:
         raise ImportError("failed to load plugin spec")
+    _drop_modules(spec.name)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     try:
         spec.loader.exec_module(module)
     except BaseException:
-        sys.modules.pop(spec.name, None)
+        _drop_modules(spec.name)
         raise
     return module
 

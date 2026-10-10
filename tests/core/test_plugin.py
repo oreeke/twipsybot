@@ -536,6 +536,51 @@ async def test_failed_plugin_import_removes_partial_module(
     )
 
 
+async def test_plugin_directory_supports_relative_imports(
+    tmp_path: Path, make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "multi_file"
+    plugin_dir.mkdir(parents=True)
+    set_plugin_config(tmp_path, "multi_file", {"enabled": True})
+    (plugin_dir / "helper.py").write_text("VALUE = 'ok'\n", encoding="utf-8")
+    (plugin_dir / "plugin.py").write_text(
+        "from twipsybot.plugin import PluginBase\n"
+        "from .helper import VALUE\n\n"
+        "class MultiFilePlugin(PluginBase):\n"
+        "    api_version = 3\n"
+        "    value = VALUE\n\n"
+        "plugin = MultiFilePlugin\n",
+        encoding="utf-8",
+    )
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    plugin = bot.plugin_manager.get_plugin("multi_file")
+    assert plugin is not None
+    assert plugin.value == "ok"  # type: ignore[attr-defined]
+
+
+async def test_failed_plugin_import_removes_loaded_submodules(
+    make_bot: MakeBot, write_config: WriteConfig, tmp_path: Path
+) -> None:
+    module_prefix = "_twipsybot_plugin_broken_sub_"
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "broken_sub"
+    plugin_dir.mkdir(parents=True)
+    set_plugin_config(tmp_path, "broken_sub", {"enabled": True})
+    (plugin_dir / "helper.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (plugin_dir / "plugin.py").write_text(
+        "from .helper import VALUE\nraise RuntimeError('broken import')\n",
+        encoding="utf-8",
+    )
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    assert bot.plugin_manager.get_plugin("broken_sub") is None
+    assert not [name for name in sys.modules if name.startswith(module_prefix)]
+
+
 async def test_entry_point_plugin_uses_central_config(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

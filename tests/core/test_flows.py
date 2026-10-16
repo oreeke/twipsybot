@@ -710,7 +710,7 @@ async def test_permanent_turn_limit_uses_manageable_blacklist(
     replies = misskey_server.calls["chat/messages/create-to-user"]
     assert [reply["text"] for reply in replies] == [
         DEFAULT_AI_REPLY,
-        "查看/修改黑名单:\n```\n已更新 blacklist\n\n(空)\n```",
+        "黑名单:\n```\n已更新 blacklist\n\n(空)\n```",
         DEFAULT_AI_REPLY,
     ]
 

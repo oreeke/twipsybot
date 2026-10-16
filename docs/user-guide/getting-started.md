@@ -73,7 +73,7 @@ docker compose logs -f twipsybot
 
 ```bash
 git clone https://github.com/oreeke/twipsybot.git && cd twipsybot
-uv sync --python 3.12
+uv sync
 uv run twipsybot cfg
 uv run twipsybot run
 ```

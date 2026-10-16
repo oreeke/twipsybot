@@ -9,7 +9,7 @@ description: 配置 TwipsyBot 本地开发环境并从源码运行。
 
 ```bash
 git clone https://github.com/oreeke/twipsybot.git && cd twipsybot
-uv sync --python 3.12 --extra dev --locked
+uv sync --extra dev --locked
 ```
 
 `--locked` 在 `pyproject.toml` 与 `uv.lock` 不一致时失败。依赖变更只通过 uv 命令完成。
@@ -18,7 +18,7 @@ uv sync --python 3.12 --extra dev --locked
 
 ```bash
 uv run --locked twipsybot cfg
-uv run --locked twipsybot config-check
+uv run --locked twipsybot cfg-check
 uv run --locked twipsybot run
 ```
 

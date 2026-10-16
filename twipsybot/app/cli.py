@@ -1,5 +1,3 @@
-from importlib.metadata import version as package_version
-
 import click
 from dotenv import load_dotenv
 
@@ -11,6 +9,9 @@ from . import main as app_main
 @click.group(
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
+)
+@click.version_option(
+    None, "-v", "--version", package_name="twipsybot", message="%(version)s"
 )
 @click.pass_context
 def app(ctx: click.Context) -> None:
@@ -31,15 +32,10 @@ def cfg() -> None:
     run_tui(Config())
 
 
-@app.command("config-check")
+@app.command("cfg-check")
 def config_check() -> None:
     Config().load()
     click.echo("configuration valid")
-
-
-@app.command("version")
-def version() -> None:
-    click.echo(package_version("twipsybot"))
 
 
 def main() -> int:

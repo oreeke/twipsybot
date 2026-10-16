@@ -31,6 +31,7 @@ from ..plugin.manager import discover_plugin_classes
 from ..shared.config import SECRETS, Config
 from ..shared.errors import ConfigurationError
 from ..shared.settings import get_dotted, read_settings, set_dotted, write_settings
+from ..shared.status import read_status
 from .logs import LogsPage
 from .schema import Section, Spec, build_sections, overlay, to_widget
 from .times import TimesField
@@ -53,6 +54,17 @@ _CHANGES = (
     TextArea.Changed,
     TimesField.Changed,
 )
+_STATUS_POLL_SECONDS = 2.0
+_BOT_LIGHTS = {"running": "success", "waiting": "warning"}
+_STREAM_LIGHTS = {
+    "connected": "success",
+    "initializing": "warning",
+    "reconnecting": "warning",
+}
+
+
+def _badge(label: str, state: str, lights: dict[str, str]) -> str:
+    return f"[$background on ${lights.get(state, 'error')}] {label} [/]"
 
 
 class Confirm(ModalScreen[str]):
@@ -97,6 +109,7 @@ class ConfigApp(App[None]):
         self._saved: dict[str, Any] = {}
         self._errors: dict[str, dict[str, str]] = {}
         self._unknown: dict[str, list[str]] = {}
+        self._bot_status = read_status(config.status_path)
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
@@ -113,6 +126,7 @@ class ConfigApp(App[None]):
 
     def on_mount(self) -> None:
         self.theme = "tokyo-night"
+        self.set_interval(_STATUS_POLL_SECONDS, self._poll_status)
         self.call_after_refresh(self._start)
 
     def _start(self) -> None:
@@ -224,11 +238,20 @@ class ConfigApp(App[None]):
 
     def _connect_text(self) -> str:
         host = urlsplit(self._get("misskey_url").strip()).hostname
-        marks = [
-            f"{'[$success]✓[/]' if self._get(key).strip() else '[$error]✗[/]'} {label}"
-            for key, label in (("misskey_token", "token"), ("openai_api_key", "key"))
-        ]
-        return "  ".join([escape(host) if host else "[$error]no instance[/]", *marks])
+        return "  ".join(
+            [
+                escape(host) if host else "[$error]no instance[/]",
+                _badge("bot", self._bot_status.get("bot", ""), _BOT_LIGHTS),
+                _badge("stream", self._bot_status.get("stream", ""), _STREAM_LIGHTS),
+            ]
+        )
+
+    def _poll_status(self) -> None:
+        current = read_status(self.config.status_path)
+        if current != self._bot_status:
+            self._bot_status = current
+            if self._saved:
+                self.query_one("#env", Static).update(self._connect_text())
 
     def _widget_of(self, key: str) -> Widget:
         return self.query_one(f"#{self._ids[key]}")
@@ -332,9 +355,9 @@ class ConfigApp(App[None]):
         general.display = "" in errors
         nav = self.query_one("#nav", OptionList)
         nav.replace_option_prompt(self._pages[section.id], self._nav_text(section))
-        self._status()
+        self._sync_bars()
 
-    def _status(self) -> None:
+    def _sync_bars(self) -> None:
         dirty = [k for k in self._specs if self._is_dirty(k)]
         invalid = sum(len(e) for e in self._errors.values())
         restart = [k for k in dirty if self._specs[k].restart]

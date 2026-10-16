@@ -5,6 +5,7 @@ import sys
 from collections.abc import Callable
 from contextlib import suppress
 from io import TextIOWrapper
+from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -20,6 +21,7 @@ from ..shared.errors import (
 )
 from ..shared.keys import ConfigKeys
 from ..shared.logs import set_log_level, setup_logging
+from ..shared.status import HEARTBEAT_SECONDS, write_status
 from .banner import BANNER
 
 _RETRY_POLL_SECONDS = 2.0
@@ -64,14 +66,30 @@ class BotRunner:
         setup_logging(config.log_path, "INFO")
         print(BANNER)
         self._setup_monitoring_and_signals()
+        heartbeat = asyncio.create_task(self._heartbeat(config.status_path))
         try:
             if await self._start(config):
                 await self.shutdown_event.wait()
         finally:
+            heartbeat.cancel()
             try:
                 await asyncio.shield(self.shutdown())
             except Exception:
                 logger.exception("Error during shutdown")
+            with suppress(OSError):
+                config.status_path.unlink(missing_ok=True)
+
+    async def _heartbeat(self, path: Path) -> None:
+        while True:
+            bot = self.bot
+            running = bot is not None and bot.runtime.running
+            with suppress(OSError):
+                write_status(
+                    path,
+                    "running" if running else "waiting",
+                    bot.streaming.state if bot else "disconnected",
+                )
+            await asyncio.sleep(HEARTBEAT_SECONDS)
 
     async def _start(self, config: Config) -> bool:
         loop = asyncio.get_running_loop()

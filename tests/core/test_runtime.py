@@ -33,6 +33,7 @@ from twipsybot.shared.errors import (
 )
 from twipsybot.shared.keys import ConfigKeys
 from twipsybot.shared.settings import read_settings, write_settings
+from twipsybot.shared.status import read_status
 
 
 @pytest.mark.parametrize("plugin_count", (0, 5))
@@ -68,8 +69,8 @@ async def test_admin_status_preserves_code_block_layout(
     assert response is not None
     assert response.count("```") == 2
     assert "状态  🟨 未运行 · " in response
-    assert "连接  🟩 connected" in response.splitlines()
-    assert "任务  stream 🟨 · scheduler 🟨" in response.splitlines()
+    assert "连接" not in response
+    assert "任务  🟨 stream · 🟨 scheduler" in response.splitlines()
     assert " · busy 0 · queue 0/1000" in response
     assert "存活" not in response
     assert "忙" not in response
@@ -82,30 +83,6 @@ async def test_admin_status_preserves_code_block_layout(
     else:
         assert "chat x1\n授权  1" in response
     assert "授权  1" in response.splitlines()
-
-
-@pytest.mark.parametrize(
-    ("status", "running", "expected"),
-    (
-        ("connected", True, "🟩"),
-        ("initializing", True, "🟨"),
-        ("reconnecting", True, "🟨"),
-        ("disconnected", True, "🟥"),
-        ("disconnected", False, "🟨"),
-    ),
-)
-async def test_admin_status_connection_markers(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    monkeypatch: pytest.MonkeyPatch,
-    status: str,
-    running: bool,
-    expected: str,
-) -> None:
-    bot = await make_bot(write_config())
-    monkeypatch.setattr(bot.runtime, "running", running)
-    bot.streaming.state = status
-    assert f"连接  {expected} {status}" in handlers.status_text(bot).splitlines()
 
 
 @pytest.mark.parametrize(
@@ -128,7 +105,7 @@ async def test_admin_status_scheduler_markers(
     bot = await make_bot(write_config())
     monkeypatch.setattr(bot.runtime, "running", running)
     monkeypatch.setattr(bot.scheduler, "state", state)
-    assert handlers.task_status_text(bot) == f"任务  stream 🟨 · scheduler {expected}"
+    assert handlers.task_status_text(bot) == f"任务  🟨 stream · {expected} scheduler"
 
 
 @pytest.mark.parametrize(
@@ -165,7 +142,7 @@ async def test_admin_status_reports_stream_task_state(
             await asyncio.gather(task, return_exceptions=True)
         text = handlers.status_text(bot)
         scheduler = "🟥" if running else "🟨"
-        assert f"任务  stream {expected} · scheduler {scheduler}" in text.splitlines()
+        assert f"任务  {expected} stream · {scheduler} scheduler" in text.splitlines()
         status = "🟩 运行中" if running else "🟨 未运行"
         assert f"状态  {status} · " in text
         assert "private details" not in text
@@ -360,6 +337,17 @@ def test_cli_propagates_run_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_cli.app_main, "main", lambda: 4)
 
     assert app_cli.main() == 4
+
+
+async def test_heartbeat_reports_bot_and_stream_state(tmp_path: Path) -> None:
+    path = tmp_path / "status.json"
+    runner = app_main.BotRunner()
+    beat = asyncio.create_task(runner._heartbeat(path))
+    try:
+        await asyncio.sleep(0.05)
+        assert read_status(path) == {"bot": "waiting", "stream": "disconnected"}
+    finally:
+        beat.cancel()
 
 
 async def test_startup_waits_for_settings_then_retries(

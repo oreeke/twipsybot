@@ -36,5 +36,5 @@ docker compose exec twipsybot twipsybot cfg
 </div>
 
 <p align="center">
-    <img src="assets/connect.png" alt="Screenshot" width="100%">
+    <img src="assets/connect.svg" alt="Screenshot" width="100%">
 </p>

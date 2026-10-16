@@ -12,7 +12,13 @@ docker compose ps
 docker compose logs -f --tail 200 twipsybot
 ```
 
-本地运行可用 `twipsybot version`、`twipsybot config-check`。管理员发送 `^status` 可查看账号、模型、运行时长、开关与插件数；TUI 的 `OPS → logs` 可实时查看日志。
+本地运行可用 `twipsybot --version`、`twipsybot cfg-check`。管理员发送 `^status` 可查看账号、模型、运行时长、开关与插件数；TUI 的 `OPS → logs` 可实时查看日志。
+
+TUI 右上角状态：
+
+`bot`（运行中、等待设置、未运行）
+
+`stream`（已连接、连接中或重连、断开）
 
 配置修改规则见[生效方式](configuration.md#生效方式)。管理命令的修改同样写入 `data/settings.yaml`，重启后保留。
 
@@ -24,6 +30,7 @@ docker compose logs -f --tail 200 twipsybot
 | `data/secrets.yaml` | 连接信息与凭据 |
 | `data/twipsybot.db` | 轮转发帖计数、回复限制状态、插件私有数据 |
 | `data/logs/twipsybot.log` | 日志 |
+| `data/status.json` | 运行心跳（每 3 秒刷新，退出时删除） |
 
 `system.db_clear_days` 仅清理回复限制状态（最近回复时间、轮数、临时封禁）；删除数据库会重置全部状态。
 
@@ -43,14 +50,14 @@ docker compose up -d
 ```bash [uv]
 git pull --ff-only
 uv sync
-uv run twipsybot config-check
+uv run twipsybot cfg-check
 uv run twipsybot run
 ```
 
 ```bash [pip]
 git pull --ff-only
 pip install -e .
-twipsybot config-check
+twipsybot cfg-check
 twipsybot run
 ```
 

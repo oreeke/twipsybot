@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,7 @@ from textual.widgets import Button, Input, OptionList, Switch, TextArea
 from twipsybot.plugin.manager import discover_plugin_classes
 from twipsybot.shared.config import Config
 from twipsybot.shared.settings import read_settings, write_settings
+from twipsybot.shared.status import read_status, write_status
 from twipsybot.tui import ConfigApp, logs
 from twipsybot.tui.logs import LogTail
 from twipsybot.tui.schema import build_sections
@@ -206,6 +209,37 @@ async def test_cfg_connect_writes_secrets_and_locks_env(
         "misskey_token": "tok",
     }
     assert not config.settings_path.exists()
+
+
+async def test_cfg_shows_bot_and_stream_status(tmp_path: Path) -> None:
+    config = Config(_root(tmp_path))
+    config.status_path.parent.mkdir(parents=True)
+    app = ConfigApp(config)
+    async with app.run_test() as pilot:
+        await _until(pilot, lambda: bool(app._saved))
+        assert app._connect_text().count("on $error") == 2
+        write_status(config.status_path, "running", "reconnecting")
+        app._poll_status()
+        text = app._connect_text()
+        assert "on $success] bot " in text
+        assert "on $warning] stream " in text
+        write_status(config.status_path, "waiting", "disconnected")
+        app._poll_status()
+        text = app._connect_text()
+        assert "on $warning] bot " in text
+        assert "on $error] stream " in text
+
+
+def test_status_round_trip_and_expiry(tmp_path: Path) -> None:
+    path = tmp_path / "status.json"
+    assert read_status(path) == {"bot": "stopped", "stream": "disconnected"}
+    write_status(path, "running", "connected")
+    assert read_status(path) == {"bot": "running", "stream": "connected"}
+    old = time.time() - 60
+    os.utime(path, (old, old))
+    assert read_status(path)["bot"] == "stopped"
+    path.write_text("[]", encoding="utf-8")
+    assert read_status(path)["bot"] == "stopped"
 
 
 async def test_cfg_saves_plugin_secrets_to_secrets_file(tmp_path: Path) -> None:

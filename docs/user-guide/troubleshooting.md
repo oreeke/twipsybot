@@ -19,7 +19,7 @@ docker compose logs --tail 200 twipsybot
 
 ## `Configuration error`
 
-运行 `twipsybot config-check`，报错会指出具体字段。
+运行 `twipsybot cfg-check`，报错会指出具体字段。
 
 ## 无法连接 Misskey
 

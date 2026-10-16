@@ -88,22 +88,22 @@ class AdminCommandService:
             ),
             "mention": _Command(
                 partial(set_bool, ConfigKeys.REPLY_MENTION, "mention"),
-                "响应提及开关",
+                "提及",
                 "on|off",
             ),
             "chat": _Command(
                 partial(set_bool, ConfigKeys.REPLY_CHAT, "chat"),
-                "响应聊天开关",
+                "聊天",
                 "on|off",
             ),
             "whitelist": _Command(
                 partial(user_list, ConfigKeys.REPLY_WHITELIST, "whitelist"),
-                "查看/修改白名单",
+                "白名单",
                 "[list|add|del|set|clear]",
             ),
             "blacklist": _Command(
                 partial(user_list, ConfigKeys.REPLY_BLACKLIST, "blacklist"),
-                "查看/修改黑名单",
+                "黑名单",
                 "[list|add|del|set|clear]",
             ),
         }

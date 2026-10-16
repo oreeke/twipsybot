@@ -266,6 +266,7 @@ class Config:
         self.secrets_path = self.root / "data" / "secrets.yaml"
         self.db_path = self.root / "data" / "twipsybot.db"
         self.log_path = self.root / "data" / "logs" / "twipsybot.log"
+        self.status_path = self.root / "data" / "status.json"
         self.data: dict[str, Any] = {}
         self.fingerprint: tuple[tuple[int, int], ...] = ()
         self._watched: tuple[Path, ...] = (self.settings_path, self.secrets_path)

@@ -60,7 +60,7 @@ def task_status_text(bot: "Neuro") -> str:
         healthy=bot.scheduler.state == STATE_RUNNING,
         waiting=bot.scheduler.state == STATE_PAUSED or not running,
     )
-    return f"任务  stream {stream} · scheduler {scheduler}"
+    return f"任务  {stream} stream · {scheduler} scheduler"
 
 
 def auto_post_status_text(bot: "Neuro") -> str:
@@ -99,10 +99,6 @@ def _channel_status_text(bot: "Neuro") -> str:
 def status_text(bot: "Neuro") -> str:
     running = bot.runtime.running
     uptime = (datetime.now(UTC) - bot.runtime.startup_time).total_seconds()
-    connection = _light(
-        healthy=bot.streaming.state == "connected",
-        waiting=bot.streaming.state in {"initializing", "reconnecting"} or not running,
-    )
     events = bot.streaming.events.status()
     parts = [
         f"版本  {package_version('twipsybot')}",
@@ -110,7 +106,6 @@ def status_text(bot: "Neuro") -> str:
             f"状态  {_light(healthy=running)} {'运行中' if running else '未运行'}"
             f" · {_format_duration(uptime)}"
         ),
-        f"连接  {connection} {bot.streaming.state}",
         task_status_text(bot),
         (
             f"事件  worker {events['workers_alive']}/{events['workers_total']}"

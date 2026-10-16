@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.25.0 - 2026-10-16
+
+TUI 运行与连接状态
+
+### Added
+
+- 机器人运行时写入 `data/status.json`，正常退出时删除
+- TUI 右上角以不同底色显示 `bot` 与 `stream` 状态
+
+### Removed
+
+- `twipsybot version` 子命令，改用 `--version`
+- TUI 右上角的 token 与 key 校验标记
+
+<br>
+
 ## 0.24.0 - 2026-10-14
 
 参与他人帖或引用帖互动，并带回复链，Vision 更名为 Media

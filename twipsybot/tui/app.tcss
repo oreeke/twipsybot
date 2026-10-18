@@ -94,12 +94,11 @@ Screen {
     height: auto;
     min-height: 2;
     max-height: 12;
-    max-width: 96;
+    max-width: 64;
 }
 
 .cell TextArea.list {
     max-height: 8;
-    max-width: 64;
 }
 
 .cell Switch {
@@ -194,7 +193,41 @@ Confirm {
 }
 
 #dialog Button {
+    width: auto;
+    min-width: 0;
     margin-left: 2;
+    background: transparent;
+}
+
+#dialog Button:hover {
+    background: transparent;
+}
+
+#dialog #save {
+    color: $primary;
+}
+
+#dialog #discard {
+    color: $error;
+}
+
+#dialog #cancel {
+    color: $foreground-muted;
+}
+
+#dialog #save:focus {
+    color: $background;
+    background: $primary;
+}
+
+#dialog #discard:focus {
+    color: $background;
+    background: $error;
+}
+
+#dialog #cancel:focus {
+    color: $background;
+    background: $foreground-muted;
 }
 
 TimesField {

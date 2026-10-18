@@ -179,7 +179,8 @@ class Section:
                         ),
                         "",
                     )
-                    found.setdefault(key, err["msg"].removeprefix("Value error, "))
+                    msg = err["msg"].removeprefix("Value error, ")
+                    found.setdefault(key, msg[:1].lower() + msg[1:])
         return found
 
     def prune(self, raw: Mapping[str, Any]) -> dict[str, Any]:

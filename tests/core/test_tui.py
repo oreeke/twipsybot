@@ -144,7 +144,7 @@ async def test_cfg_validates_and_saves_minimal_diff(tmp_path: Path) -> None:
         widget("reply.memory").value = "500"
         await _until(pilot, lambda: bool(app._errors["reply"]))
         assert app._errors["reply"] == {
-            "reply.memory": "Input should be less than or equal to 100"
+            "reply.memory": "input should be less than or equal to 100"
         }
         assert app.action_save() is False
         assert not config.settings_path.exists()
@@ -217,17 +217,17 @@ async def test_cfg_shows_bot_and_stream_status(tmp_path: Path) -> None:
     app = ConfigApp(config)
     async with app.run_test() as pilot:
         await _until(pilot, lambda: bool(app._saved))
-        assert app._connect_text().count("on $error") == 2
+        assert app._connect_text().count("[$error]●[/]") == 2
         write_status(config.status_path, "running", "reconnecting")
         app._poll_status()
         text = app._connect_text()
-        assert "on $success] bot " in text
-        assert "on $warning] stream " in text
+        assert "[$success]●[/] bot" in text
+        assert "[$warning]●[/] stream" in text
         write_status(config.status_path, "waiting", "disconnected")
         app._poll_status()
         text = app._connect_text()
-        assert "on $warning] bot " in text
-        assert "on $error] stream " in text
+        assert "[$warning]●[/] bot" in text
+        assert "[$error]●[/] stream" in text
 
 
 def test_status_round_trip_and_expiry(tmp_path: Path) -> None:

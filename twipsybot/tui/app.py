@@ -1,6 +1,7 @@
 import os
 from collections.abc import Iterable
 from contextlib import suppress
+from importlib.metadata import version
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -64,19 +65,19 @@ _STREAM_LIGHTS = {
 
 
 def _badge(label: str, state: str, lights: dict[str, str]) -> str:
-    return f"[$background on ${lights.get(state, 'error')}] {label} [/]"
+    return f"[${lights.get(state, 'error')}]●[/] {label}"
 
 
 class Confirm(ModalScreen[str]):
-    BINDINGS = [Binding("escape", "dismiss('cancel')", "Cancel")]
+    BINDINGS = [Binding("escape", "dismiss('cancel')", "cancel")]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label("Unsaved changes", id="dialog-title")
+            yield Label("unsaved changes", id="dialog-title")
             with Horizontal(id="dialog-buttons"):
-                yield Button("Save", variant="primary", id="save", compact=True)
-                yield Button("Discard", variant="error", id="discard", compact=True)
-                yield Button("Cancel", id="cancel", compact=True)
+                yield Button("save", variant="primary", id="save", compact=True)
+                yield Button("discard", variant="error", id="discard", compact=True)
+                yield Button("cancel", id="cancel", compact=True)
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
@@ -87,9 +88,9 @@ class ConfigApp(App[None]):
     CSS_PATH = "app.tcss"
     TITLE = "twipsybot cfg"
     BINDINGS = [
-        Binding("ctrl+s", "save", "Save"),
-        Binding("ctrl+r", "reload", "Reload"),
-        Binding("ctrl+q", "quit", "Quit"),
+        Binding("ctrl+s", "save", "save"),
+        Binding("ctrl+r", "reload", "reload"),
+        Binding("ctrl+q", "quit", "quit"),
         Binding("slash", "search", show=False),
     ]
 
@@ -113,7 +114,9 @@ class ConfigApp(App[None]):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
-            yield Static("[b]twipsybot[/] [dim]cfg[/]", id="brand")
+            yield Static(
+                f"[b]twipsybot[/] [$accent 50%]{version('twipsybot')}[/]", id="brand"
+            )
             yield Static(id="env")
         with Horizontal(id="body"):
             yield OptionList(*self._nav(), id="nav")
@@ -150,7 +153,7 @@ class ConfigApp(App[None]):
 
         groups = {
             "CORE": options(False),
-            "OPS": [Option("  logs", id="logs")],
+            "OPS": [Option("  [dim]›[/] logs", id="logs")],
             "PLUGINS": options(True),
         }
         for i, (title, items) in enumerate((k, v) for k, v in groups.items() if v):
@@ -222,10 +225,10 @@ class ConfigApp(App[None]):
 
     def _nav_text(self, section: Section) -> str:
         ready = bool(self._saved)
-        dot = " "
+        dot = "  [dim]›[/] "
         if section.plugin:
             on = ready and self._get(f"{section.key}.enabled")
-            dot = "[$success]●[/]" if on else "[dim]○[/]"
+            dot = "  [$success]●[/] " if on else "  [dim]○[/] "
         tail = ""
         if self._errors.get(section.id):
             tail = " [$error]![/]"
@@ -234,7 +237,7 @@ class ConfigApp(App[None]):
             or any(self._is_dirty(s.key) for s in section.specs)
         ):
             tail = " [$warning]•[/]"
-        return f"{dot} {section.title}{tail}"
+        return f"{dot}{section.title}{tail}"
 
     def _connect_text(self) -> str:
         host = urlsplit(self._get("misskey_url").strip()).hostname
@@ -426,11 +429,11 @@ class ConfigApp(App[None]):
             for section in invalid:
                 self._refresh(section)
             self._goto(invalid[0])
-            self.notify("Fix invalid fields first", severity="error")
+            self.notify("fix invalid fields first", severity="error")
             return False
         dirty = {k for k in self._specs if self._is_dirty(k)}
         if not dirty and not self._unknown:
-            self.notify("Nothing to save")
+            self.notify("nothing to save")
             return True
         try:
             self._write(dirty)

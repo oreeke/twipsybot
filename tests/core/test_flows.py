@@ -34,6 +34,36 @@ _CHAT_MESSAGE = {
     "user": {"id": "user-2", "username": "bob"},
 }
 
+_PNG = b"\x89PNG\r\n\x1a\nimage"
+_T2X_SOURCE = (Path(__file__).parents[2] / "plugins" / "t2x" / "plugin.py").read_text(
+    encoding="utf-8"
+)
+_IMAGE_OPTIONS = {
+    "model": "gpt-image-1",
+    "size": None,
+    "quality": None,
+    "base_url": None,
+    "api_key": None,
+}
+
+
+@pytest.fixture
+def t2x_dir(make_plugin_dir: MakePluginDir) -> Path:
+    return make_plugin_dir(
+        "t2x",
+        _T2X_SOURCE,
+        config="enabled: true\nimage:\n  model: gpt-image-1\n",
+    )
+
+
+def _mock_image_backend(bot: Any, file_id: str) -> None:
+    bot.openai.generate_image = AsyncMock(return_value=_PNG)
+    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": file_id})
+
+
+async def _settle(bot: Any) -> None:
+    await asyncio.gather(*bot.runtime._background)
+
 
 async def test_streaming_channels_follow_timeline_and_antenna_config(
     make_bot: MakeBot,
@@ -163,25 +193,21 @@ async def test_mention_generates_and_attaches_image(
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
+    t2x_dir: Path,
 ) -> None:
-    bot = await make_bot(
-        write_config(
-            bot={"image_model": "gpt-image-1", "admins": ["user-1"]},
-        )
-    )
-    bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
-    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": "file-1"})
+    bot = await make_bot(write_config(bot={"admins": ["user-1"]}), plugins_dir=t2x_dir)
+    _mock_image_backend(bot, "file-1")
 
     await bot.mention.handle({**_MENTION_NOTE, "text": "@testbot /img 一只猫"})
+    await _settle(bot)
 
-    bot.openai.generate_image.assert_awaited_once_with("一只猫")
+    bot.openai.generate_image.assert_awaited_once_with("一只猫", **_IMAGE_OPTIONS)
     bot.misskey.drive.upload_bytes.assert_awaited_once_with(
-        b"\x89PNG\r\n\x1a\nimage",
-        name="generated.png",
-        content_type="image/png",
+        _PNG, name="generated.png", content_type="image/png"
     )
     assert openai_server.calls == []
-    note = misskey_server.calls["notes/create"][0]
+    ack, note = misskey_server.calls["notes/create"]
+    assert ack["text"] == "@alice\n正在生成图片，请稍候…"
     assert note["text"] == "@alice\n图片生成完成"
     assert note["fileIds"] == ["file-1"]
 
@@ -267,7 +293,7 @@ async def test_mention_context_hook_augments_prompt(
     assert openai_server.calls[0]["messages"][-1]["content"] == "CTX\n\n@testbot 你好"
 
 
-async def test_image_only_chat_is_handled_by_media_plugin(
+async def test_image_only_chat_is_handled_by_mllm_plugin(
     make_bot: MakeBot,
     make_plugin_dir: MakePluginDir,
     write_config: WriteConfig,
@@ -275,11 +301,11 @@ async def test_image_only_chat_is_handled_by_media_plugin(
     openai_server: FakeOpenAIServer,
 ) -> None:
     plugins_dir = make_plugin_dir(
-        "media_test",
-        "from plugins.media.plugin import MediaPlugin as BaseMediaPlugin\n\n\n"
-        "class MediaPlugin(BaseMediaPlugin):\n"
+        "mllm_test",
+        "from plugins.mllm.plugin import MLLMPlugin as BaseMLLMPlugin\n\n\n"
+        "class MLLMPlugin(BaseMLLMPlugin):\n"
         "    pass\n\n"
-        "plugin = MediaPlugin\n",
+        "plugin = MLLMPlugin\n",
         config=(
             "enabled: true\n"
             "use_thumbnail: false\n"
@@ -311,7 +337,7 @@ async def test_image_only_chat_is_handled_by_media_plugin(
     assert reply["text"] == DEFAULT_AI_REPLY
 
 
-async def test_mention_with_replied_image_is_handled_by_media_plugin(
+async def test_mention_with_replied_image_is_handled_by_mllm_plugin(
     make_bot: MakeBot,
     make_plugin_dir: MakePluginDir,
     write_config: WriteConfig,
@@ -319,11 +345,11 @@ async def test_mention_with_replied_image_is_handled_by_media_plugin(
     openai_server: FakeOpenAIServer,
 ) -> None:
     plugins_dir = make_plugin_dir(
-        "media_test",
-        "from plugins.media.plugin import MediaPlugin as BaseMediaPlugin\n\n\n"
-        "class MediaPlugin(BaseMediaPlugin):\n"
+        "mllm_test",
+        "from plugins.mllm.plugin import MLLMPlugin as BaseMLLMPlugin\n\n\n"
+        "class MLLMPlugin(BaseMLLMPlugin):\n"
         "    pass\n\n"
-        "plugin = MediaPlugin\n",
+        "plugin = MLLMPlugin\n",
         config="enabled: true\nuse_thumbnail: false\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
@@ -513,9 +539,6 @@ async def test_admin_command_takes_priority_over_plugins(
     reply = misskey_server.calls["chat/messages/create-to-user"][0]
     assert reply["text"].startswith("可用命令:\n```\n")
     assert "^model - 查看/切换模型 (用法: ^model [模型名]|reset)" in reply["text"]
-    assert (
-        "\n\n/img - 生成图片 (用法: /img <一只小狗在月球上弹吉他>)\n" in reply["text"]
-    )
     assert (
         "/post - 手动发帖 "
         "(用法: /post [-p|-h|-f] [-l] <发一篇关于夏天的帖子，150 字>)" in reply["text"]
@@ -813,20 +836,20 @@ async def test_chat_generates_and_attaches_image(
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
+    t2x_dir: Path,
 ) -> None:
-    bot = await make_bot(
-        write_config(
-            bot={"image_model": "gpt-image-1", "admins": ["user-2"]},
-        )
-    )
-    bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
-    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": "file-2"})
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}), plugins_dir=t2x_dir)
+    _mock_image_backend(bot, "file-2")
 
     await bot.chat.handle({**_CHAT_MESSAGE, "text": "/img sunrise over mountains"})
+    await _settle(bot)
 
-    bot.openai.generate_image.assert_awaited_once_with("sunrise over mountains")
+    bot.openai.generate_image.assert_awaited_once_with(
+        "sunrise over mountains", **_IMAGE_OPTIONS
+    )
     assert openai_server.calls == []
-    reply = misskey_server.calls["chat/messages/create-to-user"][0]
+    ack, reply = misskey_server.calls["chat/messages/create-to-user"]
+    assert ack["text"] == "正在生成图片，请稍候…"
     assert reply["text"] == "图片生成完成"
     assert reply["fileId"] == "file-2"
 
@@ -901,30 +924,36 @@ def test_manual_post_options_preserve_prompt_whitespace() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("command", "bot_config"),
-    [
-        ("/post 夏夜的风", {}),
-        ("/img 一只猫", {"image_model": "gpt-image-1"}),
-    ],
-    ids=("post", "image"),
-)
-async def test_chat_rejects_unauthorized_commands(
+async def test_chat_rejects_unauthorized_post_command(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
-    command: str,
-    bot_config: dict[str, Any],
 ) -> None:
-    bot = await make_bot(write_config(bot=bot_config))
+    bot = await make_bot(write_config())
+
+    await bot.chat.handle({**_CHAT_MESSAGE, "text": "/post 夏夜的风"})
+
+    assert openai_server.calls == []
+    assert "notes/create" not in misskey_server.calls
+    reply = misskey_server.calls["chat/messages/create-to-user"][0]
+    assert reply["text"] == "您没有权限使用命令。"
+
+
+async def test_chat_rejects_unauthorized_image_command(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+    t2x_dir: Path,
+) -> None:
+    bot = await make_bot(write_config(), plugins_dir=t2x_dir)
     bot.openai.generate_image = AsyncMock()
 
-    await bot.chat.handle({**_CHAT_MESSAGE, "text": command})
+    await bot.chat.handle({**_CHAT_MESSAGE, "text": "/img 一只猫"})
 
     bot.openai.generate_image.assert_not_awaited()
     assert openai_server.calls == []
-    assert "notes/create" not in misskey_server.calls
     reply = misskey_server.calls["chat/messages/create-to-user"][0]
     assert reply["text"] == "您没有权限使用命令。"
 
@@ -977,17 +1006,16 @@ async def test_slash_follower_gate_exempts_admins(
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
+    t2x_dir: Path,
 ) -> None:
     misskey_server.set_response("users/show", lambda payload: {"isFollowed": False})
-    bot = await make_bot(
-        write_config(bot={"image_model": "gpt-image-1", "admins": ["user-2"]})
-    )
-    bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
-    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": "file-1"})
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}), plugins_dir=t2x_dir)
+    _mock_image_backend(bot, "file-1")
 
     await bot.chat.handle({**_CHAT_MESSAGE, "text": "/img 一只猫"})
+    await _settle(bot)
 
-    bot.openai.generate_image.assert_awaited_once_with("一只猫")
+    bot.openai.generate_image.assert_awaited_once_with("一只猫", **_IMAGE_OPTIONS)
     assert "users/show" not in misskey_server.calls
 
 
@@ -1014,14 +1042,58 @@ async def test_slash_follower_check_is_cached_and_fails_closed(
     assert len(openai_server.calls) == 3
 
 
+async def test_plugin_followup_failure_is_logged_without_breaking_reply(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    plugins_dir = make_plugin_dir(
+        "later",
+        "from twipsybot.plugin import PLUGIN_API_VERSION, MessageEvent, PluginBase\n\n\n"
+        "class LaterPlugin(PluginBase):\n"
+        "    api_version = PLUGIN_API_VERSION\n\n"
+        "    async def on_message(self, event: MessageEvent):\n"
+        "        async def later():\n"
+        "            raise RuntimeError('boom')\n\n"
+        "        return self.handled('working', followup=later)\n\n"
+        "plugin = LaterPlugin\n",
+    )
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    await bot.chat.handle(_CHAT_MESSAGE)
+    await _settle(bot)
+
+    [reply] = misskey_server.calls["chat/messages/create-to-user"]
+    assert reply["text"] == "working"
+    assert not bot.runtime._background
+
+
+async def test_admin_check_matches_ids_and_canonical_handles(
+    make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    bot = await make_bot(write_config())
+    local = bot.limits.canonical_handle("alice")
+    bot.config.data["bot"]["admins"] = ["user-1", local, "carol@remote.example"]
+
+    admin = bot.admin
+    assert admin.is_admin("user-1", None)
+    assert admin.is_admin("other", "alice")
+    assert admin.is_admin("other", "carol@remote.example")
+    assert not admin.is_admin("other", "carol")
+    assert not admin.is_admin(None, "alice")
+    assert not admin.is_admin("other", None)
+
+
 async def test_admin_and_slash_commands_bypass_response_limits(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
 ) -> None:
     bot = await make_bot(
         write_config(
-            bot={"image_model": "gpt-image-1", "admins": ["user-2"]},
+            bot={"admins": ["user-2"]},
             reply={
                 "blacklist": ["user-2"],
                 "rate_limit": "1h",
@@ -1029,25 +1101,27 @@ async def test_admin_and_slash_commands_bypass_response_limits(
             },
         )
     )
-    bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
-    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": "file-2"})
     await bot.limits.record_response("user-2", count_turn=False)
 
     await bot.chat.handle({**_CHAT_MESSAGE, "text": "^help"})
-    await bot.chat.handle({**_CHAT_MESSAGE, "id": "msg-2", "text": "/img 一只猫"})
+    await bot.chat.handle({**_CHAT_MESSAGE, "id": "msg-2", "text": "/post 夏夜的风"})
 
-    bot.openai.generate_image.assert_awaited_once_with("一只猫")
+    assert len(misskey_server.calls["notes/create"]) == 1
     replies = misskey_server.calls["chat/messages/create-to-user"]
     assert all(reply["text"] != "请求太频繁" for reply in replies)
 
 
-async def test_disabled_image_generation_replies_with_failure(
+async def test_enabled_image_plugin_without_model_replies_with_failure(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
+    make_plugin_dir: MakePluginDir,
 ) -> None:
-    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
+    plugins_dir = make_plugin_dir("t2x", _T2X_SOURCE)
+    bot = await make_bot(
+        write_config(bot={"admins": ["user-2"]}), plugins_dir=plugins_dir
+    )
 
     await bot.chat.handle({**_CHAT_MESSAGE, "text": "/img 一只猫"})
 
@@ -1055,48 +1129,6 @@ async def test_disabled_image_generation_replies_with_failure(
     reply = misskey_server.calls["chat/messages/create-to-user"][0]
     assert reply["text"] == "图片生成失败，请稍后再试。"
     assert "fileId" not in reply
-
-
-async def test_image_send_failure_does_not_record_response(
-    make_bot: MakeBot, write_config: WriteConfig
-) -> None:
-    bot = await make_bot(
-        write_config(
-            bot={"image_model": "gpt-image-1", "admins": ["user-2"]},
-        )
-    )
-    bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
-    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": "file-2"})
-    bot.misskey.send_message = AsyncMock(side_effect=RuntimeError("send failed"))
-    bot.limits.record_response = AsyncMock()
-
-    await bot.chat.handle({**_CHAT_MESSAGE, "text": "/img 一只猫"})
-
-    bot.misskey.send_message.assert_awaited_once_with(
-        "user-2", "图片生成完成", "file-2"
-    )
-    bot.limits.record_response.assert_not_awaited()
-
-
-async def test_image_record_failure_does_not_send_failure_reply(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-) -> None:
-    bot = await make_bot(
-        write_config(
-            bot={"image_model": "gpt-image-1", "admins": ["user-2"]},
-        )
-    )
-    bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
-    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": "file-2"})
-    bot.limits.record_response = AsyncMock(side_effect=RuntimeError("database failed"))
-
-    await bot.chat.handle({**_CHAT_MESSAGE, "text": "/img 一只猫"})
-
-    replies = misskey_server.calls["chat/messages/create-to-user"]
-    assert len(replies) == 1
-    assert replies[0]["fileId"] == "file-2"
 
 
 async def test_room_chat_requires_mention_and_replies_to_room(
@@ -1204,14 +1236,10 @@ async def test_room_chat_generates_and_attaches_image(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
+    t2x_dir: Path,
 ) -> None:
-    bot = await make_bot(
-        write_config(
-            bot={"image_model": "gpt-image-1", "admins": ["user-2"]},
-        )
-    )
-    bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
-    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": "file-3"})
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}), plugins_dir=t2x_dir)
+    _mock_image_backend(bot, "file-3")
     message = {
         **_CHAT_MESSAGE,
         "text": "@testbot /img 一只猫",
@@ -1220,8 +1248,10 @@ async def test_room_chat_generates_and_attaches_image(
     }
 
     await bot.chat.handle(message)
+    await _settle(bot)
 
-    reply = misskey_server.calls["chat/messages/create-to-room"][0]
+    ack, reply = misskey_server.calls["chat/messages/create-to-room"]
+    assert ack["text"] == "@bob\n正在生成图片，请稍候…"
     assert reply["toRoomId"] == "room-1"
     assert reply["text"] == "@bob\n图片生成完成"
     assert reply["fileId"] == "file-3"
@@ -1442,14 +1472,10 @@ async def test_image_command_reply_to_bot_does_not_mention_sender(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
+    t2x_dir: Path,
 ) -> None:
-    bot = await make_bot(
-        write_config(
-            bot={"image_model": "gpt-image-1", "admins": ["user-1"]},
-        )
-    )
-    bot.openai.generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
-    bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": "file-1"})
+    bot = await make_bot(write_config(bot={"admins": ["user-1"]}), plugins_dir=t2x_dir)
+    _mock_image_backend(bot, "file-1")
     event = {
         "type": "reply",
         "note": {
@@ -1464,8 +1490,10 @@ async def test_image_command_reply_to_bot_does_not_mention_sender(
     }
 
     await bot.mention.handle(event)
+    await _settle(bot)
 
-    reply = misskey_server.calls["notes/create"][0]
+    ack, reply = misskey_server.calls["notes/create"]
+    assert ack["text"] == "正在生成图片，请稍候…"
     assert reply["replyId"] == "reply-1"
     assert reply["text"] == "图片生成完成"
     assert reply["fileIds"] == ["file-1"]

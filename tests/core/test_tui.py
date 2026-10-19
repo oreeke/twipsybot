@@ -81,14 +81,14 @@ def test_sections_are_generated_from_models() -> None:
     assert specs["plugins.iincho.min_notes"].file == "settings"
     assert specs["misskey_token"].kind == "secret"
     assert specs["misskey_url"].restart
-    assert {"plugins.keyact", "plugins.media"} <= sections.keys()
+    assert {"plugins.keyact", "plugins.mllm"} <= sections.keys()
     assert [s.key for s in sections["connect"].specs] == [
         "misskey_url",
         "misskey_token",
-        "openai_base_url",
-        "openai_api_key",
+        "ai_base_url",
+        "ai_api_key",
     ]
-    assert specs["openai_base_url"].restart
+    assert specs["ai_base_url"].restart
     assert not specs["bot.model"].restart
     assert specs["bot.api_mode"].choices == ("auto", "chat", "responses")
     assert specs["plugins.topics.rss_list"].kind == "lines"
@@ -189,12 +189,12 @@ async def test_cfg_connect_writes_secrets_and_locks_env(
 ) -> None:
     monkeypatch.delenv("MISSKEY_INSTANCE_URL", raising=False)
     monkeypatch.delenv("MISSKEY_ACCESS_TOKEN", raising=False)
-    monkeypatch.setenv("OPENAI_API_KEY", "from-env")
+    monkeypatch.setenv("AI_API_KEY", "from-env")
     config = Config(_root(tmp_path))
     app = ConfigApp(config)
     async with app.run_test() as pilot:
         await _until(pilot, lambda: bool(app._saved))
-        key = app.query_one(f"#{app._ids['openai_api_key']}", Input)
+        key = app.query_one(f"#{app._ids['ai_api_key']}", Input)
         assert key.disabled
         assert key.value == "from-env"
 
@@ -325,6 +325,32 @@ async def test_cfg_drops_unknown_settings_on_save(tmp_path: Path) -> None:
     assert read_settings(config.settings_path) == {
         "autopost": {"prompt": "p"},
         "plugins": {"demo": {"limit": 5}},
+    }
+
+
+async def test_cfg_drops_unknown_connect_keys_on_save(tmp_path: Path) -> None:
+    config = Config(_root(tmp_path))
+    write_settings(
+        config.secrets_path,
+        {
+            "misskey_url": "https://m.example",
+            "openai_api_key": "old",
+            "plugins": {"other": {"token": "keep"}},
+        },
+    )
+    app = ConfigApp(config)
+    async with app.run_test() as pilot:
+        await _until(pilot, lambda: bool(app._saved))
+        assert app._unknown == {"connect": ["openai_api_key"]}
+        app.query_one(f"#{app._ids['ai_api_key']}", Input).value = "new"
+        await _until(pilot, lambda: app._is_dirty("ai_api_key"))
+        assert app.action_save() is True
+        assert app._unknown == {}
+
+    assert read_settings(config.secrets_path) == {
+        "misskey_url": "https://m.example",
+        "ai_api_key": "new",
+        "plugins": {"other": {"token": "keep"}},
     }
 
 

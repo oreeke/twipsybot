@@ -1,9 +1,9 @@
 ---
-title: Media 附件理解
-description: 使用 Media 和多模态模型理解 Misskey 提及、被回复或被引用帖子及聊天中的附件。
+title: MLLM 附件理解
+description: 使用 MLLM 和多模态模型理解 Misskey 提及、被回复或被引用帖子及聊天中的附件。
 ---
 
-# Media：附件理解
+# MLLM：附件理解
 
 将提及或聊天中的附件作为模型输入的一部分，与回复链、联网资料等一起生成回复，不接管回复。附件只做 Base64 编码，机器人不解码、不转换，是否能理解由模型和服务商决定。
 
@@ -11,7 +11,7 @@ description: 使用 Media 和多模态模型理解 Misskey 提及、被回复或
 
 ```yaml
 plugins:
-  media:
+  mllm:
     enabled: true
     max_files: 4
     max_bytes: 6MB

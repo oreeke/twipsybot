@@ -117,6 +117,17 @@ class OpenAIService(Protocol):
         temperature: float | None = None,
     ) -> str: ...
 
+    async def generate_image(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        size: str | None = None,
+        quality: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> bytes | str: ...
+
 
 class PluginStorage(Protocol):
     async def get(self, key: str) -> str | None: ...
@@ -136,6 +147,11 @@ class BotControl(Protocol):
     def actor_lock(
         self, user_id: str | None, username: str | None
     ) -> AbstractAsyncContextManager[None]: ...
+
+    @property
+    def admins(self) -> tuple[str, ...]: ...
+
+    def is_admin(self, user_id: str | None, handle: str | None) -> bool: ...
 
     def load_antenna_selectors(self) -> list[str]: ...
 

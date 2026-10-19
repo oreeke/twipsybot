@@ -60,19 +60,19 @@ reply:
 
 以下环境变量（或工作目录中的 `.env`）优先于文件，被覆盖字段在 TUI 中标为 `env` 且只读：
 
-`MISSKEY_INSTANCE_URL` · `MISSKEY_ACCESS_TOKEN` · `OPENAI_BASE_URL` · `OPENAI_API_KEY`
+`MISSKEY_INSTANCE_URL` · `MISSKEY_ACCESS_TOKEN` · `AI_BASE_URL` · `AI_API_KEY`
 
 ## 模型
 
-- `connect.openai_base_url`：OpenAI 兼容地址，留空为 OpenAI 官方。
+- `connect.ai_base_url`：OpenAI 兼容地址，留空为 OpenAI 官方。
 - `bot.model`：文本模型 ID，同一端点下可用 `^model <名称>` 热切换。
 - `bot.api_mode`：通常保持 `auto`，服务仅支持某一接口时再固定为 `chat` 或 `responses`。
 
 | 功能 | 要求 |
 | --- | --- |
 | 回复、自动发帖 | `bot.model` |
-| `/img` | `bot.image_model` |
-| Media | `bot.model` 支持媒体输入 |
+| T2X | `plugins.t2x.image.model` |
+| MLLM | `bot.model` 支持媒体输入 |
 | Iincho（默认后端） | 端点支持 `/moderations` |
 
 ## 提示词文件

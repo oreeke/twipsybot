@@ -12,13 +12,15 @@ from ...clients.misskey.payloads import (
     extract_user_id,
     extract_username,
 )
-from ...shared.consts import CHAT_CACHE_MAX_USERS, CHAT_CACHE_TTL
 from ...shared.keys import ConfigKeys
 from ...shared.logs import format_log_text, maybe_log_event_dump
 from ..engine.pipeline import Augment, Deliver, Reply, Source, replied
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro
+
+_CACHE_MAX_USERS = 1000
+_CACHE_TTL = 3600
 
 
 @dataclass(slots=True)
@@ -42,8 +44,8 @@ class ChatHandler:
     def __init__(self, bot: "Neuro"):
         self.bot = bot
         self._histories: TTLCache[str, list[dict[str, str]]] = TTLCache(
-            maxsize=CHAT_CACHE_MAX_USERS,
-            ttl=CHAT_CACHE_TTL,
+            maxsize=_CACHE_MAX_USERS,
+            ttl=_CACHE_TTL,
             timer=time.monotonic,
         )
 

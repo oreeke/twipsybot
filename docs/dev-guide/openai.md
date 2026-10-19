@@ -5,7 +5,7 @@ description: TwipsyBot 使用的 OpenAI 兼容 API、接口模式、多模态能
 
 # OpenAI
 
-经 OpenAI Python SDK 连接 OpenAI 或兼容服务，适配集中在 `twipsybot/clients/openai`。业务代码调用 `OpenAIAPI`，不自行创建 SDK 客户端；插件使用 [`PluginContext.openai`](plugins.md#openai-与-bot)。`connect.openai_base_url` 原样传给 SDK，留空时读取 `OPENAI_BASE_URL` 或使用官方端点。
+经 OpenAI Python SDK 连接 OpenAI 或兼容服务，适配集中在 `twipsybot/clients/openai`。业务代码调用 `OpenAIAPI`，不自行创建 SDK 客户端；插件使用 [`PluginContext.openai`](plugins.md#openai-与-bot)。`connect.ai_base_url` 原样传给 SDK，留空时由 SDK 读取其自带的 `OPENAI_BASE_URL`。
 
 基于 OpenAI Python SDK `3.24.0`，随官方更新同步维护。
 
@@ -14,10 +14,10 @@ description: TwipsyBot 使用的 OpenAI 兼容 API、接口模式、多模态能
 | API | 客户端方法 | 说明 |
 | --- | --- | --- |
 | Responses、Chat Completions | `generate_text()`、`generate_chat()` | 单轮、多轮与多模态；`generate_text()` 可请求 JSON Object |
-| Images | `generate_image()` | 需 `bot.image_model`，不属于插件稳定接口 |
+| Images | `generate_image()` | 由调用方传入；插件经 `context.openai.generate_image()` 使用 |
 | Moderations | `moderate_texts()` | 固定 `omni-moderation-latest`，需端点实现 `/moderations` |
 
-图片生成透传 `image_size`、`image_quality`，接受 Base64 或 URL 返回；仅允许 PNG、JPEG、WebP 且不超过 32 MiB，随后上传至 Drive。
+图片生成透传 `size`、`quality`，接受 Base64 或 URL 返回。传入 `base_url` 或 `api_key` 时使用临时专用客户端，留空沿用 `connect.*`。格式校验及上传 Drive 由调用方完成。
 
 ## 接口模式
 
@@ -40,4 +40,4 @@ description: TwipsyBot 使用的 OpenAI 兼容 API、接口模式、多模态能
 ## 扩展与测试
 
 - 新能力在客户端层统一请求格式与响应提取，业务代码不依赖服务商的原始 SDK 响应对象。
-- 测试不调用真实服务，通过模拟 SDK 响应验证：模式覆盖 Responses 成功、回退与不应回退的错误；图片覆盖 Base64、URL、空响应、无效格式与大小限制；审核验证批量结果与输入顺序一致。
+- 测试不调用真实服务，通过模拟 SDK 响应验证。

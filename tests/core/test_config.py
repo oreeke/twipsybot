@@ -61,17 +61,17 @@ def test_secrets_come_from_file_with_env_override(
 ) -> None:
     config = write_config()
     write_settings(
-        config.secrets_path, {"misskey_token": "file-token", "openai_api_key": "k"}
+        config.secrets_path, {"misskey_token": "file-token", "ai_api_key": "k"}
     )
     monkeypatch.delenv("MISSKEY_ACCESS_TOKEN")
     config.load()
 
     assert config.get(ConfigKeys.MISSKEY_TOKEN) == "file-token"
-    assert config.get(ConfigKeys.OPENAI_API_KEY) == "test-key"
+    assert config.get(ConfigKeys.AI_API_KEY) == "test-key"
 
-    monkeypatch.delenv("OPENAI_API_KEY")
+    monkeypatch.delenv("AI_API_KEY")
     write_settings(config.secrets_path, {"misskey_token": "file-token"})
-    with pytest.raises(ConfigurationError, match="missing openai_api_key"):
+    with pytest.raises(ConfigurationError, match="missing ai_api_key"):
         config.load()
 
 
@@ -92,7 +92,7 @@ def test_plugin_secrets_merge_into_plugin_config(write_config: WriteConfig) -> N
 def test_defaults_need_no_settings_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "OPENAI_API_KEY"):
+    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "AI_API_KEY"):
         monkeypatch.delenv(env, raising=False)
     config = Config(tmp_path)
     write_settings(
@@ -100,7 +100,7 @@ def test_defaults_need_no_settings_file(
         {
             "misskey_url": "https://m.example",
             "misskey_token": "t",
-            "openai_api_key": "k",
+            "ai_api_key": "k",
         },
     )
     config.load()
@@ -259,9 +259,9 @@ def test_patch_settings_sets_deletes_and_validates(tmp_path: Path) -> None:
 
 
 def test_restart_keys() -> None:
-    assert needs_restart(ConfigKeys.OPENAI_BASE_URL)
+    assert needs_restart(ConfigKeys.AI_BASE_URL)
     assert needs_restart(ConfigKeys.MISSKEY_TOKEN)
-    assert needs_restart(ConfigKeys.OPENAI_API_KEY)
+    assert needs_restart(ConfigKeys.AI_API_KEY)
     assert needs_restart(ConfigKeys.TIMELINE_ANTENNAS)
     assert not needs_restart(ConfigKeys.BOT_MODEL)
     assert not needs_restart("plugins.keyact")

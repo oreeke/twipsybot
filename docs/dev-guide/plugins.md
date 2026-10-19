@@ -113,6 +113,7 @@ example = "twipsybot_example:plugin"
 | `FileRef` | `id mime_type url thumbnail_url raw` |
 
 - 按 `priority` 降序调用。`on_message` / `on_mention` 返回 `HandledResult` 即终止后续插件与 AI；`on_context`、通知与时间线 Hook 不截断，所有插件都会收到。
+- 耗时任务（超过 Hook 的 180 秒上限，或不想让用户久等）用 `self.handled(response, followup=coro_fn)`：先发送 `response`，再在后台调用无参的 `async` 函数 `coro_fn`，其返回的 `HandledResult` 以同样方式补发（只取 `response` 与 `file_id`，忽略嵌套的 `followup`）。补发不受 Hook 超时约束，机器人关闭时被取消；`coro_fn` 抛出异常只记录日志，须自行返回失败提示。
 - 返回值须严格符合公共 TypedDict，多余字段会使结果失效。
 - 消息、提及与时间线事件的 `id` 始终非空；`NotificationEvent.id`、`UserRef.id`、`cw`、`host`、文件 URL 等可能为空。
 - `UserRef.handle` 为 `username@host`，本地用户为 `username`。`channel` 通常为 `homeTimeline`、`localTimeline`、`hybridTimeline`、`globalTimeline` 或 `antenna`。
@@ -162,9 +163,9 @@ return {"prompt": "围绕开源维护写一篇短文。"}
 | `config` | `plugins.<name>` 原始配置的只读映射 |
 | `storage` | 按插件 ID 隔离的字符串存储 |
 | `misskey` | 发帖、转帖、反应、聊天、用户、天线与 Drive |
-| `openai` | 文本、聊天与审核 |
+| `openai` | 文本、聊天、审核与图片生成 |
 | `http` | 下载外部 URL，拒绝内网目标 |
-| `bot` | 机器人身份、用户锁与天线解析 |
+| `bot` | 机器人身份、管理员判断、用户锁与天线解析 |
 
 ### Storage
 
@@ -232,9 +233,12 @@ async with self.context.http.open(url) as resp:
 | `openai.generate_text(prompt, system_prompt, max_tokens, temperature, json_output)` | 单轮文本，可请求 JSON Object |
 | `openai.generate_chat(messages, max_tokens, temperature)` | 多轮或多模态 |
 | `openai.moderate_texts(texts)` | 批量审核，按输入顺序返回命中类别集合；需端点支持 `/moderations` |
+| `openai.generate_image(prompt, model=..., size=..., quality=..., base_url=..., api_key=...)` | 文生图，返回字节或 URL |
 | `openai.system_prompt` · `max_tokens` · `temperature` | 全局生成参数 |
 | `openai.uses_responses_api` | 当前消息格式 |
 | `bot.user_id` · `username` | 机器人身份 |
+| `bot.admins` | 管理员名单（用户 ID 或 `username@host`） |
+| `bot.is_admin(user_id, handle)` | 判断用户是否为管理员，`handle` 为 `username` 或 `username@host` |
 | `bot.actor_lock(user_id, username)` | 串行处理同一用户 |
 | `bot.load_antenna_selectors()` | 读取天线选择器 |
 | `bot.resolve_antenna_ids(selectors)` | 解析天线 ID |

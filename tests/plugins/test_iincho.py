@@ -15,7 +15,9 @@ from plugins.iincho.plugin import _PROMPT, _SYSTEM_PROMPT, IinchoPlugin, _Sample
 from twipsybot.plugin import TimelineNoteEvent, UserRef
 
 
-def _iincho_context(config: dict[str, Any] | None = None) -> Any:
+def _iincho_context(
+    config: dict[str, Any] | None = None, admins: tuple[str, ...] = ()
+) -> Any:
     openai = SimpleNamespace(
         generate_text=AsyncMock(),
         moderate_texts=AsyncMock(
@@ -39,7 +41,7 @@ def _iincho_context(config: dict[str, Any] | None = None) -> Any:
         storage=SimpleNamespace(),
         openai=openai,
         misskey=misskey,
-        bot=SimpleNamespace(user_id="bot-id", username="iincho"),
+        bot=SimpleNamespace(user_id="bot-id", username="iincho", admins=admins),
     )
 
 
@@ -96,17 +98,8 @@ def test_iincho_rejects_fractional_integer_config() -> None:
         IinchoPlugin(context)
 
 
-@pytest.mark.parametrize("admin_ids", (None, "", ["", " "]))
-def test_iincho_accepts_empty_admin_ids(admin_ids: Any) -> None:
-    plugin = IinchoPlugin(_iincho_context({"admin_ids": admin_ids}))
-
-    assert plugin.settings.admin_ids == ()
-
-
 async def test_iincho_blank_prompts_use_defaults() -> None:
-    context = _iincho_context(
-        {"prompt": " ", "system_prompt": "", "admin_ids": ["admin-1"]}
-    )
+    context = _iincho_context({"prompt": " ", "system_prompt": ""}, admins=("admin-1",))
     _iincho_flag_all(context)
     context.openai.generate_text.return_value = _iincho_result()
 
@@ -143,9 +136,7 @@ async def test_iincho_reservoir_stays_bounded() -> None:
 
 
 async def test_iincho_publishes_formatted_summary() -> None:
-    context = _iincho_context(
-        {"sample_size": 2, "min_notes": 2, "admin_ids": ["admin-1"]}
-    )
+    context = _iincho_context({"sample_size": 2, "min_notes": 2}, admins=("admin-1",))
     context.openai.generate_text.return_value = _iincho_result()
     context.openai.moderate_texts.side_effect = None
     context.openai.moderate_texts.return_value = [
@@ -194,7 +185,7 @@ async def test_iincho_publishes_formatted_summary() -> None:
 
 async def test_iincho_limits_serialized_input() -> None:
     context = _iincho_context(
-        {"min_notes": 1, "max_input_chars": 1000, "admin_ids": ["admin-1"]}
+        {"min_notes": 1, "max_input_chars": 1000}, admins=("admin-1",)
     )
     context.openai.generate_text.return_value = _iincho_result()
     _iincho_flag_all(context)
@@ -226,9 +217,7 @@ def test_iincho_serializes_special_characters_losslessly() -> None:
 
 
 async def test_iincho_keeps_notes_arriving_during_generation() -> None:
-    context = _iincho_context(
-        {"sample_size": 2, "min_notes": 1, "admin_ids": ["admin-1"]}
-    )
+    context = _iincho_context({"sample_size": 2, "min_notes": 1}, admins=("admin-1",))
     _iincho_flag_all(context)
     plugin = IinchoPlugin(context)
     await plugin.on_timeline_note(_iincho_event("旧窗口"))
@@ -245,9 +234,7 @@ async def test_iincho_keeps_notes_arriving_during_generation() -> None:
 
 
 async def test_iincho_notifies_all_admins_with_verified_note_link() -> None:
-    context = _iincho_context(
-        {"min_notes": 1, "admin_ids": ["admin-1", "admin-2", "admin-1"]}
-    )
+    context = _iincho_context({"min_notes": 1}, admins=("admin-1", "admin-2"))
     context.openai.generate_text.return_value = _iincho_result()
     context.openai.moderate_texts.side_effect = None
     context.openai.moderate_texts.return_value = [
@@ -274,7 +261,7 @@ async def test_iincho_notifies_all_admins_with_verified_note_link() -> None:
 
 
 async def test_iincho_admin_failure_does_not_block_others_or_summary() -> None:
-    context = _iincho_context({"min_notes": 1, "admin_ids": "admin-1, admin-2"})
+    context = _iincho_context({"min_notes": 1}, admins=("admin-1", "admin-2"))
     context.openai.generate_text.return_value = _iincho_result()
     context.openai.moderate_texts.side_effect = None
     context.openai.moderate_texts.return_value = [frozenset({"harassment"})]
@@ -292,7 +279,7 @@ async def test_iincho_admin_failure_does_not_block_others_or_summary() -> None:
 
 
 async def test_iincho_skips_trends_and_admins_without_violations() -> None:
-    context = _iincho_context({"min_notes": 1, "admin_ids": ["admin-1"]})
+    context = _iincho_context({"min_notes": 1}, admins=("admin-1",))
     plugin = IinchoPlugin(context)
     await plugin.on_timeline_note(_iincho_event())
 
@@ -316,7 +303,7 @@ async def test_iincho_skips_trends_without_admins() -> None:
 
 
 async def test_iincho_discards_invalid_ai_result_without_retry() -> None:
-    context = _iincho_context({"min_notes": 1, "admin_ids": ["admin-1"]})
+    context = _iincho_context({"min_notes": 1}, admins=("admin-1",))
     context.openai.generate_text.return_value = "not json"
     _iincho_flag_all(context)
     plugin = IinchoPlugin(context)

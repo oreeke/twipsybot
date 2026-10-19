@@ -17,15 +17,7 @@ _POST_SCHEDULE_KEYS = frozenset(
         ConfigKeys.POST_TIMES,
     }
 )
-_AI_KEYS = frozenset(
-    {
-        ConfigKeys.BOT_MODEL,
-        ConfigKeys.BOT_API_MODE,
-        ConfigKeys.BOT_IMAGE_MODEL,
-        ConfigKeys.BOT_IMAGE_SIZE,
-        ConfigKeys.BOT_IMAGE_QUALITY,
-    }
-)
+_AI_KEYS = frozenset({ConfigKeys.BOT_MODEL, ConfigKeys.BOT_API_MODE})
 
 
 def _changed_keys(old: dict[str, Any], new: dict[str, Any]) -> set[str]:
@@ -92,11 +84,7 @@ class SettingsReloader:
         bot, get = self._bot, self._config.get
         if changed & _AI_KEYS:
             bot.openai.update(
-                model=get(ConfigKeys.BOT_MODEL),
-                api_mode=get(ConfigKeys.BOT_API_MODE),
-                image_model=get(ConfigKeys.BOT_IMAGE_MODEL),
-                image_size=get(ConfigKeys.BOT_IMAGE_SIZE),
-                image_quality=get(ConfigKeys.BOT_IMAGE_QUALITY),
+                model=get(ConfigKeys.BOT_MODEL), api_mode=get(ConfigKeys.BOT_API_MODE)
             )
         if ConfigKeys.SYSTEM_LOG_LEVEL in changed:
             set_log_level(get(ConfigKeys.SYSTEM_LOG_LEVEL))

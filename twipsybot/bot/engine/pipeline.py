@@ -10,6 +10,7 @@ from .limits import ResponseLimiter
 
 if TYPE_CHECKING:
     from ...plugin.manager import PluginManager
+    from .runtime import BotRuntime
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,9 +54,16 @@ def replied(source: Source) -> str:
 
 
 class ResponsePipeline:
-    def __init__(self, *, limits: ResponseLimiter, plugins: "PluginManager"):
+    def __init__(
+        self,
+        *,
+        limits: ResponseLimiter,
+        plugins: "PluginManager",
+        runtime: "BotRuntime",
+    ):
         self._limits = limits
         self._plugins = plugins
+        self._runtime = runtime
         self._actor_locks = KeyedAsyncLock()
 
     def hold(
@@ -94,15 +102,28 @@ class ResponsePipeline:
                 return
         source: Source
         file_id: str | None = None
+        followup = None
         if results := await self._plugins.call_plugin_hook(hook, event):
             name, result = results[0]
             logger.debug(f"{hook} handled by plugin: {name}")
             text, source = result["response"], "plugin"
-            file_id = result.get("file_id")
+            file_id, followup = result.get("file_id"), result.get("followup")
         else:
             text, source = await generate(await self._augment(hook, event)), "ai"
         if not text:
             return
         await deliver(Reply(text, file_id), source)
+        if followup:
+            self._runtime.spawn(self._deliver_followup(followup, deliver, source))
         if user_id:
             await self._limits.record_response(user_id, count_turn=True)
+
+    @staticmethod
+    async def _deliver_followup(
+        followup: Callable[[], Awaitable[Any]], deliver: Deliver, source: Source
+    ) -> None:
+        try:
+            result = await followup()
+            await deliver(Reply(result["response"], result.get("file_id")), source)
+        except Exception:
+            logger.exception("Plugin followup failed")

@@ -120,7 +120,6 @@ class _Config(PluginConfig):
     max_tokens: int = Field(2000, strict=True, ge=1)
     temperature: float = Field(0.2, strict=True, ge=0, le=2)
     local_only: bool = Field(True, strict=True)
-    admin_ids: tuple[str, ...] = ()
     moderation: _ModerationConfig = Field(default_factory=_ModerationConfig)
 
     @field_validator("interval", mode="before")
@@ -132,17 +131,6 @@ class _Config(PluginConfig):
             return durationpy.from_str(str(value))
         except (TypeError, ValueError) as error:
             raise ValueError(f"invalid interval: {value!r}") from error
-
-    @field_validator("admin_ids", mode="before")
-    @classmethod
-    def _parse_admin_ids(cls, value: Any) -> Any:
-        if value is None:
-            return ()
-        values = re.split(r"[,\s]+", value) if isinstance(value, str) else value
-        normalized = (
-            item.strip() if isinstance(item, str) else item for item in values
-        )
-        return tuple(dict.fromkeys(item for item in normalized if item))
 
     @model_validator(mode="after")
     def _validate_sample_size(self) -> "_Config":
@@ -251,7 +239,7 @@ class IinchoPlugin(PluginBase):
         payload, selected = self._serialize_samples(samples)
         moderation = await self._moderate([sample.text for sample in selected])
         trends: list[str] = []
-        if self.settings.admin_ids and any(moderation):
+        if self.context.bot.admins and any(moderation):
             response = await self.context.openai.generate_text(
                 f"{self.settings.prompt.strip() or _PROMPT}\nDATA={payload}",
                 self.settings.system_prompt.strip() or _SYSTEM_PROMPT,
@@ -382,7 +370,8 @@ class IinchoPlugin(PluginBase):
     async def _notify_admins(
         self, result: dict[str, Any], samples: list[_Sample]
     ) -> None:
-        if not self.settings.admin_ids or not result["violations"]:
+        admins = self.context.bot.admins
+        if not admins or not result["violations"]:
             return
         lines = [
             "🔥 热点",
@@ -392,7 +381,7 @@ class IinchoPlugin(PluginBase):
             *self._build_alert_lines(result["violations"], samples),
         ]
         messages = self._batch_alerts(lines)
-        for admin_id in self.settings.admin_ids:
+        for admin_id in admins:
             await self._notify_admin(admin_id, messages)
 
     def _build_alert_lines(

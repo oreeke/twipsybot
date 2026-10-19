@@ -4,7 +4,7 @@ import asyncio
 import base64
 import os
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Self, cast
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
@@ -928,7 +928,7 @@ async def test_streaming_warns_once_per_send_buffer_overflow(
 
 
 async def test_openai_generates_png_bytes() -> None:
-    api = OpenAIAPI("test", "m", image_model="gpt-image-2")
+    api = OpenAIAPI("test", "m")
     generate = AsyncMock(
         return_value=SimpleNamespace(
             data=[SimpleNamespace(b64_json=base64.b64encode(b"png").decode())]
@@ -936,7 +936,7 @@ async def test_openai_generates_png_bytes() -> None:
     )
     api.client = cast(Any, SimpleNamespace(images=SimpleNamespace(generate=generate)))
 
-    assert await api.generate_image("一只猫") == b"png"
+    assert await api.generate_image("一只猫", model="gpt-image-2") == b"png"
     generate.assert_awaited_once_with(
         model="gpt-image-2",
         prompt="一只猫",
@@ -944,13 +944,7 @@ async def test_openai_generates_png_bytes() -> None:
 
 
 async def test_openai_forwards_explicit_image_options() -> None:
-    api = OpenAIAPI(
-        "test",
-        "m",
-        image_model="gpt-image-2.5-flare",
-        image_size="2048x2048",
-        image_quality="medium",
-    )
+    api = OpenAIAPI("test", "m")
     generate = AsyncMock(
         return_value=SimpleNamespace(
             data=[SimpleNamespace(b64_json=None, url="https://example.com")]
@@ -958,13 +952,81 @@ async def test_openai_forwards_explicit_image_options() -> None:
     )
     api.client = cast(Any, SimpleNamespace(images=SimpleNamespace(generate=generate)))
 
-    assert await api.generate_image("一只猫") == "https://example.com"
+    image = await api.generate_image(
+        "一只猫", model="gpt-image-2.5-flare", size="2048x2048", quality="medium"
+    )
+
+    assert image == "https://example.com"
     generate.assert_awaited_once_with(
         model="gpt-image-2.5-flare",
         prompt="一只猫",
         size="2048x2048",
         quality="medium",
     )
+
+
+async def test_openai_image_rejects_endpoint_without_key() -> None:
+    api = OpenAIAPI("main", "m")
+    generate = AsyncMock()
+    api.client = cast(Any, SimpleNamespace(images=SimpleNamespace(generate=generate)))
+
+    with pytest.raises(ValueError, match="base_url requires api_key"):
+        await api.generate_image("猫", model="m", base_url="https://img.example/v1")
+
+    generate.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "api_key", "host"),
+    [
+        (
+            {"base_url": "https://img.example/v1", "api_key": "k2"},
+            "k2",
+            "img.example",
+        ),
+        ({"api_key": "k2"}, "k2", "main.example"),
+    ],
+    ids=("endpoint", "key-only"),
+)
+async def test_openai_image_override_uses_dedicated_client(
+    monkeypatch: pytest.MonkeyPatch,
+    overrides: dict[str, str],
+    api_key: str,
+    host: str,
+) -> None:
+    api = OpenAIAPI("main", "m", base_url="https://main.example/v1")
+    main_generate = AsyncMock()
+    api.client = cast(
+        Any, SimpleNamespace(images=SimpleNamespace(generate=main_generate))
+    )
+    generate = AsyncMock(
+        return_value=SimpleNamespace(
+            data=[SimpleNamespace(b64_json=None, url="https://example.com")]
+        )
+    )
+    created: list[Any] = []
+
+    class _Client:
+        def __init__(self, **kwargs: Any) -> None:
+            created.append(kwargs)
+            self.images = SimpleNamespace(generate=generate)
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+    monkeypatch.setattr("twipsybot.clients.openai.api.openai.AsyncOpenAI", _Client)
+
+    assert await api.generate_image("一只猫", model="m", **overrides) == (
+        "https://example.com"
+    )
+
+    main_generate.assert_not_awaited()
+    [kwargs] = created
+    assert kwargs["api_key"] == api_key
+    assert kwargs["base_url"].split("/")[2] == host
 
 
 def test_openai_loads_token_encoding_lazily_into_data_directory(

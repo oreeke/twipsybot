@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from conftest import (
@@ -28,6 +28,7 @@ from twipsybot.plugin.services import (
     BotControlAdapter,
     DriveServiceAdapter,
     MisskeyServiceAdapter,
+    OpenAIServiceAdapter,
 )
 from twipsybot.shared.errors import ConfigurationError
 
@@ -94,6 +95,33 @@ async def test_bot_control_adapter_delegates_auto_post_generation() -> None:
     generate.assert_awaited_once_with("前缀 ")
 
 
+def test_bot_control_adapter_exposes_admins_and_delegates_check() -> None:
+    is_admin = Mock(return_value=True)
+    adapter = BotControlAdapter(
+        SimpleNamespace(
+            admin=SimpleNamespace(
+                admins=("u1", "alice@example.com"), is_admin=is_admin
+            ),
+        )
+    )
+
+    assert adapter.admins == ("u1", "alice@example.com")
+    assert adapter.is_admin("u1", "alice") is True
+    is_admin.assert_called_once_with("u1", "alice")
+
+
+async def test_openai_service_adapter_forwards_image_options() -> None:
+    generate = AsyncMock(return_value=b"png")
+    adapter = OpenAIServiceAdapter(SimpleNamespace(generate_image=generate), None)
+
+    assert (
+        await adapter.generate_image("猫", model="m", size="s", api_key="k") == b"png"
+    )
+    generate.assert_awaited_once_with(
+        "猫", model="m", size="s", quality=None, base_url=None, api_key="k"
+    )
+
+
 @pytest.mark.parametrize(
     ("result", "valid"),
     [
@@ -101,6 +129,8 @@ async def test_bot_control_adapter_delegates_auto_post_generation() -> None:
         ({"handled": True, "response": "ok", "file_id": "f1"}, True),
         ({"handled": True, "response": "ok", "file_id": ""}, False),
         ({"handled": True, "response": "ok", "file_id": ["f1"]}, False),
+        ({"handled": True, "response": "ok", "followup": lambda: None}, True),
+        ({"handled": True, "response": "ok", "followup": "later"}, False),
         ({"handled": True, "response": "ok", "extra": 1}, False),
         ({"handled": True}, False),
     ],

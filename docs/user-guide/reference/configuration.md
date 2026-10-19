@@ -13,8 +13,8 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 | --- | --- | --- |
 | `misskey_url` | `MISSKEY_INSTANCE_URL` | 实例根地址，如 `https://misskey.example.com` |
 | `misskey_token` | `MISSKEY_ACCESS_TOKEN` | 机器人访问令牌 |
-| `openai_base_url` | `OPENAI_BASE_URL` | 留空使用 OpenAI 官方端点 |
-| `openai_api_key` | `OPENAI_API_KEY` | API 密钥 |
+| `ai_base_url` | `AI_BASE_URL` | 留空使用 OpenAI 官方端点 |
+| `ai_api_key` | `AI_API_KEY` | API 密钥 |
 
 环境变量（含工作目录 `.env`）优先于文件。`TZ` 决定日志与每日计数的本地时间。
 
@@ -28,9 +28,6 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 | `api_mode` | `auto` | `auto` / `chat` / `responses` |
 | `max_tokens` | `2000` | 最大输出 token，须大于 0 |
 | `temperature` | `0.8` | 0–2 |
-| `image_model` | `null` | 图片模型，为空时禁用 `/img` |
-| `image_size` | `null` | 透传给图片 API，不校验取值 |
-| `image_quality` | `null` | 同上 |
 
 ## timeline <Badge type="warning" text="重启" />
 
@@ -100,11 +97,11 @@ Fake-IP 代理等环境会把域名解析到保留网段，需将其填入 `allo
 | `enabled` | `false` | 启用插件 |
 | `priority` | 插件默认值 | 越大越先执行 |
 
-内置默认优先级：Bond `900` · KeyAct `850` · Media `750` · Web `500` · Topics `300` · Radar `50` · Iincho `40`。其余字段见各[插件](../plugins/)页面。
+内置默认优先级：Bond `900` · KeyAct `850` · T2X `800` · MLLM `750` · Web `500` · Topics `300` · Radar `50` · Iincho `40`。其余字段见各[插件](../plugins/)页面。
 
 ```yaml
 plugins:
-  media:
+  mllm:
     enabled: true
   keyact:
     enabled: true

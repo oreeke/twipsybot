@@ -41,7 +41,7 @@ twipsybot/
 │   ├── app/            CLI、进程启动、信号与退出码
 │   ├── bot/
 │   │   ├── engine/     核心编排、连接、热重载、限流、响应管道与运行状态
-│   │   └── flows/      提及、聊天、通知、发帖与图片流程
+│   │   └── flows/      提及、聊天、通知与发帖流程
 │   ├── clients/
 │   │   ├── misskey/    REST 与 Streaming 客户端
 │   │   └── openai/     OpenAI 兼容客户端

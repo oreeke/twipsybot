@@ -7,9 +7,11 @@ from cachetools import TTLCache
 
 from ...db.sqlite import DBManager
 from ...shared.config import Config
-from ...shared.consts import RESPONSE_LIMIT_CACHE_MAX, RESPONSE_LIMIT_CACHE_TTL
 from ...shared.keys import ConfigKeys
 from ...shared.utils import normalize_tokens
+
+_CACHE_MAX = 2000
+_CACHE_TTL = 86400
 
 
 @dataclass(slots=True)
@@ -33,8 +35,8 @@ class ResponseLimiter:
         self._instance_url = instance_url
         self._blacklist_user = blacklist_user
         self._response_limits: TTLCache[str, _ResponseLimitState] = TTLCache(
-            maxsize=RESPONSE_LIMIT_CACHE_MAX,
-            ttl=RESPONSE_LIMIT_CACHE_TTL,
+            maxsize=_CACHE_MAX,
+            ttl=_CACHE_TTL,
             timer=time.monotonic,
         )
 

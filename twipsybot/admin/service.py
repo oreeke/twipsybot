@@ -108,9 +108,6 @@ class AdminCommandService:
             ),
         }
         self._slash_commands = {
-            "img": _Command(
-                bot.image.generate_response, "生成图片", "<一只小狗在月球上弹吉他>"
-            ),
             "post": _Command(
                 bot.auto_post.generate_response,
                 "手动发帖",
@@ -136,6 +133,14 @@ class AdminCommandService:
         if not username or username == "unknown":
             return None
         return self.bot.limits.canonical_handle(username)
+
+    @property
+    def admins(self) -> tuple[str, ...]:
+        return tuple(handlers.admins(self.bot))
+
+    def is_admin(self, user_id: str | None, handle: str | None) -> bool:
+        handle = self._canonical_handle(handle or "", handle) or handle
+        return bool(user_id and self._is_authorized(user_id, handle))
 
     def _is_authorized(self, user_id: str, handle: str | None) -> bool:
         admins = handlers.admins(self.bot)

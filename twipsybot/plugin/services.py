@@ -156,6 +156,25 @@ class OpenAIServiceAdapter:
     ) -> str:
         return await self._openai.generate_chat(messages, max_tokens, temperature)
 
+    async def generate_image(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        size: str | None = None,
+        quality: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> bytes | str:
+        return await self._openai.generate_image(
+            prompt,
+            model=model,
+            size=size,
+            quality=quality,
+            base_url=base_url,
+            api_key=api_key,
+        )
+
 
 class NamespacedPluginStorage:
     def __init__(self, db: Any, namespace: str):
@@ -187,6 +206,13 @@ class BotControlAdapter:
 
     def actor_lock(self, user_id: str | None, username: str | None):
         return self._actor_locks.hold(actor_key(user_id, username))
+
+    @property
+    def admins(self) -> tuple[str, ...]:
+        return self._bot.admin.admins
+
+    def is_admin(self, user_id: str | None, handle: str | None) -> bool:
+        return self._bot.admin.is_admin(user_id, handle)
 
     def load_antenna_selectors(self) -> list[str]:
         return self._bot.connect.load_antenna_selectors()

@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +18,7 @@ class HandledResult(TypedDict):
     handled: Literal[True]
     response: str
     file_id: NotRequired[str]
+    followup: NotRequired[Callable[[], Awaitable["HandledResult"]]]
 
 
 class AutoPostItem(TypedDict):

@@ -25,10 +25,10 @@ from .settings import When, deep_merge, get_dotted, read_settings, set_dotted
 SECRETS = {
     "misskey_url": "MISSKEY_INSTANCE_URL",
     "misskey_token": "MISSKEY_ACCESS_TOKEN",
-    "openai_base_url": "OPENAI_BASE_URL",
-    "openai_api_key": "OPENAI_API_KEY",
+    "ai_base_url": "AI_BASE_URL",
+    "ai_api_key": "AI_API_KEY",
 }
-_REQUIRED_SECRETS = ("misskey_url", "misskey_token", "openai_api_key")
+_REQUIRED_SECRETS = ("misskey_url", "misskey_token", "ai_api_key")
 PROMPT_KEYS = (ConfigKeys.BOT_SYSTEM_PROMPT, ConfigKeys.POST_PROMPT)
 _RESTART_PREFIXES = ("connect.", "timeline.")
 POST_MIN_GAP = timedelta(minutes=5)
@@ -104,14 +104,9 @@ def _minutes(clock: str) -> int:
     return int(hour) * 60 + int(minute)
 
 
-def _blank_to_none(value: Any) -> Any:
-    return None if value is None or str(value).strip() == "" else str(value).strip()
-
-
 Interval = Annotated[timedelta, BeforeValidator(_parse_interval)]
 SECONDS = BeforeValidator(parse_seconds)
 Seconds = Annotated[int, SECONDS]
-OptionalText = Annotated[str | None, BeforeValidator(_blank_to_none)]
 ClockTime = Annotated[str, BeforeValidator(parse_clock)]
 Visibility = Literal["public", "home", "followers"]
 _MIN_GAP_TEXT = f"{POST_MIN_GAP.seconds // 60}m"
@@ -128,9 +123,6 @@ class BotConfig(_Section):
     api_mode: Literal["auto", "chat", "responses"] = "auto"
     max_tokens: int = Field(default=2000, gt=0)
     temperature: float = Field(default=0.8, ge=0, le=2)
-    image_model: OptionalText = None
-    image_size: OptionalText = None
-    image_quality: OptionalText = None
 
 
 class TimelineConfig(_Section):
@@ -216,8 +208,8 @@ class Secrets(BaseModel):
 
     misskey_url: str = ""
     misskey_token: SecretStr = SecretStr("")
-    openai_base_url: str = ""
-    openai_api_key: SecretStr = SecretStr("")
+    ai_base_url: str = ""
+    ai_api_key: SecretStr = SecretStr("")
 
     def resolve(self, field: str, env: str) -> str:
         value = getattr(self, field)

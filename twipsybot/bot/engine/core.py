@@ -19,7 +19,6 @@ from ...shared.config import Config
 from ...shared.errors import ConfigurationError
 from ...shared.keys import ConfigKeys
 from ..flows.chat import ChatHandler
-from ..flows.image import ImageGenerationService
 from ..flows.mention import MentionHandler
 from ..flows.notify import NotificationHandler
 from ..flows.post import AutoPostService
@@ -54,13 +53,10 @@ class Neuro:
                 transport=self._misskey_transport,
             )
             self.openai = OpenAIAPI(
-                config.get_required(ConfigKeys.OPENAI_API_KEY),
+                config.get_required(ConfigKeys.AI_API_KEY),
                 config.get(ConfigKeys.BOT_MODEL),
-                base_url=config.get(ConfigKeys.OPENAI_BASE_URL),
+                base_url=config.get(ConfigKeys.AI_BASE_URL),
                 api_mode=config.get(ConfigKeys.BOT_API_MODE),
-                image_model=config.get(ConfigKeys.BOT_IMAGE_MODEL),
-                image_size=config.get(ConfigKeys.BOT_IMAGE_SIZE),
-                image_quality=config.get(ConfigKeys.BOT_IMAGE_QUALITY),
             )
             self.scheduler = AsyncIOScheduler()
         except (ValueError, TypeError, KeyError) as e:
@@ -83,13 +79,12 @@ class Neuro:
             bot=self,
         )
         self.pipeline = ResponsePipeline(
-            limits=self.limits, plugins=self.plugin_manager
+            limits=self.limits, plugins=self.plugin_manager, runtime=self.runtime
         )
         self.bot_user_id = None
         self.bot_username = None
         self.chat = ChatHandler(self)
         self.mention = MentionHandler(self)
-        self.image = ImageGenerationService(self)
         self.notification = NotificationHandler(self)
         self.auto_post = AutoPostService(self)
         self.connect = StreamingConnector(

@@ -9,12 +9,13 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 import aiohttp
 from loguru import logger
 
-from ...shared.consts import API_TIMEOUT, STREAM_SEND_BUFFER_MAX, USER_AGENT
+from ...shared.consts import API_TIMEOUT, USER_AGENT
 from ...shared.errors import WebSocketConnectionError, WebSocketReconnectError
 
 _I_PARAM_RE = re.compile(r"([?&]i=)[^&#\s]+")
 _I_JSON_RE = re.compile(r'("i"\s*:\s*")[^"]+(")')
 _RECEIVE_TIMEOUT = 10
+_SEND_BUFFER_MAX = 200
 _CLOSED_TYPES = (
     aiohttp.WSMsgType.CLOSED,
     aiohttp.WSMsgType.CLOSING,
@@ -77,7 +78,7 @@ class StreamingSocket:
         self.access_token = access_token
         self.transport = transport
         self.ws: aiohttp.ClientWebSocketResponse | None = None
-        self.buffer: deque[dict[str, Any]] = deque(maxlen=STREAM_SEND_BUFFER_MAX)
+        self.buffer: deque[dict[str, Any]] = deque(maxlen=_SEND_BUFFER_MAX)
         self._overflow_warned = False
         self._ws_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()

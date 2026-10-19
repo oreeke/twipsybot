@@ -30,7 +30,7 @@ docker compose logs --tail 200 twipsybot
 
 ## 模型请求失败
 
-- `openai_base_url` 使用服务商给出的兼容地址，OpenAI 官方留空。
+- `ai_base_url` 使用服务商给出的兼容地址，OpenAI 官方留空。
 - 模型名与服务端 ID 完全一致。
 - 端点不兼容时将 `bot.api_mode` 从 `auto` 改为 `chat` 或 `responses`。
 - 推理模型输出截断时调大 `bot.max_tokens`。
@@ -43,11 +43,10 @@ docker compose logs --tail 200 twipsybot
 - KeyAct 是否接管后失败。
 - Streaming 是否已连接，必要时临时调为 `DEBUG`。
 
-## `/post` 或 `/img` 无效
+## `/post` 无效
 
 - 仅 `bot.admins` 可用。
-- `/post` 仅限私聊且需提供主题；`/img` 需要描述与 `bot.image_model`。
-- 图片须为 JPEG、PNG 或 WebP，不超过 32 MiB，且令牌具备 Drive 权限。
+- 仅限私聊且需提供主题。
 
 ## 插件
 
@@ -63,13 +62,19 @@ docker compose logs --tail 200 twipsybot
 - list 模式下 `list` 不能为空，引用的 `prompts/` 文件需存在，否则插件启动失败。
 - RSS 模式：检查 URL、网络与 HTTP 状态，条目需含标题与链接。已发布条目不会重复；AI 改写失败回退为标题，拉取失败跳过该源。
 
-### Media 不识别附件
+### MLLM 不识别附件
 
 - 附件缺少类型信息、下载失败或超过 `max_bytes` 时会被跳过；数量不超过 `max_files`。
 - 附件 URL 指向内网会被拒绝，需配置 `system.allow_nets`。
 - 模型与 `bot.api_mode` 支持多模态输入；音频、视频是否被接受取决于服务商。
 - 细节不足时确认 `use_thumbnail` 已关闭。
 - 从日志区分 Drive 下载失败与模型拒绝。
+
+### T2X `/img` 无效
+
+- 仅 `bot.admins` 可用；插件未启用时 `/img` 交给 AI 当普通消息。
+- 需配置 `image.model`；`image.base_url` 须配合 `image.api_key`。
+- 结果须为 JPEG、PNG 或 WebP，令牌需 Drive 写权限。
 
 ### Web 不检索
 
@@ -82,6 +87,6 @@ docker compose logs --tail 200 twipsybot
 
 - 已开启 `timeline.local` 并重启。
 - 有效样本少于 `min_notes` 时正常跳过；不补采启动前帖子，不补发失败周期。
-- 配置 `admin_ids` 且发现违规时，文本模型需支持 JSON 输出。
+- 配置了 `bot.admins` 时，文本模型需支持 JSON 输出。
 - `openai` 后端需端点支持 `/moderations` 与 `omni-moderation-latest`，否则改用 `cloudflare`。
 - `cloudflare` 后端：401/403 检查账户 ID 与 Workers AI 权限，429 调小 `cf_concurrency` 或 `sample_size`。

@@ -66,11 +66,11 @@ export default withMermaid(
             link: "/user-guide/features/",
             items: [
               {
-                text: "提及、聊天与限制",
+                text: "对话与限制",
                 link: "/user-guide/features/interactions",
               },
               {
-                text: "自动发帖与图片生成",
+                text: "自动发帖",
                 link: "/user-guide/features/posting",
               },
               {
@@ -91,8 +91,9 @@ export default withMermaid(
               { text: "Iincho", link: "/user-guide/plugins/iincho" },
               { text: "KeyAct", link: "/user-guide/plugins/keyact" },
               { text: "Radar", link: "/user-guide/plugins/radar" },
+              { text: "T2X", link: "/user-guide/plugins/t2x" },
               { text: "Topics", link: "/user-guide/plugins/topics" },
-              { text: "Media", link: "/user-guide/plugins/media" },
+              { text: "MLLM", link: "/user-guide/plugins/mllm" },
               { text: "Web", link: "/user-guide/plugins/web" },
             ],
           },

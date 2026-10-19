@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+from collections.abc import Awaitable, Callable
 from typing import Any, ClassVar
 
 from loguru import logger
@@ -84,10 +85,17 @@ class PluginBase:
             f"Plugin {self.context.name} {action}{': ' + details if details else ''}"
         )
 
-    def handled(self, response: str, file_id: str | None = None) -> HandledResult:
+    def handled(
+        self,
+        response: str,
+        file_id: str | None = None,
+        followup: Callable[[], Awaitable[HandledResult]] | None = None,
+    ) -> HandledResult:
         result: HandledResult = {"handled": True, "response": response}
         if file_id:
             result["file_id"] = file_id
+        if followup:
+            result["followup"] = followup
         return result
 
     def _register_resource(self, resource: Any, cleanup_method: str = "close") -> None:

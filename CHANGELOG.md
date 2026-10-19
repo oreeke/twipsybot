@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.26.0 - 2026-10-19
+
+新增补发逻辑，图片生成迁移为插件 T2X
+
+### Added
+
+- 新增内置插件 T2X，提供 `/img`；图片配置位于 `plugins.t2x.image`
+- 插件接口新增 `openai.generate_image()`、`bot.admins`、`bot.is_admin()`
+- `HandledResult` 新增 `followup`：先回复，再在后台补发耗时任务的结果，`self.handled()` 同步增加 `followup` 参数
+
+### Changed
+
+- 连接配置 `connect.openai_base_url`、`connect.openai_api_key` 更名为 `connect.ai_base_url`、`connect.ai_api_key`，环境变量 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 同步更名为 `AI_BASE_URL`、`AI_API_KEY`；升级后在 `twipsybot cfg` 中重新填写密钥并保存即可，旧键会被自动清除
+- 插件 Media 更名为 MLLM：配置节 `plugins.media` 改为 `plugins.mllm`，类名改为 `MLLMPlugin`
+- Iincho 私信报告的对象改为 `bot.admins`，须填写用户 ID，不再有 `admin_ids`
+- `/img` 经插件流程处理：受黑名单与回复限制约束
+
+### Fixed
+
+- `twipsybot cfg` 保存时不清除 `secrets.yaml` 中未知顶层键
+
+### Removed
+
+- `bot.image_model`、`bot.image_size`、`bot.image_quality` 配置，升级后需移至 `plugins.t2x.image`
+- 核心模块 `bot/flows/image.py`
+
+<br>
+
 ## 0.25.0 - 2026-10-16
 
 TUI 运行与连接状态

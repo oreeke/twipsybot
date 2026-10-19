@@ -7,13 +7,6 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 from loguru import logger
 
-from ...shared.consts import (
-    STREAM_DEDUP_CACHE_MAX,
-    STREAM_DEDUP_CACHE_TTL,
-    STREAM_QUEUE_MAX,
-    STREAM_QUEUE_PUT_TIMEOUT,
-    STREAM_WORKERS,
-)
 from ...shared.logs import maybe_log_event_dump
 from .channels import CHAT_CHANNELS, NOTE_CHANNELS, ChannelType
 
@@ -23,6 +16,11 @@ if TYPE_CHECKING:
 EventHandler = Callable[[dict[str, Any]], Awaitable[Any] | Any]
 
 _CHAT_IDLE_SECONDS = 120
+_WORKERS = 24
+_QUEUE_MAX = 1000
+_QUEUE_PUT_TIMEOUT = 1.0
+_DEDUP_CACHE_MAX = 2000
+_DEDUP_CACHE_TTL = 600
 
 
 def _wrap(event_type: str, key: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -67,14 +65,14 @@ class EventRouter:
         self._client = client
         self.handlers: dict[str, list[EventHandler]] = {}
         self.processed: TTLCache[str, bool] = TTLCache(
-            maxsize=STREAM_DEDUP_CACHE_MAX,
-            ttl=STREAM_DEDUP_CACHE_TTL,
+            maxsize=_DEDUP_CACHE_MAX,
+            ttl=_DEDUP_CACHE_TTL,
             timer=time.monotonic,
         )
         self.queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue(
-            maxsize=STREAM_QUEUE_MAX
+            maxsize=_QUEUE_MAX
         )
-        self.worker_count = STREAM_WORKERS
+        self.worker_count = _WORKERS
         self.workers: list[asyncio.Task[None]] = []
         self.chat_tasks: dict[str, asyncio.Task[None]] = {}
         self._chat_users: dict[str, dict[str, Any]] = {}
@@ -147,7 +145,7 @@ class EventRouter:
 
     async def enqueue(self, channel_name: str, event: dict[str, Any]) -> bool:
         try:
-            async with asyncio.timeout(STREAM_QUEUE_PUT_TIMEOUT):
+            async with asyncio.timeout(_QUEUE_PUT_TIMEOUT):
                 await self.queue.put((channel_name, event))
             return True
         except TimeoutError:

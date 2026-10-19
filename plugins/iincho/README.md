@@ -6,8 +6,6 @@
 plugins:
   iincho:
     enabled: true
-    admin_ids:
-      - "9abcdef012345678"
 ```
 
 完整说明见[文档](https://twipsybot.oreeke.com/user-guide/plugins/iincho)。

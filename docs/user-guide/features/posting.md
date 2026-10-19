@@ -1,9 +1,9 @@
 ---
-title: 自动发帖与图片生成
-description: 配置 TwipsyBot 轮转与定时发帖、管理员手动发帖和图片生成。
+title: 自动发帖
+description: 配置 TwipsyBot 轮转与定时发帖及管理员手动发帖。
 ---
 
-# 自动发帖与图片生成
+# 自动发帖
 
 ## 自动发帖
 
@@ -44,15 +44,3 @@ autopost:
 | `-l` | 不联合 |
 
 缺省沿用 `autopost` 的可见性与 `local_only`，不计入每日计数。
-
-## 图片生成
-
-设置 `bot.image_model` 后，管理员可在私聊、群聊（需提及）或提及中使用：
-
-```text
-/img 雨后的未来城市车站，清晨，自然光
-```
-
-- 结果上传至机器人 Drive 并作为附件回复；Drive 文件不会自动清理。
-- 仅在服务支持时填写 `image_size` 与 `image_quality`。
-- 返回须为 JPEG、PNG 或 WebP，不超过 32 MiB。

@@ -69,10 +69,13 @@ def _valid_file_ids(value: Any) -> bool:
 
 def _valid_handled(result: dict[str, Any]) -> bool:
     return (
-        {"handled", "response"} <= set(result) <= {"handled", "response", "file_id"}
+        {"handled", "response"}
+        <= set(result)
+        <= {"handled", "response", "file_id", "followup"}
         and result["handled"] is True
         and isinstance(result["response"], str)
         and ("file_id" not in result or _non_empty_text(result["file_id"]))
+        and ("followup" not in result or callable(result["followup"]))
     )
 
 

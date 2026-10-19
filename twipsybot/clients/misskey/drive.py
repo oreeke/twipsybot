@@ -2,11 +2,12 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
-from ...shared.consts import FETCH_MAX_BYTES
 from ...shared.errors import APIConnectionError
 
 if TYPE_CHECKING:
     from .api import MisskeyAPI
+
+_FETCH_MAX_BYTES = 32 * 1024 * 1024
 
 
 class MisskeyDrive:
@@ -39,7 +40,7 @@ class MisskeyDrive:
 
     async def fetch_bytes(self, url: str, *, max_bytes: int | None = None) -> bytes:
         fetcher = self._api.fetcher
-        limit = FETCH_MAX_BYTES if max_bytes is None else max_bytes
+        limit = _FETCH_MAX_BYTES if max_bytes is None else max_bytes
         try:
             async with self._api.semaphore, fetcher.open(url) as response:
                 if response.status != 200:

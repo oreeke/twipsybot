@@ -35,7 +35,7 @@ class _Config(PluginConfig):
         return value
 
 
-class MediaPlugin(PluginBase):
+class MLLMPlugin(PluginBase):
     api_version = 3
     priority = 750
     config_class = _Config
@@ -60,7 +60,7 @@ class MediaPlugin(PluginBase):
                 direct_url, max_bytes=self.settings.max_bytes
             )
         except Exception as e:
-            logger.error(f"Media failed to download file: {e!r}")
+            logger.error(f"MLLM failed to download file: {e!r}")
             return None
 
     @staticmethod
@@ -127,4 +127,4 @@ class MediaPlugin(PluginBase):
         return self._make_part(file, mime, data)
 
 
-plugin = MediaPlugin
+plugin = MLLMPlugin

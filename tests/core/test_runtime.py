@@ -21,8 +21,7 @@ from twipsybot.admin import handlers
 from twipsybot.admin.service import _extract_slash_command, _is_slash_command
 from twipsybot.app import cli as app_cli
 from twipsybot.app import main as app_main
-from twipsybot.bot.engine.pipeline import Reply
-from twipsybot.bot.flows.image import ImageGenerationService
+from twipsybot.bot.engine.runtime import BotRuntime
 from twipsybot.bot.flows.post import AutoPostService
 from twipsybot.shared.errors import (
     APIBadRequestError,
@@ -151,6 +150,21 @@ async def test_admin_status_reports_stream_task_state(
         await bot.runtime.cleanup_tasks()
 
 
+async def test_runtime_spawn_tracks_and_cancels_background_tasks() -> None:
+    runtime = BotRuntime()
+    done = runtime.spawn(asyncio.sleep(0))
+    pending = runtime.spawn(asyncio.sleep(10))
+    await done
+    await asyncio.sleep(0)
+
+    assert runtime._background == {pending}
+
+    await runtime.cleanup_tasks()
+
+    assert pending.cancelled()
+    assert not runtime._background
+
+
 @pytest.mark.parametrize(
     ("autopost", "count", "scheduler_state", "has_job", "expected"),
     (
@@ -261,77 +275,6 @@ def test_slash_command_prefix_detection(text: str, expected: bool) -> None:
     assert _is_slash_command(text) is expected
 
 
-async def test_image_service_downloads_url_before_upload() -> None:
-    openai = SimpleNamespace(
-        generate_image=AsyncMock(return_value="https://example.com/image.jpg")
-    )
-    drive = SimpleNamespace(
-        fetch_bytes=AsyncMock(return_value=b"\xff\xd8\xffimage"),
-        upload_bytes=AsyncMock(return_value={"id": "file-1"}),
-    )
-    service = ImageGenerationService(
-        cast(Any, SimpleNamespace(openai=openai, misskey=SimpleNamespace(drive=drive)))
-    )
-
-    assert await service.generate_and_upload("一只猫") == "file-1"
-    drive.fetch_bytes.assert_awaited_once_with(
-        "https://example.com/image.jpg", max_bytes=32 * 1024 * 1024
-    )
-    drive.upload_bytes.assert_awaited_once_with(
-        b"\xff\xd8\xffimage", name="generated.jpg", content_type="image/jpeg"
-    )
-
-
-@pytest.mark.parametrize("failure", ["generate", "upload"])
-async def test_image_response_handles_provider_failures(failure: str) -> None:
-    generate_image = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
-    upload_bytes = AsyncMock(return_value={"id": "file-1"})
-    if failure == "generate":
-        generate_image.side_effect = RuntimeError("generation failed")
-    else:
-        upload_bytes.side_effect = RuntimeError("upload failed")
-    service = ImageGenerationService(
-        cast(
-            Any,
-            SimpleNamespace(
-                openai=SimpleNamespace(generate_image=generate_image),
-                misskey=SimpleNamespace(
-                    drive=SimpleNamespace(upload_bytes=upload_bytes)
-                ),
-            ),
-        )
-    )
-
-    assert await service.generate_response("一只猫") == Reply(
-        "图片生成失败，请稍后再试。"
-    )
-
-
-@pytest.mark.parametrize(
-    "data",
-    (b"not-an-image", b"\x89PNG\r\n\x1a\n" + b"x" * (32 * 1024 * 1024)),
-    ids=("invalid", "oversized"),
-)
-async def test_image_service_rejects_invalid_or_oversized_data(data: bytes) -> None:
-    upload_bytes = AsyncMock()
-    service = ImageGenerationService(
-        cast(
-            Any,
-            SimpleNamespace(
-                openai=SimpleNamespace(generate_image=AsyncMock(return_value=data)),
-                misskey=SimpleNamespace(
-                    drive=SimpleNamespace(upload_bytes=upload_bytes)
-                ),
-            ),
-        )
-    )
-
-    assert await service.generate_response("一只猫") == Reply(
-        "图片生成失败，请稍后再试。"
-    )
-    upload_bytes.assert_not_awaited()
-
-
 def test_cli_propagates_run_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["twipsybot", "run"])
     monkeypatch.setattr(app_cli.app_main, "main", lambda: 4)
@@ -353,7 +296,7 @@ async def test_heartbeat_reports_bot_and_stream_state(tmp_path: Path) -> None:
 async def test_startup_waits_for_settings_then_retries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "OPENAI_API_KEY"):
+    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "AI_API_KEY"):
         monkeypatch.delenv(env, raising=False)
     bot = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
     monkeypatch.setattr(app_main, "Neuro", lambda _: bot)
@@ -369,7 +312,7 @@ async def test_startup_waits_for_settings_then_retries(
         {
             "misskey_url": "https://m.example",
             "misskey_token": "t",
-            "openai_api_key": "k",
+            "ai_api_key": "k",
         },
     )
 
@@ -381,7 +324,7 @@ async def test_startup_waits_for_settings_then_retries(
 async def test_startup_retries_after_connection_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "OPENAI_API_KEY"):
+    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "AI_API_KEY"):
         monkeypatch.setenv(env, "x")
     bot = SimpleNamespace(
         start=AsyncMock(side_effect=[APIConnectionError(), None]), stop=AsyncMock()
@@ -403,7 +346,7 @@ async def test_startup_retries_after_connection_error(
 async def test_startup_waits_on_token_permission_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "OPENAI_API_KEY"):
+    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "AI_API_KEY"):
         monkeypatch.setenv(env, "x")
     bot = SimpleNamespace(
         start=AsyncMock(side_effect=APIPermissionError()), stop=AsyncMock()
@@ -425,7 +368,7 @@ async def test_startup_waits_on_token_permission_error(
 async def test_startup_wait_stops_on_shutdown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "OPENAI_API_KEY"):
+    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "AI_API_KEY"):
         monkeypatch.delenv(env, raising=False)
     runner = app_main.BotRunner()
     started = asyncio.create_task(runner._start(app_main.Config(tmp_path)))

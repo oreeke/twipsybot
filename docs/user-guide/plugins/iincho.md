@@ -5,7 +5,7 @@ description: 使用 Iincho 抽样 Misskey 本地时间线，发布内容风险�
 
 # Iincho：本地时间线观察
 
-定期均匀抽样本地时间线，发布内容风险概览。配置 `admin_ids` 且发现疑似违规时，额外生成热点趋势并私聊管理员（含相关帖子 ID）。公开概览不含原帖、用户或帖子 ID。
+定期均匀抽样本地时间线，发布内容风险概览。配置了 `bot.admins` 且发现疑似违规时，额外生成热点趋势并私聊管理员（含相关帖子 ID）。公开概览不含原帖、用户或帖子 ID。
 
 ## 前置条件
 
@@ -13,7 +13,7 @@ description: 使用 Iincho 抽样 Misskey 本地时间线，发布内容风险�
 - 审核后端二选一：
   - `openai`（默认）：主端点支持 `/moderations` 与 `omni-moderation-latest`。
   - `cloudflare`：账户 ID 与具备 Workers AI Read 权限的令牌，使用 `@cf/meta/llama-guard-3-8b`，不依赖主端点。
-- 配置 `admin_ids` 时，文本模型需支持 JSON Object 输出。
+- 配置了 `bot.admins` 时，文本模型需支持 JSON Object 输出。
 
 ## 配置
 
@@ -28,8 +28,6 @@ plugins:
     max_tokens: 2000
     temperature: 0.2
     local_only: true
-    admin_ids:
-      - "9abcdef012345678"
     moderation:
       provider: openai
       cf_concurrency: 4
@@ -52,12 +50,11 @@ plugins:
 | `sample_size` | 每周期最多样本数，不小于 `min_notes` |
 | `max_input_chars` | 送入趋势模型的文本上限 |
 | `local_only` | 报告不联合，建议保持 `true` |
-| `admin_ids` | 接收私信报告的用户 ID，列表或逗号、空格分隔 |
 | `moderation.cf_account_id` | Cloudflare 账户 ID |
 | `moderation.cf_api_token` | Cloudflare 帐户 API 令牌 |
 | `moderation.cf_concurrency` | Cloudflare 并发数 |
 
-`prompt` 与 `system_prompt` 留空使用内置提示。
+`prompt` 与 `system_prompt` 留空使用内置提示。报告私信发给 `bot.admins`，须填写用户 ID，`username@host` 形式的条目无法私信，仅记录日志。
 
 ## 数据范围
 

@@ -9,10 +9,7 @@ from typing import Any
 import aiohttp
 from loguru import logger
 
-from ...shared.consts import (
-    API_MAX_RETRIES,
-    MISSKEY_MAX_CONCURRENCY,
-)
+from ...shared.consts import API_MAX_RETRIES
 from ...shared.errors import (
     APIBadRequestError,
     APIConnectionError,
@@ -30,6 +27,7 @@ from .drive import MisskeyDrive
 NOTE_TEXT_MAX_LENGTH = 3000
 CHAT_TEXT_MAX_LENGTH = 2000
 MAX_RETRY_AFTER = 60.0
+_MAX_CONCURRENCY = 32
 ENDPOINT_PATTERN = re.compile(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*")
 
 
@@ -47,7 +45,7 @@ class MisskeyAPI:
         self.transport: TCPClient = transport or TCPClient()
         self.fetcher = fetcher or PublicFetcher(origin=self.instance_url)
         self.drive: MisskeyDrive = MisskeyDrive(self)
-        self._semaphore = asyncio.Semaphore(MISSKEY_MAX_CONCURRENCY)
+        self._semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
         self._antennas_cache: list[dict[str, Any]] = []
         self._antennas_cache_expires_at = 0.0
         self._antennas_cache_lock = asyncio.Lock()

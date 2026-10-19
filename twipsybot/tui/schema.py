@@ -159,8 +159,7 @@ class Section:
         if self.path:
             set_dotted(raw, self.key, mine or None)
             return raw
-        owned = {spec.path[0] for spec in self.specs}
-        return {k: v for k, v in raw.items() if k not in owned} | mine
+        return mine | {k: v for k, v in raw.items() if k == "plugins"}
 
     def errors(self, raw: Mapping[str, Any]) -> dict[str, str]:
         found: dict[str, str] = {}

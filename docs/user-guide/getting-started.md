@@ -33,14 +33,14 @@ docker compose exec twipsybot twipsybot cfg
 
 首次启动缺少连接信息，在 `connect` 中填写：
 
-`misskey url`、`misskey token`、`openai base url`、`openai api key`
+`misskey url`、`misskey token`、`ai base url`、`ai api key`
 
 `bot` 中修改 `model`
 
 `Ctrl+S` 保存，约 2 秒后自动启动。按需修改 compose 中的 `TZ`。
 
 ::: tip 模型服务
-`connect.openai_base_url` 留空使用 OpenAI 官方端点，`bot.model` 默认使用 `gpt-6-luna`。
+`connect.ai_base_url` 留空使用 OpenAI 官方端点，`bot.model` 默认使用 `gpt-6-luna`。
 :::
 
 令牌无效或权限不足时持续等待修正，实例不可达时每 60 秒重试。API 密钥与模型不在启动时校验，错误会在首次回复时写入日志：

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from conftest import plugin_context
 
-from plugins.media.plugin import MediaPlugin
+from plugins.mllm.plugin import MLLMPlugin
 from twipsybot.plugin import FileRef, MentionEvent, MessageEvent, NoteRef, UserRef
 
 _USER = UserRef(id="user-1", username="alice", host=None)
@@ -34,9 +34,9 @@ def _message(text: str, *files: FileRef) -> MessageEvent:
     )
 
 
-def _plugin(config: dict[str, Any] | None = None) -> tuple[MediaPlugin, AsyncMock]:
+def _plugin(config: dict[str, Any] | None = None) -> tuple[MLLMPlugin, AsyncMock]:
     fetch = AsyncMock(return_value=b"image")
-    plugin = MediaPlugin(
+    plugin = MLLMPlugin(
         plugin_context(
             {"enabled": True, **(config or {})},
             misskey=SimpleNamespace(drive=SimpleNamespace(fetch_bytes=fetch)),
@@ -45,7 +45,7 @@ def _plugin(config: dict[str, Any] | None = None) -> tuple[MediaPlugin, AsyncMoc
     return plugin, fetch
 
 
-async def test_media_returns_image_part_without_prompt_by_default() -> None:
+async def test_mllm_returns_image_part_without_prompt_by_default() -> None:
     plugin, _ = _plugin()
 
     result = await plugin.on_context(_message("", _file("file-1")))
@@ -53,7 +53,7 @@ async def test_media_returns_image_part_without_prompt_by_default() -> None:
     assert result == {"media": [_IMAGE_PART]}
 
 
-async def test_media_default_prompt_only_applies_to_empty_text() -> None:
+async def test_mllm_default_prompt_only_applies_to_empty_text() -> None:
     plugin, _ = _plugin({"default_prompt": " describe "})
 
     empty = await plugin.on_context(_message("", _file("file-1")))
@@ -67,7 +67,7 @@ async def test_media_default_prompt_only_applies_to_empty_text() -> None:
     "mime",
     [None, "", "application/pdf", "application/octet-stream", "text/plain"],
 )
-async def test_media_only_accepts_image_audio_and_video(mime: str | None) -> None:
+async def test_mllm_only_accepts_image_audio_and_video(mime: str | None) -> None:
     plugin, fetch = _plugin()
 
     assert await plugin.on_context(_message("hi", _file("doc", mime))) is None
@@ -75,7 +75,7 @@ async def test_media_only_accepts_image_audio_and_video(mime: str | None) -> Non
     fetch.assert_not_awaited()
 
 
-async def test_media_builds_parts_by_mime() -> None:
+async def test_mllm_builds_parts_by_mime() -> None:
     plugin, fetch = _plugin({"use_thumbnail": True})
     video = FileRef(
         id="video",
@@ -110,14 +110,14 @@ async def test_media_builds_parts_by_mime() -> None:
     assert fetch.await_args_list[0].args[0] == "https://example.com/files/raw.bin"
 
 
-async def test_media_skips_attachment_without_official_metadata() -> None:
+async def test_mllm_skips_attachment_without_official_metadata() -> None:
     plugin, fetch = _plugin()
 
     assert await plugin._to_part(_file("file-1", None)) is None
     fetch.assert_not_awaited()
 
 
-def test_media_selects_thumbnail_or_original_with_matching_mime() -> None:
+def test_mllm_selects_thumbnail_or_original_with_matching_mime() -> None:
     file = FileRef(
         id="file-1",
         mime_type="image/png",
@@ -143,7 +143,7 @@ def test_media_selects_thumbnail_or_original_with_matching_mime() -> None:
     assert thumbnail._select_source(same, "image/png") == (same.url, "image/png")
 
 
-def test_media_source_falls_back_when_preferred_url_is_missing() -> None:
+def test_mllm_source_falls_back_when_preferred_url_is_missing() -> None:
     plugin, _ = _plugin({"use_thumbnail": True})
     no_urls = FileRef(
         id="file-1", mime_type="image/png", url=None, thumbnail_url=None, raw={}
@@ -154,14 +154,14 @@ def test_media_source_falls_back_when_preferred_url_is_missing() -> None:
     assert plugin._select_source(no_urls, "image/png") == (None, "image/png")
 
 
-async def test_media_skips_failed_download() -> None:
+async def test_mllm_skips_failed_download() -> None:
     plugin, fetch = _plugin()
     fetch.side_effect = OSError("down")
 
     assert await plugin.on_context(_message("", _file("file-1"))) is None
 
 
-async def test_media_collects_quote_and_reply_files_within_budget() -> None:
+async def test_mllm_collects_quote_and_reply_files_within_budget() -> None:
     plugin, fetch = _plugin({"max_files": 2})
     event = MentionEvent(
         id="note-1",
@@ -194,21 +194,21 @@ async def test_media_collects_quote_and_reply_files_within_budget() -> None:
         ("6 MiB", 6 * 1024 * 1024),
     ],
 )
-def test_media_size_parsing(value: Any, expected: int) -> None:
+def test_mllm_size_parsing(value: Any, expected: int) -> None:
     plugin, _ = _plugin({"max_bytes": value})
 
     assert plugin.settings.max_bytes == expected
 
 
 @pytest.mark.parametrize("value", (1024.9, -1, "invalid", True))
-def test_media_rejects_invalid_size(value: Any) -> None:
+def test_mllm_rejects_invalid_size(value: Any) -> None:
     context = plugin_context({"enabled": True, "max_bytes": value})
 
     with pytest.raises(ValueError, match="max_bytes"):
-        MediaPlugin(context)
+        MLLMPlugin(context)
 
 
-def test_media_parses_boolean_strings() -> None:
+def test_mllm_parses_boolean_strings() -> None:
     plugin, _ = _plugin({"enabled": "true", "use_thumbnail": "true"})
 
     assert plugin.settings.use_thumbnail is True

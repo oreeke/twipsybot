@@ -15,12 +15,7 @@ from openai import (
     AuthenticationError as OpenAIAuthenticationError,
 )
 
-from ...shared.consts import (
-    API_MAX_RETRIES,
-    API_TIMEOUT,
-    OPENAI_MAX_CONCURRENCY,
-    REQUEST_TIMEOUT,
-)
+from ...shared.consts import API_MAX_RETRIES, API_TIMEOUT, REQUEST_TIMEOUT
 from ...shared.errors import APIConnectionError, AuthenticationError
 from .extract import (
     extract_responses_text,
@@ -33,6 +28,7 @@ from .requests import (
 )
 
 _MODERATION_BATCH = 100
+_MAX_CONCURRENCY = 16
 
 
 class OpenAIAPI:
@@ -54,21 +50,26 @@ class OpenAIAPI:
         *,
         base_url: str | None = None,
         api_mode: str = "auto",
-        image_model: str | None = None,
-        image_size: str | None = None,
-        image_quality: str | None = None,
     ):
         self.model = model
         self.api_mode = api_mode
-        self.image_model = image_model
-        self.image_size = image_size
-        self.image_quality = image_quality
+        self._api_key = api_key
+        self._base_url = base_url
         self._responses_disabled = False
-        self._semaphore = asyncio.Semaphore(OPENAI_MAX_CONCURRENCY)
+        self._semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
         self._token_encoding: tiktoken.Encoding | None = None
         self._token_encoding_unavailable = False
+        self.client = self._new_client(api_key, base_url)
+        host = self.client.base_url.host
+        self._token_param: TokenParam = (
+            "max_completion_tokens"
+            if host == "openai.com" or host.endswith(".openai.com")
+            else "max_tokens"
+        )
+
+    def _new_client(self, api_key: str, base_url: str | None) -> openai.AsyncOpenAI:
         try:
-            self.client = openai.AsyncOpenAI(
+            return openai.AsyncOpenAI(
                 api_key=api_key,
                 base_url=base_url or None,
                 timeout=API_TIMEOUT,
@@ -77,29 +78,12 @@ class OpenAIAPI:
         except Exception as e:
             logger.error(f"Failed to create OpenAI API client: {e}")
             raise APIConnectionError(self._safe_error_message(e)) from e
-        host = self.client.base_url.host
-        self._token_param: TokenParam = (
-            "max_completion_tokens"
-            if host == "openai.com" or host.endswith(".openai.com")
-            else "max_tokens"
-        )
 
-    def update(
-        self,
-        *,
-        model: str,
-        api_mode: str,
-        image_model: str | None,
-        image_size: str | None,
-        image_quality: str | None,
-    ) -> None:
+    def update(self, *, model: str, api_mode: str) -> None:
         if api_mode != self.api_mode:
             self.api_mode = api_mode
             self._responses_disabled = False
         self.model = model
-        self.image_model = image_model
-        self.image_size = image_size
-        self.image_quality = image_quality
 
     async def _chat_completions(
         self,
@@ -301,19 +285,31 @@ class OpenAIAPI:
             )
         return results
 
-    async def generate_image(self, prompt: str) -> bytes | str:
-        if not self.image_model:
-            raise ValueError("image generation is not configured")
-        options: dict[str, Any] = {
-            "model": self.image_model,
-            "prompt": prompt.strip(),
-        }
-        if self.image_size:
-            options["size"] = self.image_size
-        if self.image_quality:
-            options["quality"] = self.image_quality
+    async def generate_image(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        size: str | None = None,
+        quality: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> bytes | str:
+        options: dict[str, Any] = {"model": model, "prompt": prompt.strip()}
+        if base_url and not api_key:
+            raise ValueError("base_url requires api_key")
+        if size:
+            options["size"] = size
+        if quality:
+            options["quality"] = quality
         async with self._semaphore:
-            response = await self.client.images.generate(**options)
+            if base_url or api_key:
+                async with self._new_client(
+                    api_key or self._api_key, base_url or self._base_url
+                ) as client:
+                    response = await client.images.generate(**options)
+            else:
+                response = await self.client.images.generate(**options)
         image = response.data[0] if response.data else None
         if image is None:
             raise ValueError("image API returned no image data")

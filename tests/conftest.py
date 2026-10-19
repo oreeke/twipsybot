@@ -193,8 +193,8 @@ def write_config(
 ) -> WriteConfig:
     monkeypatch.setenv("MISSKEY_INSTANCE_URL", misskey_server.url)
     monkeypatch.setenv("MISSKEY_ACCESS_TOKEN", "test-token")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("OPENAI_BASE_URL", openai_server.url)
+    monkeypatch.setenv("AI_API_KEY", "test-key")
+    monkeypatch.setenv("AI_BASE_URL", openai_server.url)
     settings_path = tmp_path / "data" / "settings.yaml"
 
     def _write(*, load: bool = True, **overrides: Any) -> Config:

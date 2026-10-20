@@ -219,7 +219,7 @@ class PluginManager:
         self.config = config
         self.plugins_dir = Path(plugins_dir)
         self.plugins: dict[str, PluginBase] = {}
-        self.discovered_plugins: dict[str, dict[str, Any]] = {}
+        self.discovered_plugins: dict[str, bool] = {}
         self.db = db
         self.misskey = misskey
         self.openai = openai
@@ -243,12 +243,7 @@ class PluginManager:
         except ValueError as e:
             logger.error(f"Invalid plugin config: plugin={key}: {e}")
             enabled = False
-        self.discovered_plugins[key] = {
-            "name": key,
-            "enabled": enabled,
-            "priority": plugin_config.get("priority", 0),
-            "configured": configured,
-        }
+        self.discovered_plugins[key] = enabled
         if configured:
             status = "enabled" if enabled else "disabled"
             logger.debug(f"Discovered plugin: {key} (status: {status})")
@@ -437,7 +432,7 @@ class PluginManager:
             and await self._start_plugin(plugin)
         ):
             return "enabled"
-        self.discovered_plugins[name]["enabled"] = False
+        self.discovered_plugins[name] = False
         return "failed"
 
     @staticmethod
@@ -583,20 +578,11 @@ class PluginManager:
                         break
         return results
 
-    def get_plugin_info(self) -> list[dict[str, Any]]:
-        info = {
-            name: info
-            for name, info in self.discovered_plugins.items()
-            if info.get("configured")
-        }
-        info.update({name: plugin._get_info() for name, plugin in self.plugins.items()})
-        return [info[name] for name in sorted(info)]
-
     def get_plugin_states(self) -> dict[str, bool]:
         states = {
-            name: info["enabled"] for name, info in self.discovered_plugins.items()
+            **self.discovered_plugins,
+            **{name: plugin._enabled for name, plugin in self.plugins.items()},
         }
-        states.update({name: plugin._enabled for name, plugin in self.plugins.items()})
         return dict(sorted(states.items()))
 
     def get_plugin(self, name: str) -> PluginBase | None:

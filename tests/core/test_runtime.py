@@ -65,8 +65,8 @@ async def test_admin_status_preserves_code_block_layout(
     )
     monkeypatch.setattr(
         bot.plugin_manager,
-        "get_plugin_info",
-        Mock(return_value=[{"enabled": True} for _ in range(plugin_count)]),
+        "get_plugin_states",
+        Mock(return_value={f"p{i}": True for i in range(plugin_count)}),
     )
     response = await bot.admin.on_message(
         {"text": "^status", "user": {"id": "user-2", "username": "bob"}}

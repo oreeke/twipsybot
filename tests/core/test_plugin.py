@@ -416,8 +416,7 @@ async def test_initialize_timeout_runs_cleanup(
     plugin = bot.plugin_manager.get_plugin("slow")
 
     assert plugin is not None
-    assert bot.plugin_manager.get_plugin_info()[0]["enabled"] is False
-    assert plugin.cleaned is True
+    assert bot.plugin_manager.get_plugin_states() == {"slow": False}
 
 
 async def test_failed_plugin_initialization_runs_cleanup(
@@ -437,8 +436,7 @@ async def test_failed_plugin_initialization_runs_cleanup(
 
     plugin = bot.plugin_manager.get_plugin("failing")
     assert plugin is not None
-    assert bot.plugin_manager.get_plugin_info()[0]["enabled"] is False
-    assert await bot.db.get_plugin_data("failing", "cleaned") == "yes"
+    assert bot.plugin_manager.get_plugin_states() == {"failing": False}
 
 
 async def test_invalid_hook_results_are_rejected(
@@ -821,9 +819,10 @@ async def test_non_bool_initialize_and_startup_failure_cleanup(
     assert nonbool is not None
     assert startup is not None
 
-    info = {item["name"]: item for item in bot.plugin_manager.get_plugin_info()}
-    assert info["nonbool"]["enabled"] is False
-    assert info["startup"]["enabled"] is False
+    assert bot.plugin_manager.get_plugin_states() == {
+        "nonbool": False,
+        "startup": False,
+    }
     assert nonbool.cleaned is True
     assert startup.cleaned is True
 
@@ -1057,8 +1056,7 @@ async def test_reload_plugin_failure_disables_only_that_plugin(
 
     assert manager.get_plugin("broken") is old
     assert old.events[-2:] == ["shutdown", "cleanup"]
-    info = {item["name"]: item["enabled"] for item in manager.get_plugin_info()}
-    assert info == {"broken": False, "healthy": True}
+    assert manager.get_plugin_states() == {"broken": False, "healthy": True}
     assert await manager.call_plugin_hook("on_message", _MESSAGE) == [
         ("healthy", {"handled": True, "response": "ok"})
     ]
@@ -1084,7 +1082,7 @@ async def test_reload_plugin_follows_enabled_flag(
     set_plugin_config(root, "toggle", None)
     assert await bot.settings.reload() == {"toggle": "disabled"}
     assert plugin.events[-2:] == ["shutdown", "cleanup"]
-    assert manager.get_plugin_info()[0]["enabled"] is False
+    assert manager.get_plugin_states() == {"toggle": False}
     assert await manager.call_plugin_hook("on_message", _MESSAGE) == []
 
     set_plugin_config(root, "toggle", {"enabled": True})

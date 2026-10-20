@@ -129,8 +129,8 @@ def status_text(bot: "Neuro") -> str:
         auto_post_status_text(bot),
         _channel_status_text(bot),
     ]
-    if plugins := bot.plugin_manager.get_plugin_info():
-        enabled = sum(plugin.get("enabled") is True for plugin in plugins)
+    if plugins := bot.plugin_manager.get_plugin_states():
+        enabled = sum(plugins.values())
         parts += ["", f"插件  {enabled}/{len(plugins)} 已启用"]
     parts.append(f"授权  {len(admins(bot))}")
     return "\n".join(parts)

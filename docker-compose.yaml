@@ -7,7 +7,7 @@ services:
       - TZ=Asia/Shanghai                        # 时区，影响依赖本地时间的任务
     volumes:
       - twipsybot:/app/data                     # 设置、连接凭据、数据库与日志
-      - ./prompts:/app/prompts:ro               # 可选，此目录存放 AI 提示词与发帖主题文件
+      - ./prompts:/app/prompts:ro               # 存放 AI 提示词与发帖主题文件
 
 # 启动后使用 TUI 修改设置：docker compose exec twipsybot twipsybot cfg
 

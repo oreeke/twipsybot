@@ -82,14 +82,14 @@ Linux 处理 `SIGINT`、`SIGTERM`、`SIGHUP`，Windows 处理 `SIGINT`、`SIGTER
 `SettingsReloader` 约每 2 秒检查 `settings.yaml`、`secrets.yaml` 及 `bot.system_prompt`、`autopost.prompt` 引用的 `prompts/*.md`（或 `*.txt`）：
 
 - 有效变更即时应用，无效文件记录错误并保留当前设置。
-- `connect` 与 `timeline.*` 标记为需重启。
+- `connect` 标记为需重启。
 - 插件配置变更由 `PluginManager` 以新配置重建对应插件。
 
 `twipsybot cfg` 保存时合并到最新文件且只写非默认字段，避免覆盖管理命令的并发写入。
 
 ## 响应管道
 
-私聊与提及按用户串行，房间消息按房间串行；房间消息仅在提及机器人时处理，且忽略 `^` 命令。管理命令走独立分支，不计入回复限制。普通消息：
+私聊与提及按用户串行，房间消息按房间串行；房间消息仅在 `@` 机器人时处理，且忽略 `^` 命令。管理命令走独立分支，不计入回复限制。普通消息：
 
 1. 校验黑名单、间隔与轮数，白名单与管理员豁免后两者。
 2. 按优先级调用插件 Hook，返回 handled 结果即发送并终止。

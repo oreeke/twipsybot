@@ -30,7 +30,7 @@ SECRETS = {
 }
 _REQUIRED_SECRETS = ("misskey_url", "misskey_token", "ai_api_key")
 PROMPT_KEYS = (ConfigKeys.BOT_SYSTEM_PROMPT, ConfigKeys.POST_PROMPT)
-_RESTART_PREFIXES = ("connect.", "timeline.")
+_RESTART_PREFIX = "connect."
 POST_MIN_GAP = timedelta(minutes=5)
 POST_MAX_TIMES = 24
 
@@ -45,7 +45,7 @@ _CLOCK_ERROR = "times must use HH:MM"
 
 
 def needs_restart(key: str) -> bool:
-    return key.startswith(_RESTART_PREFIXES)
+    return key.startswith(_RESTART_PREFIX)
 
 
 def _parse_interval(value: Any) -> timedelta:

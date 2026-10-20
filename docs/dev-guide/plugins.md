@@ -87,7 +87,7 @@ example = "twipsybot_example:plugin"
 - `_register_resource(resource)` 注册带 `close()` 的资源，清理时自动关闭。
 - 自建任务在 `on_shutdown()` 中停止，在 `cleanup()` 中完成释放。
 
-**重载**（配置变更或 `^reload`）：停止分发 Hook 并等待进行中的调用 → 旧实例 `on_shutdown()`、`cleanup()` → 以新配置新建实例并执行 `initialize()`、`on_startup()`。运行时状态只放在实例内并在上述方法中释放即可正确重载；不要使用模块或类变量，需跨重载保留的数据写入 `storage`。
+**重载**（配置变更或 `^plugin on|off`）：停止分发 Hook 并等待进行中的调用 → 旧实例 `on_shutdown()`、`cleanup()` → 以新配置新建实例并执行 `initialize()`、`on_startup()`。运行时状态只放在实例内并在上述方法中释放即可正确重载；不要使用模块或类变量，需跨重载保留的数据写入 `storage`。
 
 ## 事件 Hook
 

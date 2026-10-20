@@ -53,8 +53,9 @@ reply:
 运行中约每 2 秒轮询设置文件与引用的提示词文件：
 
 - 有效修改即时生效；无效文件被拒绝并记录错误，保留当前设置。
-- `connect` 与 `timeline.*` 需重启，TUI 标记 `↻`，日志提示 `Restart required for: ...`。
-- `plugins.<name>` 变更自动重载对应插件，也可发送 `^reload <插件名>`。
+- `connect` 需重启，TUI 标记 `↻`，日志提示 `Restart required for: ...`。
+- `timeline.*` 即时增删时间线订阅。
+- `plugins.<name>` 自动重载对应插件。
 
 ## 连接信息
 

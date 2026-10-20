@@ -592,6 +592,13 @@ class PluginManager:
         info.update({name: plugin._get_info() for name, plugin in self.plugins.items()})
         return [info[name] for name in sorted(info)]
 
+    def get_plugin_states(self) -> dict[str, bool]:
+        states = {
+            name: info["enabled"] for name, info in self.discovered_plugins.items()
+        }
+        states.update({name: plugin._enabled for name, plugin in self.plugins.items()})
+        return dict(sorted(states.items()))
+
     def get_plugin(self, name: str) -> PluginBase | None:
         return self.plugins.get(name)
 

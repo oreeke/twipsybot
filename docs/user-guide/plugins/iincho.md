@@ -9,7 +9,7 @@ description: 使用 Iincho 抽样 Misskey 本地时间线，发布内容风险�
 
 ## 前置条件
 
-- `timeline.local: true`，需重启。
+- `timeline.local: true`。
 - 审核后端二选一：
   - `openai`（默认）：主端点支持 `/moderations` 与 `omni-moderation-latest`。
   - `cloudflare`：账户 ID 与具备 Workers AI Read 权限的令牌，使用 `@cf/meta/llama-guard-3-8b`，不依赖主端点。

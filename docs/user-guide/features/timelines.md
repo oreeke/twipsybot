@@ -5,7 +5,7 @@ description: 配置 TwipsyBot 订阅 Misskey 时间线与天线。
 
 # 时间线与天线
 
-默认不订阅任何时间线，`timeline.*` 修改后需重启。
+默认不订阅任何时间线，`timeline.*` 修改后即时生效。
 
 | 配置 | 通道 | 说明 |
 | --- | --- | --- |
@@ -19,7 +19,7 @@ description: 配置 TwipsyBot 订阅 Misskey 时间线与天线。
 
 ## 天线
 
-用机器人账号在 Misskey 中创建天线，填入 ID 或名称后重启：
+用机器人账号在 Misskey 中创建天线，填入 ID 或名称：
 
 ```yaml
 timeline:

@@ -152,11 +152,13 @@ def test_prompt_files_resolve_from_root(
     assert config.stat() != fingerprint
 
 
-def test_timeline_channels_are_independently_enabled(write_config: WriteConfig) -> None:
+async def test_timeline_channels_are_independently_enabled(
+    write_config: WriteConfig,
+) -> None:
     config = write_config(timeline={"home": True, "local": False})
     bot = Neuro(config)
 
-    assert bot.connect._timeline_channels == {"homeTimeline"}
+    assert await bot.connect.get_streaming_channels() == ["main", "homeTimeline"]
     assert config.data["timeline"]["global"] is False
     assert "global_" not in config.data["timeline"]
 
@@ -262,7 +264,7 @@ def test_restart_keys() -> None:
     assert needs_restart(ConfigKeys.AI_BASE_URL)
     assert needs_restart(ConfigKeys.MISSKEY_TOKEN)
     assert needs_restart(ConfigKeys.AI_API_KEY)
-    assert needs_restart(ConfigKeys.TIMELINE_ANTENNAS)
+    assert not needs_restart(ConfigKeys.TIMELINE_ANTENNAS)
     assert not needs_restart(ConfigKeys.BOT_MODEL)
     assert not needs_restart("plugins.keyact")
 

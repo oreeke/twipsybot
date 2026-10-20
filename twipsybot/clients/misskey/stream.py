@@ -228,7 +228,7 @@ class StreamingClient:
         self.state = "connected"
 
     async def _resubscribe_channels(self) -> None:
-        for channel_id, info in self.channels.items():
+        for channel_id, info in tuple(self.channels.items()):
             if isinstance(name := info.get("name"), str) and name:
                 await self.socket.send_control(
                     _connect_message(channel_id, name, info.get("params") or {})

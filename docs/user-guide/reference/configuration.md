@@ -29,7 +29,7 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 | `max_tokens` | `2000` | 最大输出 token，须大于 0 |
 | `temperature` | `0.8` | 0–2 |
 
-## timeline <Badge type="warning" text="重启" />
+## timeline
 
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |

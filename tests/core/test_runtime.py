@@ -13,7 +13,13 @@ import pytest
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
 from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from conftest import MakeBot, MakePluginDir, WriteConfig, set_plugin_config
+from conftest import (
+    FakeMisskeyServer,
+    MakeBot,
+    MakePluginDir,
+    WriteConfig,
+    set_plugin_config,
+)
 from yarl import URL
 
 from twipsybot import Neuro
@@ -463,6 +469,7 @@ async def test_settings_reload_applies_live_and_flags_restart(
     bot = await make_bot(write_config())
     warning = Mock()
     monkeypatch.setattr("twipsybot.bot.engine.reload.logger.warning", warning)
+    monkeypatch.setenv("AI_API_KEY", "rotated-key")
     settings = read_settings(bot.config.settings_path)
     settings["bot"] = {
         "system_prompt": "新的人设",
@@ -484,7 +491,70 @@ async def test_settings_reload_applies_live_and_flags_restart(
     assert bot.config.get(ConfigKeys.SYSTEM_ALLOW_NETS) == ["198.18.0.0/15"]
     for fetcher in (bot.fetcher, bot.misskey.fetcher):
         assert fetcher.is_public(ipaddress.ip_address("198.19.1.1"))
-    warning.assert_called_once_with("Restart required for: timeline.home")
+    warning.assert_called_once_with("Restart required for: connect.ai_api_key")
+
+
+async def test_settings_reload_syncs_timeline_channels(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    misskey_server.set_response(
+        "antennas/list",
+        lambda payload: [
+            {"id": "antenna-1", "name": "Radar"},
+            {"id": "antenna-2", "name": "Other"},
+        ],
+    )
+    bot = await make_bot(write_config(timeline={"home": True}))
+    bot.streaming.running = True
+    await bot.streaming.connect_channel("main")
+    await bot.streaming.connect_channel("homeTimeline")
+    await bot.streaming.connect_channel("chatUser", {"otherId": "u1"})
+
+    def subscribed() -> list[tuple[str, dict[str, Any]]]:
+        return sorted((c["name"], c["params"]) for c in bot.streaming.channels.values())
+
+    settings = read_settings(bot.config.settings_path)
+    settings["timeline"] = {"local": True, "antennas": ["Radar"]}
+    write_settings(bot.config.settings_path, settings)
+    await bot.settings.reload()
+
+    assert subscribed() == [
+        ("antenna", {"antennaId": "antenna-1"}),
+        ("chatUser", {"otherId": "u1"}),
+        ("localTimeline", {}),
+        ("main", {}),
+    ]
+
+    settings["timeline"] = {"local": True}
+    write_settings(bot.config.settings_path, settings)
+    await bot.settings.reload()
+
+    assert subscribed() == [
+        ("chatUser", {"otherId": "u1"}),
+        ("localTimeline", {}),
+        ("main", {}),
+    ]
+
+
+async def test_timeline_sync_keeps_going_when_a_channel_fails(
+    make_bot: MakeBot, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bot = await make_bot(write_config())
+    bot.streaming.running = True
+    connect = AsyncMock(side_effect=[RuntimeError("boom"), "channel-id"])
+    monkeypatch.setattr(bot.streaming, "connect_channel", connect)
+    settings = read_settings(bot.config.settings_path)
+    settings["timeline"] = {"home": True, "local": True}
+    write_settings(bot.config.settings_path, settings)
+
+    await bot.settings.reload()
+
+    assert [c.args[0] for c in connect.await_args_list] == [
+        "homeTimeline",
+        "localTimeline",
+    ]
 
 
 async def test_web_fetcher_has_no_misskey_origin_exemption(
@@ -527,7 +597,7 @@ async def test_admin_resets_auto_post_counter(
     assert await bot.db.get_auto_post_state() == (bot.auto_post._today(), 0)
 
 
-async def test_admin_reloads_plugin_config(
+async def test_admin_lists_and_toggles_plugins(
     make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
 ) -> None:
     plugins_dir = make_plugin_dir("demo")
@@ -542,13 +612,37 @@ async def test_admin_reloads_plugin_config(
         assert response is not None
         return response
 
-    assert "插件 demo 已重载" in await run("^reload demo")
-    set_plugin_config(bot.config.root, "demo", {"enabled": False})
-    assert "插件 demo 已按配置禁用" in await run("^reload demo")
-    set_plugin_config(bot.config.root, "demo", {"enabled": True, "priority": "x"})
-    assert "重载失败，已禁用" in await run("^reload demo")
-    assert "未知插件: ghost" in await run("^reload ghost")
-    assert "用法: ^reload <插件名>" in await run("^reload")
+    assert "1/1 已启用\n● demo" in await run("^plugin")
+    assert "demo 已启用" in await run("^plugin on demo")
+    assert "demo 已停用" in await run("^plugin off demo")
+    assert "0/1 已启用\n○ demo" in await run("^plugin list")
+    assert (
+        read_settings(bot.config.settings_path)["plugins"]["demo"]["enabled"] is False
+    )
+    assert "demo 已启用" in await run("^plugin on demo")
+    assert bot.plugin_manager.get_plugin("demo")._enabled  # type: ignore[union-attr]
+    assert "未知插件: ghost" in await run("^plugin on ghost")
+    assert "用法: ^plugin on|off <插件名>" in await run("^plugin on")
+    assert "未知命令: reload" in await run("^reload demo")
+
+
+async def test_admin_plugin_on_rolls_back_when_start_fails(
+    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+) -> None:
+    plugins_dir = make_plugin_dir("demo")
+    config = write_config(bot={"admins": ["user-2"]})
+    set_plugin_config(config.root, "demo", {"enabled": False, "priority": "x"})
+    bot = await make_bot(config, plugins_dir=plugins_dir)
+
+    response = await bot.admin.on_message(
+        {"text": "^plugin on demo", "user": {"id": "user-2", "username": "bob"}}
+    )
+
+    assert response
+    assert "demo 启用失败，详见日志" in response
+    assert (
+        read_settings(bot.config.settings_path)["plugins"]["demo"]["enabled"] is False
+    )
 
 
 def _cleanable_note(note_id: str, created_at: str) -> dict[str, Any]:

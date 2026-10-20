@@ -68,7 +68,7 @@ class SettingsReloader:
             return {}
         if not (changed := _changed_keys(old, self._config.data)):
             return {}
-        self._apply(changed)
+        await self._apply(changed)
         statuses = {
             name: await self._bot.plugin_manager.reload_plugin(name)
             for name in sorted(
@@ -80,7 +80,7 @@ class SettingsReloader:
             logger.warning(f"Restart required for: {', '.join(restart)}")
         return statuses
 
-    def _apply(self, changed: set[str]) -> None:
+    async def _apply(self, changed: set[str]) -> None:
         bot, get = self._bot, self._config.get
         if changed & _AI_KEYS:
             bot.openai.update(
@@ -95,3 +95,8 @@ class SettingsReloader:
                 fetcher.set_nets(get(ConfigKeys.SYSTEM_ALLOW_NETS))
         if changed & _POST_SCHEDULE_KEYS:
             bot.auto_post.apply_schedule()
+        if any(k.startswith("timeline.") for k in changed):
+            try:
+                await bot.connect.sync_timelines()
+            except Exception as e:
+                logger.warning(f"Timeline sync failed: {e}")

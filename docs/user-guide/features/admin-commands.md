@@ -16,11 +16,12 @@ description: TwipsyBot 的状态查询、模型切换、功能开关、名单管
 | `^model [名称\|reset]` | 查看、切换（同端点）或恢复默认模型 |
 | `^autopost rotation\|schedule\|off` | 切换自动发帖模式 |
 | `^autopost reset` | 重置当天轮转计数 |
+| `^clean posts <天数> [-y]` | 预览 / 删除超期无互动帖子 |
 | `^mention on\|off` | 提及开关 |
 | `^chat on\|off` | 聊天开关 |
 | `^whitelist` · `^blacklist` | 名单管理 |
-| `^clean posts <天数> [-y]` | 预览 / 删除超期无互动帖子 |
-| `^reload <插件名>` | 重新读取设置并重载插件 |
+| `^plugin [list]` | 列出插件及启用状态 |
+| `^plugin on\|off <插件名>` | 启用 / 停用插件，写入 `data/settings.yaml` |
 
 模型、开关与名单的修改写入 `data/settings.yaml`，作为唯一事实来源，重启后保留。
 
@@ -42,9 +43,9 @@ description: TwipsyBot 的状态查询、模型切换、功能开关、名单管
 - 不带 `-y` 仅预览；带 `-y` 时重新检查互动后由旧到新删除，**不可恢复**。
 - 每次最多 300 条；受 Misskey 限制，每小时最多 300 次删除，间隔至少 1 秒。
 
-### 重载插件
+### 插件开关
 
-`^reload` 失败时该插件被禁用并返回提示，详情见日志，其他插件不受影响。
+`^plugin on` 启用失败时自动恢复为停用并返回提示，其他插件不受影响。
 
 ## `/` 内容命令
 

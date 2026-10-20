@@ -4,7 +4,7 @@ from typing import Any
 from loguru import logger
 
 from ...clients.misskey.api import MisskeyAPI
-from ...clients.misskey.channels import ChannelSpec, ChannelType
+from ...clients.misskey.channels import NOTE_CHANNELS, ChannelSpec, ChannelType
 from ...clients.misskey.stream import StreamingClient
 from ...shared.config import Config
 from ...shared.keys import ConfigKeys
@@ -25,6 +25,10 @@ def _match_antenna(selector: str, antennas: list[tuple[str, str]]) -> list[str]:
             if name and name.lower() == lowered
         )
     )
+
+
+def _split(spec: ChannelSpec) -> tuple[str, dict[str, Any]]:
+    return (spec, {}) if isinstance(spec, str) else spec
 
 
 class StreamingConnector:
@@ -48,7 +52,6 @@ class StreamingConnector:
         self._on_message = on_message
         self._on_notification = on_notification
         self._on_timeline_note = on_timeline_note
-        self._timeline_channels = self._load_timeline_channels()
 
     def _load_timeline_channels(self) -> set[str]:
         mapping = {
@@ -83,7 +86,7 @@ class StreamingConnector:
         return list(dict.fromkeys(resolved))
 
     async def get_streaming_channels(self) -> list[ChannelSpec]:
-        active = {ChannelType.MAIN.value, *self._timeline_channels}
+        active = {ChannelType.MAIN.value, *self._load_timeline_channels()}
         ordered = [
             ChannelType.MAIN.value,
             ChannelType.HOME_TIMELINE.value,
@@ -96,6 +99,24 @@ class StreamingConnector:
         for antenna_id in await self.resolve_antenna_ids(selectors):
             result.append((ChannelType.ANTENNA.value, {"antennaId": antenna_id}))
         return result
+
+    async def sync_timelines(self) -> None:
+        if not self._streaming.running:
+            return
+        wanted = {
+            (name, frozenset(params.items())): (name, params)
+            for name, params in map(_split, await self.get_streaming_channels())
+            if name in NOTE_CHANNELS
+        }
+        for channel_id, info in tuple(self._streaming.channels.items()):
+            key = (info["name"], frozenset(info["params"].items()))
+            if info["name"] in NOTE_CHANNELS and key not in wanted:
+                await self._streaming.disconnect_channel_id(channel_id)
+        for name, params in wanted.values():
+            try:
+                await self._streaming.connect_channel(name, params)
+            except Exception as e:
+                logger.warning(f"Failed to subscribe {name} {params}: {e}")
 
     async def setup_streaming(self) -> None:
         try:

@@ -52,7 +52,7 @@ docker compose logs --tail 200 twipsybot
 
 ### Radar 无互动
 
-- 天线在 Misskey 中能看到帖子，`timeline.antennas` 正确且修改后已重启。
+- 天线在 Misskey 中能看到帖子，`timeline.antennas` 正确。
 - 至少启用反应、回复、引用、转帖之一。
 - 固定文本为空且未开启 `reply_ai` / `quote_ai` 时不会回复 / 引用。
 
@@ -85,7 +85,7 @@ docker compose logs --tail 200 twipsybot
 
 ### Iincho 无报告
 
-- 已开启 `timeline.local` 并重启。
+- 已开启 `timeline.local`。
 - 有效样本少于 `min_notes` 时正常跳过；不补采启动前帖子，不补发失败周期。
 - 配置了 `bot.admins` 时，文本模型需支持 JSON 输出。
 - `openai` 后端需端点支持 `/moderations` 与 `omni-moderation-latest`，否则改用 `cloudflare`。

@@ -51,7 +51,7 @@ docker compose logs -f twipsybot
 
 ## 验证
 
-1. 用其他账号提及机器人。
+1. 用其他账号 `@` 机器人。
 2. 管理员私聊发送 `^status`，确认模型与 `mention`、`chat`、`autopost` 开关。
 
 无回复时依次检查令牌权限、`bot.model` 与端点和密钥是否匹配、`reply.mention` / `reply.chat`，以及日志中的鉴权、模型或 Streaming 错误。详见[故障排查](troubleshooting.md)。
@@ -65,7 +65,7 @@ docker compose logs -f twipsybot
 | `autopost.mode` | `off` / `rotation` / `schedule` |
 | `reply.mention` · `reply.chat` | 提及 / 聊天开关 |
 
-保存即热更新；带 `↻` 的字段（`connect`、`timeline.*`）需执行 `docker compose restart twipsybot`。详见[配置](configuration.md)。
+保存热更新；带 `↻` 的字段需执行 `docker compose restart twipsybot`。详见[配置](configuration.md)。
 
 ## 本地运行（可选）
 

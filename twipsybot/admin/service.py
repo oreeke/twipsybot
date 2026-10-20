@@ -81,10 +81,7 @@ class AdminCommandService:
                 "rotation|schedule|off|reset",
             ),
             "clean": _Command(
-                partial(handlers.clean_posts, bot), "清理帖子", "posts <天数> [-y]"
-            ),
-            "reload": _Command(
-                partial(handlers.reload_plugin, bot), "重载插件配置", "<插件名>"
+                partial(handlers.clean_posts, bot), "清理旧贴", "posts <天数> [-y]"
             ),
             "mention": _Command(
                 partial(set_bool, ConfigKeys.REPLY_MENTION, "mention"),
@@ -105,6 +102,11 @@ class AdminCommandService:
                 partial(user_list, ConfigKeys.REPLY_BLACKLIST, "blacklist"),
                 "黑名单",
                 "[list|add|del|set|clear]",
+            ),
+            "plugin": _Command(
+                partial(handlers.manage_plugins, bot),
+                "插件列表",
+                "on|off <插件名>",
             ),
         }
         self._slash_commands = {

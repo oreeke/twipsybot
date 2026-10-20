@@ -125,7 +125,7 @@ def status_text(bot: "Neuro") -> str:
     mention = "on" if bot.config.get(ConfigKeys.REPLY_MENTION) else "off"
     parts += [
         "",
-        f"开关  chat={chat} mention={mention} autopost={bot.auto_post.mode}",
+        f"开关  autopost={bot.auto_post.mode} mention={mention} chat={chat}",
         auto_post_status_text(bot),
         _channel_status_text(bot),
     ]
@@ -168,22 +168,48 @@ async def set_autopost(bot: "Neuro", args: str) -> str | None:
     return f"autopost: {mode}"
 
 
-async def reload_plugin(bot: "Neuro", args: str) -> str | None:
-    if len(parts := args.split()) != 1:
-        return None
-    name = parts[0]
-    statuses = await bot.settings.reload()
+def _plugin_list_text(plugins: dict[str, bool]) -> str:
+    if not plugins:
+        return ""
+    enabled = sum(plugins.values())
+    return "\n".join(
+        [
+            f"{enabled}/{len(plugins)} 已启用",
+            *(f"{'●' if on else '○'} {name}" for name, on in plugins.items()),
+        ]
+    )
+
+
+async def _toggle_plugin(
+    bot: "Neuro", name: str, enable: bool, plugins: dict[str, bool]
+) -> str:
+    if name not in plugins:
+        return f"未知插件: {name}"
+    if enable and plugins[name]:
+        return f"{name} 已启用"
+    key = f"plugins.{name}.enabled"
+    statuses = await bot.settings.update({key: enable})
     match statuses.get(name) or await bot.plugin_manager.reload_plugin(name):
         case "enabled":
-            return f"插件 {name} 已重载"
+            return f"{name} 已启用"
         case "disabled":
-            return f"插件 {name} 已按配置禁用"
+            return f"{name} 已停用"
         case "failed":
-            return f"插件 {name} 重载失败，已禁用，详见日志"
-        case "unknown":
-            return f"未知插件: {name}"
+            await bot.settings.update({key: False})
+            return f"{name} 启用失败，详见日志"
         case _:
-            return "当前无法重载插件"
+            return "当前无法操作插件"
+
+
+async def manage_plugins(bot: "Neuro", args: str) -> str | None:
+    action, *rest = args.split() or ["list"]
+    plugins = bot.plugin_manager.get_plugin_states()
+    match action.lower(), rest:
+        case "list", []:
+            return _plugin_list_text(plugins)
+        case ("on" | "off") as switch, [name]:
+            return await _toggle_plugin(bot, name, switch == "on", plugins)
+    return None
 
 
 async def edit_user_list(bot: "Neuro", key: str, label: str, args: str) -> str | None:

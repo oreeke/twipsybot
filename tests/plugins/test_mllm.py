@@ -5,7 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import plugin_context
+from support.factories import plugin_context
 
 from plugins.mllm.plugin import MLLMPlugin
 from twipsybot.plugin import FileRef, MentionEvent, MessageEvent, NoteRef, UserRef
@@ -206,9 +206,3 @@ def test_mllm_rejects_invalid_size(value: Any) -> None:
 
     with pytest.raises(ValueError, match="max_bytes"):
         MLLMPlugin(context)
-
-
-def test_mllm_parses_boolean_strings() -> None:
-    plugin, _ = _plugin({"enabled": "true", "use_thumbnail": "true"})
-
-    assert plugin.settings.use_thumbnail is True

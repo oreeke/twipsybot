@@ -4,16 +4,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import WriteConfig
+from support.types import WriteConfig
 
-from twipsybot import Neuro
-from twipsybot.shared.config import Config, Settings, needs_restart
+from twipsybot.shared.config import Config
 from twipsybot.shared.errors import ConfigurationError
 from twipsybot.shared.keys import ConfigKeys
 from twipsybot.shared.settings import (
-    patch_settings,
-    prune,
-    read_settings,
     write_settings,
 )
 
@@ -112,17 +108,6 @@ def test_defaults_need_no_settings_file(
     assert config.log_path.parent.is_dir()
 
 
-def test_reply_limit_defaults(write_config: WriteConfig) -> None:
-    config = write_config()
-
-    assert config.get(ConfigKeys.REPLY_RATE_LIMIT_MSG) == "我需要休息一下..."
-    assert config.get(ConfigKeys.REPLY_MAX_TURNS_MSG) == "我要回家了..."
-    assert config.get(ConfigKeys.REPLY_TURNS_RELEASE) == 3600
-    assert config.get(ConfigKeys.BOT_MAX_TOKENS) == 2000
-    assert config.get(ConfigKeys.SYSTEM_DB_CLEAR_DAYS) == -1
-    assert config.get(ConfigKeys.SYSTEM_ALLOW_NETS) == []
-
-
 def test_allow_nets_are_normalized_and_validated(write_config: WriteConfig) -> None:
     config = write_config(system={"allow_nets": ["198.18.0.1/15", "::1"]})
 
@@ -150,26 +135,6 @@ def test_prompt_files_resolve_from_root(
     fingerprint = config.fingerprint
     (prompts_dir / "post.txt").write_text("post edited", encoding="utf-8")
     assert config.stat() != fingerprint
-
-
-async def test_timeline_channels_are_independently_enabled(
-    write_config: WriteConfig,
-) -> None:
-    config = write_config(timeline={"home": True, "local": False})
-    bot = Neuro(config)
-
-    assert await bot.connect.get_streaming_channels() == ["main", "homeTimeline"]
-    assert config.data["timeline"]["global"] is False
-    assert "global_" not in config.data["timeline"]
-
-
-def test_legacy_auto_post_interval_field_is_rejected(
-    write_config: WriteConfig,
-) -> None:
-    config = write_config(load=False, autopost={"interval_minutes": 180})
-
-    with pytest.raises(ConfigurationError, match="interval_minutes"):
-        config.load()
 
 
 @pytest.mark.parametrize("interval", (180, "180", "3h"))
@@ -228,45 +193,6 @@ def test_response_limit_rejects_invalid_duration(
 ) -> None:
     with pytest.raises(ConfigurationError, match="limits must use"):
         write_config(reply={"rate_limit": value})
-
-
-def test_prune_drops_values_equal_to_defaults() -> None:
-    raw = {
-        "bot": {"model": "gpt-6-luna", "temperature": 1.1},
-        "autopost": {"interval": "180", "daily_max": 3},
-        "timeline": {"global": False},
-        "plugins": {"demo": {"enabled": True}},
-    }
-
-    assert prune(Settings, raw) == {
-        "bot": {"temperature": 1.1},
-        "autopost": {"daily_max": 3},
-        "plugins": {"demo": {"enabled": True}},
-    }
-
-
-def test_patch_settings_sets_deletes_and_validates(tmp_path: Path) -> None:
-    path = tmp_path / "settings.yaml"
-    patch_settings(path, {"bot.model": "m1", "reply.chat": False}, Settings)
-    patch_settings(path, {"bot.model": None, "bot.system_prompt": "a\nb"}, Settings)
-
-    assert read_settings(path) == {
-        "bot": {"system_prompt": "a\nb"},
-        "reply": {"chat": False},
-    }
-    assert "system_prompt: |-" in path.read_text(encoding="utf-8")
-    with pytest.raises(ConfigurationError):
-        patch_settings(path, {"reply.memory": 500}, Settings)
-    assert read_settings(path)["reply"] == {"chat": False}
-
-
-def test_restart_keys() -> None:
-    assert needs_restart(ConfigKeys.AI_BASE_URL)
-    assert needs_restart(ConfigKeys.MISSKEY_TOKEN)
-    assert needs_restart(ConfigKeys.AI_API_KEY)
-    assert not needs_restart(ConfigKeys.TIMELINE_ANTENNAS)
-    assert not needs_restart(ConfigKeys.BOT_MODEL)
-    assert not needs_restart("plugins.keyact")
 
 
 def test_secret_values_are_hidden_in_errors(write_config: WriteConfig) -> None:

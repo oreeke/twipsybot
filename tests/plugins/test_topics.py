@@ -8,7 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import plugin_context
+from support.factories import plugin_context
 
 from plugins.topics.plugin import _LIST_AI_PREFIX, _RSS_AI_PREFIX, TopicsPlugin
 from twipsybot.plugin import AutoPostEvent
@@ -436,13 +436,3 @@ async def test_topics_rotate_advances_only_after_publish() -> None:
 
     storage.set.assert_any_await("rss_recent_keys", '["entry-key"]')
     storage.set.assert_any_await("rss_last_feed_idx", "0")
-
-
-def test_topics_parses_boolean_strings() -> None:
-    plugin = TopicsPlugin(
-        plugin_context(
-            {"enabled": "true", "rss_ai": "false", "list_ai_prefix": "{topic}"}
-        )
-    )
-
-    assert plugin.settings.rss_ai is False

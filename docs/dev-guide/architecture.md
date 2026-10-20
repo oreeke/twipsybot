@@ -37,9 +37,9 @@ flowchart TB
 ```text
 twipsybot/
 ├── twipsybot/
-│   ├── admin/          管理命令
 │   ├── app/            CLI、进程启动、信号与退出码
 │   ├── bot/
+│   │   ├── admin/      管理命令
 │   │   ├── engine/     核心编排、连接、热重载、限流、响应管道与运行状态
 │   │   └── flows/      提及、聊天、通知与发帖流程
 │   ├── clients/
@@ -50,7 +50,7 @@ twipsybot/
 │   ├── shared/         配置模型、设置 IO、常量、异常、锁与工具
 │   └── tui/            Textual 配置界面
 ├── plugins/            内置插件
-├── tests/              core/（核心）与 plugins/（内建插件）测试
+├── tests/              按源码包分目录测试，plugins/ 为内建插件测试
 └── docs/               文档站点
 ```
 

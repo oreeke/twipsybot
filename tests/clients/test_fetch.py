@@ -6,10 +6,15 @@ from typing import Any
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from support.types import MakeBot, WriteConfig
+from yarl import URL
 
 from twipsybot.clients.fetch.public import PublicFetcher
 from twipsybot.clients.misskey.api import MisskeyAPI
-from twipsybot.shared.errors import APINotFoundError, BlockedURLError
+from twipsybot.shared.errors import (
+    APINotFoundError,
+    BlockedURLError,
+)
 
 _LOOPBACK = ("127.0.0.0/8", "::1/128")
 
@@ -181,3 +186,13 @@ async def test_drive_fetch_bytes_uses_guarded_fetcher(server: TestServer) -> Non
             await api.drive.fetch_bytes("http://169.254.169.254/latest")
     finally:
         await api.close()
+
+
+async def test_web_fetcher_has_no_misskey_origin_exemption(
+    make_bot: MakeBot, write_config: WriteConfig
+) -> None:
+    bot = await make_bot(write_config())
+    origin = URL(bot.misskey.instance_url)
+
+    assert bot.misskey.fetcher.is_origin(origin.host or "", origin.port)
+    assert not bot.fetcher.is_origin(origin.host or "", origin.port)

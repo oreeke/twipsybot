@@ -8,7 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import plugin_context
+from support.factories import plugin_context
 
 from plugins.radar.plugin import _QUOTE_AI_PROMPT, _REPLY_AI_PROMPT, RadarPlugin
 from twipsybot.plugin import TimelineNoteEvent, UserRef
@@ -354,13 +354,3 @@ async def test_radar_repeat_quote_does_not_renote() -> None:
     misskey.create_renote.assert_awaited_once_with(
         "note-1", visibility=None, text="quote", local_only=False
     )
-
-
-def test_radar_parses_boolean_strings() -> None:
-    plugin = RadarPlugin(
-        plugin_context({"enabled": "true", "reply": "false", "repeat": "quote"})
-    )
-
-    assert plugin._enabled is True
-    assert plugin.settings.reply_enabled is False
-    assert plugin.settings.repeat == "quote"

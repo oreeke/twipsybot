@@ -7,18 +7,18 @@ from urllib.parse import urlsplit
 
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 
-from ..bot.flows.post import JOB_ID as AUTO_POST_JOB_ID
-from ..shared.errors import (
+from ...shared.errors import (
     APIBadRequestError,
     APIConnectionError,
     APINotFoundError,
     APIRateLimitError,
 )
-from ..shared.keys import ConfigKeys
-from ..shared.utils import normalize_tokens
+from ...shared.keys import ConfigKeys
+from ...shared.utils import normalize_tokens
+from ..flows.post import JOB_ID as AUTO_POST_JOB_ID
 
 if TYPE_CHECKING:
-    from ..bot.engine.core import Neuro
+    from ..engine.core import Neuro
 
 CLEAN_POST_DELETE_LIMIT = 300
 _CHANNEL_LABELS = {

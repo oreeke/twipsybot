@@ -1601,7 +1601,7 @@ wheels = [
 
 [[package]]
 name = "twipsybot"
-version = "0.26.3"
+version = "0.26.4"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

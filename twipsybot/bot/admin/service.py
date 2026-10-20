@@ -7,19 +7,19 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 from loguru import logger
 
-from ..bot.engine.pipeline import Reply
-from ..clients.misskey.payloads import (
+from ...clients.misskey.payloads import (
     extract_first_text,
     extract_user_handle,
     extract_user_id,
     extract_username,
 )
-from ..shared.keys import ConfigKeys
-from ..shared.utils import normalize_tokens
+from ...shared.keys import ConfigKeys
+from ...shared.utils import normalize_tokens
+from ..engine.pipeline import Reply
 from . import handlers
 
 if TYPE_CHECKING:
-    from ..bot.engine.core import Neuro
+    from ..engine.core import Neuro
 
 _FOLLOWER_TTL = 60
 

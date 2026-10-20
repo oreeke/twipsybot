@@ -7,7 +7,6 @@ from urllib.parse import urlparse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
-from ...admin.service import AdminCommandService
 from ...clients.fetch.public import PublicFetcher
 from ...clients.misskey.api import MisskeyAPI
 from ...clients.misskey.bridge import TCPClient
@@ -18,9 +17,10 @@ from ...plugin.manager import PluginManager
 from ...shared.config import Config
 from ...shared.errors import ConfigurationError
 from ...shared.keys import ConfigKeys
+from ..admin.service import AdminCommandService
 from ..flows.chat import ChatHandler
 from ..flows.mention import MentionHandler
-from ..flows.notify import NotificationHandler
+from ..flows.notification import NotificationHandler
 from ..flows.post import AutoPostService
 from .connect import StreamingConnector
 from .limits import ResponseLimiter

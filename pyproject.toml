@@ -1,6 +1,6 @@
 [project]
 name = "twipsybot"
-version = "0.26.3"
+version = "0.26.4"
 description = "AI-powered Misskey bot with OpenAI-compatible APIs."
 readme = "README.md"
 license = "MIT"
@@ -52,7 +52,17 @@ per-file-ignores = { "twipsybot/tui/*" = ["RUF012"] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = "-ra --strict-markers --strict-config --import-mode=importlib"
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["twipsybot", "plugins"]
+branch = true
+
+[tool.coverage.report]
+skip_empty = true
+fail_under = 88
 
 [tool.pyright]
 pythonVersion = "3.12"

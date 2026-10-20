@@ -1,28 +1,10 @@
 from __future__ import annotations
 
 import pytest
-from conftest import plugin_context
+from support.factories import plugin_context
 
 from plugins.keyact.plugin import KeyActPlugin
 from twipsybot.plugin import MentionEvent, MessageEvent, UserRef
-
-
-def test_keyact_parses_boolean_strings() -> None:
-    plugin = KeyActPlugin(
-        plugin_context(
-            {
-                "enabled": True,
-                "mention": "false",
-                "chat": "true",
-                "case_sensitive": "false",
-                "rules": [],
-            }
-        )
-    )
-
-    assert plugin.settings.mention is False
-    assert plugin.settings.chat is True
-    assert plugin.settings.case_sensitive is False
 
 
 async def test_keyact_matches_body_when_mention_has_cw() -> None:

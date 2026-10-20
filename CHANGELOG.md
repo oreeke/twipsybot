@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.26.0 - 2026-10-19
+## [0.26.0] - 2026-10-19
 
 新增补发逻辑，图片生成迁移为插件 T2X
 
@@ -28,7 +28,7 @@
 
 <br>
 
-## 0.25.0 - 2026-10-16
+## [0.25.0] - 2026-10-16
 
 TUI 运行与连接状态
 
@@ -44,7 +44,7 @@ TUI 运行与连接状态
 
 <br>
 
-## 0.24.0 - 2026-10-14
+## [0.24.0] - 2026-10-14
 
 参与他人帖或引用帖互动，并带回复链，Vision 更名为 Media
 
@@ -65,7 +65,7 @@ TUI 运行与连接状态
 
 <br>
 
-## 0.23.0 - 2026-10-13
+## [0.23.0] - 2026-10-13
 
 一致性修整
 
@@ -85,7 +85,7 @@ TUI 运行与连接状态
 
 <br>
 
-## 0.22.0 - 2026-10-12
+## [0.22.0] - 2026-10-12
 
 MIT 许可、Python 3.12+、附件支持、精简镜像
 
@@ -102,7 +102,7 @@ MIT 许可、Python 3.12+、附件支持、精简镜像
 
 <br>
 
-## 0.21.0 - 2026-10-11
+## [0.21.0] - 2026-10-11
 
 插件调用任意 Misskey API
 
@@ -113,7 +113,7 @@ MIT 许可、Python 3.12+、附件支持、精简镜像
 
 <br>
 
-## 0.20.0 - 2026-10-10
+## [0.20.0] - 2026-10-10
 
 多模块插件
 
@@ -127,7 +127,7 @@ MIT 许可、Python 3.12+、附件支持、精简镜像
 
 <br>
 
-## 0.19.0 - 2026-10-10
+## [0.19.0] - 2026-10-10
 
 Fetch 安全加固
 
@@ -146,7 +146,7 @@ Fetch 安全加固
 
 <br>
 
-## 0.18.0 - 2026-10-10
+## [0.18.0] - 2026-10-10
 
 TUI 易用性更新
 
@@ -166,7 +166,7 @@ TUI 易用性更新
 
 <br>
 
-## 0.17.0 - 2026-10-09
+## [0.17.0] - 2026-10-09
 
 插件凭据保存位置变更
 
@@ -178,7 +178,7 @@ TUI 易用性更新
 
 <br>
 
-## 0.16.0 - 2026-10-07
+## [0.16.0] - 2026-10-07
 
 Bond 用户关系记录
 
@@ -193,7 +193,7 @@ Bond 用户关系记录
 
 <br>
 
-## 0.15.0 - 2026-10-06
+## [0.15.0] - 2026-10-06
 
 Web 联网检索
 
@@ -204,7 +204,7 @@ Web 联网检索
 
 <br>
 
-## 0.14.0 - 2026-10-05
+## [0.14.0] - 2026-10-05
 
 精简核心架构，移除过度抽象
 
@@ -221,7 +221,7 @@ Web 联网检索
 
 <br>
 
-## 0.13.0 - 2026-10-05
+## [0.13.0] - 2026-10-05
 
 Radar 支持自定义互动延时
 
@@ -241,7 +241,7 @@ Radar 支持自定义互动延时
 
 <br>
 
-## 0.12.0 - 2026-10-04
+## [0.12.0] - 2026-10-04
 
 TUI 新增实时日志页
 
@@ -251,7 +251,7 @@ TUI 新增实时日志页
 
 <br>
 
-## 0.11.0 - 2026-10-04
+## [0.11.0] - 2026-10-04
 
 统一核心类与异常基类命名
 
@@ -262,7 +262,7 @@ TUI 新增实时日志页
 
 <br>
 
-## 0.10.0 - 2026-10-03
+## [0.10.0] - 2026-10-03
 
 新增终端配置界面（TUI）与热重载，重构配置体系
 
@@ -289,7 +289,7 @@ TUI 新增实时日志页
 
 <br>
 
-## 0.9.0 - 2026-10-01
+## [0.9.0] - 2026-10-01
 
 新增插件热重载，精简插件框架与核心流程
 
@@ -313,7 +313,7 @@ TUI 新增实时日志页
 
 <br>
 
-## 0.8.0 - 2026-09-13
+## [0.8.0] - 2026-09-13
 
 规范 Misskey 对接，发布 Plugin API v3
 
@@ -340,7 +340,7 @@ TUI 新增实时日志页
 
 <br>
 
-## 0.7.0 - 2026-09-09
+## [0.7.0] - 2026-09-09
 
 新增安全的历史帖子清理，并完善状态展示、聊天上下文和流式连接可靠性
 
@@ -372,7 +372,7 @@ TUI 新增实时日志页
 
 <br>
 
-## 0.6.0 - 2026-09-06
+## [0.6.0] - 2026-09-06
 
 发布 Plugin API v2
 
@@ -395,7 +395,7 @@ TUI 新增实时日志页
 
 <br>
 
-## 0.5.0 - 2026-09-04
+## [0.5.0] - 2026-09-04
 
 完善 Plugin API，新增 Iincho 时间线趋势与内容风险观察，并适配 Misskey 2025+ 数据接口
 
@@ -431,7 +431,7 @@ TUI 新增实时日志页
 
 <br>
 
-## 0.4.0 - 2026-09-01
+## [0.4.0] - 2026-09-01
 
 支持 AI 文生图，还可以随时手动让 AI 发帖
 
@@ -453,7 +453,7 @@ TUI 新增实时日志页
 
 <br>
 
-## 0.3.0 - 2026-08-30
+## [0.3.0] - 2026-08-30
 
 剥离大量曾因学习计划添加的多余功能和样板，把机器人喂成猪了，本次更新核心代码减重约 `23%`
 
@@ -494,7 +494,7 @@ TUI 新增实时日志页
 
 <br>
 
-## 0.2.0 - 2026-08-29
+## [0.2.0] - 2026-08-29
 
 发布 Plugin API v1
 
@@ -521,3 +521,29 @@ TUI 新增实时日志页
 ### Removed
 
 - 移除独立 Cmd 插件及其配置，管理命令改由核心 Admin 提供
+
+[0.26.0]: https://github.com/oreeke/twipsybot/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/oreeke/twipsybot/compare/v0.24.0...v0.25.0
+[0.24.0]: https://github.com/oreeke/twipsybot/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/oreeke/twipsybot/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/oreeke/twipsybot/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/oreeke/twipsybot/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/oreeke/twipsybot/compare/v0.19.0...v0.20.0
+[0.19.0]: https://github.com/oreeke/twipsybot/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/oreeke/twipsybot/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/oreeke/twipsybot/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/oreeke/twipsybot/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/oreeke/twipsybot/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/oreeke/twipsybot/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/oreeke/twipsybot/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/oreeke/twipsybot/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/oreeke/twipsybot/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/oreeke/twipsybot/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/oreeke/twipsybot/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/oreeke/twipsybot/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/oreeke/twipsybot/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/oreeke/twipsybot/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/oreeke/twipsybot/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/oreeke/twipsybot/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/oreeke/twipsybot/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/oreeke/twipsybot/tree/v0.2.0

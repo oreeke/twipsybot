@@ -380,6 +380,25 @@ async def test_chat_user_message_reuses_sender_from_main_notice(
     assert event.raw["fromUser"] == sender
 
 
+async def test_event_dump_records_original_payload_even_when_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token", log_dump_events=True)
+    dump = Mock()
+    monkeypatch.setattr("twipsybot.clients.misskey.events.maybe_log_event_dump", dump)
+    monkeypatch.setattr(client.events, "enqueue", AsyncMock(return_value=True))
+    client.channels["local-id"] = {"name": "localTimeline", "params": {}}
+    message = {"id": "local-id", "type": "note", "body": {"id": "n-1"}}
+
+    await client.events.handle_channel_message(message)
+    await client.events.handle_channel_message(message)
+    await client.events.handle_channel_message({"id": "gone", "type": "note"})
+
+    payloads = [call.kwargs["payload"] for call in dump.call_args_list]
+    assert payloads == [message, message, {"id": "gone", "type": "note"}]
+    assert "streamingChannel" not in message["body"]
+
+
 @pytest.mark.parametrize("inner_type", ["note", "mention", "follow"])
 async def test_streaming_routes_main_notifications_to_notification_handler(
     inner_type: str,

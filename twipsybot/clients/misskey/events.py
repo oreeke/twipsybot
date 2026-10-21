@@ -149,27 +149,26 @@ class EventRouter:
 
     async def handle_channel_message(self, body: dict[str, Any]) -> None:
         channel_id = body.get("id")
+        event_type = body.get("type")
         if channel_id not in self._client.channels:
+            self._dump(f"unknown/{event_type}", body)
             logger.debug(f"Message received for unknown channel: {channel_id}")
             return
         channel_name = self._client.channels[channel_id].get("name", "unknown")
-        event_type = body.get("type")
+        self._dump(f"{channel_name}/{event_type}", body)
         if not isinstance(event_type, str) or not event_type:
             logger.debug(
                 f"Received {channel_name} data without standard event type; "
                 f"skipping (channel_id={channel_id})"
             )
-            self._dump(channel_name, body)
             return
         route = _ROUTES.get((_category(channel_name), event_type))
         if route is None:
             logger.debug(f"Skipping unsupported {channel_name} event: {event_type}")
-            self._dump(event_type, body)
             return
         incoming = self._decode(channel_id, channel_name, route, body.get("body"))
         if incoming is None:
             logger.warning(f"Invalid {channel_name} {event_type} event; skipping")
-            self._dump(event_type, body)
             return
         key = _dedup_key(channel_name, event_type, incoming.event.id)
         if key and key in self.processed:
@@ -205,7 +204,6 @@ class EventRouter:
 
     async def dispatch(self, channel_name: str, incoming: Incoming) -> None:
         key, event, channel_id = incoming
-        self._dump(key, event.raw)
         if key != "message":
             await self.call_handlers(key, event)
         elif channel_name == ChannelType.MAIN:

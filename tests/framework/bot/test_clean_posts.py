@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, call
 
 import pytest
+from support.events import message
 from support.types import MakeBot, WriteConfig
 
 from twipsybot.bot.admin import handlers
@@ -48,7 +49,13 @@ async def test_admin_clean_posts_preview_uses_requested_format(
     monkeypatch.setattr(bot.misskey, "get_user_notes", AsyncMock(return_value=notes))
 
     response = await bot.admin.on_message(
-        {"text": "^clean posts 30", "user": {"id": "user-2", "username": "bob"}}
+        message(
+            {
+                "id": "message-1",
+                "text": "^clean posts 30",
+                "user": {"id": "user-2", "username": "bob"},
+            }
+        )
     )
 
     assert response is not None
@@ -79,10 +86,13 @@ async def test_admin_clean_posts_rechecks_and_deletes_oldest_first(
     monkeypatch.setattr("twipsybot.bot.admin.handlers.asyncio.sleep", AsyncMock())
 
     response = await bot.admin.on_message(
-        {
-            "text": "^clean posts 30 -y",
-            "user": {"id": "user-2", "username": "bob"},
-        }
+        message(
+            {
+                "id": "message-1",
+                "text": "^clean posts 30 -y",
+                "user": {"id": "user-2", "username": "bob"},
+            }
+        )
     )
 
     assert response is not None
@@ -105,10 +115,13 @@ async def test_admin_clean_posts_skips_note_interacted_with_before_delete(
     monkeypatch.setattr(bot.misskey, "delete_note", delete_note)
 
     response = await bot.admin.on_message(
-        {
-            "text": "^clean posts 30 -y",
-            "user": {"id": "user-2", "username": "bob"},
-        }
+        message(
+            {
+                "id": "message-1",
+                "text": "^clean posts 30 -y",
+                "user": {"id": "user-2", "username": "bob"},
+            }
+        )
     )
 
     assert response is not None
@@ -133,10 +146,13 @@ async def test_admin_clean_posts_limits_each_batch_to_300(
     monkeypatch.setattr("twipsybot.bot.admin.handlers.asyncio.sleep", AsyncMock())
 
     response = await bot.admin.on_message(
-        {
-            "text": "^clean posts 30 -y",
-            "user": {"id": "user-2", "username": "bob"},
-        }
+        message(
+            {
+                "id": "message-1",
+                "text": "^clean posts 30 -y",
+                "user": {"id": "user-2", "username": "bob"},
+            }
+        )
     )
 
     assert response is not None
@@ -173,10 +189,13 @@ async def test_admin_clean_posts_stops_and_reports_transient_error(
     monkeypatch.setattr("twipsybot.bot.admin.handlers.asyncio.sleep", AsyncMock())
 
     response = await bot.admin.on_message(
-        {
-            "text": "^clean posts 30 -y",
-            "user": {"id": "user-2", "username": "bob"},
-        }
+        message(
+            {
+                "id": "message-1",
+                "text": "^clean posts 30 -y",
+                "user": {"id": "user-2", "username": "bob"},
+            }
+        )
     )
 
     assert response is not None
@@ -205,10 +224,13 @@ async def test_admin_clean_posts_skips_note_deleted_during_recheck(
     monkeypatch.setattr("twipsybot.bot.admin.handlers.asyncio.sleep", AsyncMock())
 
     response = await bot.admin.on_message(
-        {
-            "text": "^clean posts 30 -y",
-            "user": {"id": "user-2", "username": "bob"},
-        }
+        message(
+            {
+                "id": "message-1",
+                "text": "^clean posts 30 -y",
+                "user": {"id": "user-2", "username": "bob"},
+            }
+        )
     )
 
     assert response is not None
@@ -247,10 +269,13 @@ async def test_admin_clean_posts_only_accepts_exact_y_confirmation(
     monkeypatch.setattr(bot.misskey, "get_user_notes", get_user_notes)
 
     response = await bot.admin.on_message(
-        {
-            "text": f"^clean posts 30 {confirmation}",
-            "user": {"id": "user-2", "username": "bob"},
-        }
+        message(
+            {
+                "id": "message-1",
+                "text": f"^clean posts 30 {confirmation}",
+                "user": {"id": "user-2", "username": "bob"},
+            }
+        )
     )
 
     assert response is not None

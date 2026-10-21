@@ -1,9 +1,8 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from ...shared.keys import ConfigKeys
-from ...shared.logs import maybe_log_event_dump
+from ...clients.misskey.models import NotificationEvent
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro
@@ -13,15 +12,8 @@ class NotificationHandler:
     def __init__(self, bot: "Neuro"):
         self.bot = bot
 
-    async def handle(self, notification: dict[str, Any]) -> None:
-        maybe_log_event_dump(
-            bool(self.bot.config.get(ConfigKeys.SYSTEM_DUMP_EVENTS)),
-            kind="Notification",
-            payload=notification,
-        )
+    async def handle(self, event: NotificationEvent) -> None:
         try:
-            await self.bot.plugin_manager.call_plugin_hook(
-                "on_notification", notification
-            )
+            await self.bot.plugin_manager.call_plugin_hook("on_notification", event)
         except Exception:
             logger.exception("Error handling notification event")

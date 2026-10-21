@@ -4,6 +4,9 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock
 
+from support.events import mention
+from twipsybot.clients.misskey.models import MentionEvent
+
 MENTION_NOTE = {
     "id": "note-mention-1",
     "text": "@testbot 你好",
@@ -51,12 +54,10 @@ def thread_chain() -> list[dict[str, Any]]:
     ]
 
 
-def reply_event() -> dict[str, Any]:
-    return {
-        "type": "reply",
-        "note": {
-            **thread_note("u2", "user-1", "alice", "继续"),
-            "replyId": "b1",
-            "reply": thread_note("b1", "bot-id", "testbot", "bot reply"),
-        },
+def reply_event() -> MentionEvent:
+    note = {
+        **thread_note("u2", "user-1", "alice", "继续"),
+        "replyId": "b1",
+        "reply": thread_note("b1", "bot-id", "testbot", "bot reply"),
     }
+    return mention(note, "reply")

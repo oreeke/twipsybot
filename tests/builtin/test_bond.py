@@ -14,7 +14,13 @@ from pydantic import ValidationError
 from plugins.bond import plugin as bond_module
 from plugins.bond.plugin import BondPlugin
 from twipsybot.db.sqlite import DBManager
-from twipsybot.plugin import MentionEvent, MessageEvent, NotificationEvent, UserRef
+from twipsybot.plugin import (
+    MentionEvent,
+    MessageEvent,
+    NoteRef,
+    NotificationEvent,
+    UserRef,
+)
 from twipsybot.plugin.services import BotControlAdapter, NamespacedPluginStorage
 from twipsybot.shared.config import Config
 
@@ -98,8 +104,12 @@ def _mention(text: str) -> MentionEvent:
 def _notify(
     kind: str, user: UserRef | None = ALICE, text: str | None = None
 ) -> NotificationEvent:
-    raw = {"note": {"text": text}} if text is not None else {}
-    return NotificationEvent(id="x1", type=kind, user=user, raw=raw)
+    note = (
+        NoteRef(id="n1", text=text, cw=None, user=ALICE, files=(), raw={})
+        if text is not None
+        else None
+    )
+    return NotificationEvent(id="x1", type=kind, user=user, raw={}, note=note)
 
 
 async def _record(db: DBManager, user_id: str = "u1") -> dict[str, Any] | None:

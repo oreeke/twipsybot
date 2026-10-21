@@ -6,9 +6,9 @@ from typing import Any
 from loguru import logger
 
 from ...shared.errors import WebSocketConnectionError, WebSocketReconnectError
-from .bridge import StreamingSocket, TCPClient
-from .channels import ChannelSpec, ChannelType
+from .bridge import SharedSession, StreamingSocket
 from .events import EventRouter
+from .models import ChannelSpec, ChannelType
 
 MAX_CHANNELS_PER_CONNECTION = 32
 CHANNEL_CONNECT_TIMEOUT = 5.0
@@ -36,10 +36,10 @@ class StreamingClient:
         access_token: str,
         *,
         log_dump_events: bool = False,
-        transport: TCPClient | None = None,
+        shared: SharedSession | None = None,
     ):
         self.socket = StreamingSocket(
-            instance_url.rstrip("/"), access_token, transport or TCPClient()
+            instance_url.rstrip("/"), access_token, shared or SharedSession()
         )
         self.events = EventRouter(self)
         self.log_dump_events = log_dump_events
@@ -55,7 +55,7 @@ class StreamingClient:
         await self.disconnect()
         await self.events.stop()
         await self.socket.close()
-        await self.socket.transport.close_session(silent=True)
+        await self.socket.shared.close_session()
         logger.debug("Streaming client closed")
 
     async def connect(

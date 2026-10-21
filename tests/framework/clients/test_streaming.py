@@ -5,13 +5,16 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, call
 
+import aiohttp
 import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestServer
+from support.events import message as chat_message
+from support.events import notification
 from support.types import MakeBot, WriteConfig
 
-from twipsybot.clients.misskey.channels import ChannelType
-from twipsybot.clients.misskey.events import _normalize
+from twipsybot.clients.misskey.events import Incoming
+from twipsybot.clients.misskey.models import ChannelType
 from twipsybot.clients.misskey.stream import StreamingClient
 from twipsybot.shared.errors import (
     WebSocketConnectionError,
@@ -26,7 +29,7 @@ async def test_streaming_event_status_tracks_busy_workers(
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def dispatch(channel: str, event: dict[str, Any]) -> None:
+    async def dispatch(channel: str, incoming: Incoming) -> None:
         started.set()
         await release.wait()
         if outcome == "error":
@@ -36,7 +39,7 @@ async def test_streaming_event_status_tracks_busy_workers(
     worker = asyncio.create_task(client.events.worker_loop())
     client.events.workers.append(worker)
     try:
-        await client.events.queue.put(("main", {"type": "mention"}))
+        await client.events.queue.put(("main", Incoming("mention", None, "main-id")))
         await asyncio.wait_for(started.wait(), timeout=1)
         status = client.events.status()
         assert status["queue_size"] == 0
@@ -116,17 +119,17 @@ async def test_streaming_without_reconnect_exposes_initial_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = StreamingClient("https://example.com", "token")
-    error = WebSocketConnectionError("handshake failed")
+    error = aiohttp.ClientConnectionError("handshake failed")
     websocket = SimpleNamespace(closed=False, send_json=AsyncMock(), close=AsyncMock())
     handshake = AsyncMock(side_effect=[error, websocket])
-    monkeypatch.setattr(client.socket.transport, "ws_connect", handshake)
+    monkeypatch.setattr(aiohttp.ClientSession, "ws_connect", handshake)
     monkeypatch.setattr(client, "_listen_messages", AsyncMock())
 
     try:
         with pytest.raises(WebSocketConnectionError) as exc_info:
             await client.connect(reconnect=False)
 
-        assert exc_info.value is error
+        assert exc_info.value.__cause__ is error
         assert not client.running
         assert client.state == "disconnected"
         assert not client.events.workers
@@ -276,6 +279,107 @@ async def test_streaming_does_not_dedupe_event_dropped_before_enqueue(
     assert enqueue.await_count == 2
 
 
+@pytest.mark.parametrize(
+    ("event_type", "key", "kind"),
+    [
+        ("mention", "mention", "mention"),
+        ("reply", "mention", "reply"),
+        ("unreadNotification", "notification", None),
+    ],
+)
+async def test_main_events_are_decoded_into_typed_events(
+    monkeypatch: pytest.MonkeyPatch, event_type: str, key: str, kind: str | None
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    enqueue = AsyncMock()
+    monkeypatch.setattr(client.events, "enqueue", enqueue)
+    client.channels["main-id"] = {"name": "main", "params": {}}
+
+    await client.events.handle_channel_message(
+        {
+            "id": "main-id",
+            "type": event_type,
+            "body": {"id": "e-1", "type": "reaction", "text": "hi"},
+        }
+    )
+
+    assert enqueue.await_args is not None
+    incoming = enqueue.await_args.args[1]
+    assert (incoming.key, incoming.channel_id) == (key, "main-id")
+    assert incoming.event.id == "e-1"
+    if kind:
+        assert incoming.event.kind == kind
+
+
+@pytest.mark.parametrize("body", [None, "text", {}, {"text": "no id"}])
+async def test_events_without_required_fields_are_skipped(
+    monkeypatch: pytest.MonkeyPatch, body: Any
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    enqueue = AsyncMock()
+    monkeypatch.setattr(client.events, "enqueue", enqueue)
+    client.channels["main-id"] = {"name": "main", "params": {}}
+
+    for event_type in ("mention", "newChatMessage", "notification"):
+        await client.events.handle_channel_message(
+            {"id": "main-id", "type": event_type, "body": body}
+        )
+
+    enqueue.assert_not_awaited()
+
+
+async def test_unsupported_and_invalid_events_log_at_different_levels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    warning = Mock()
+    monkeypatch.setattr("twipsybot.clients.misskey.events.logger.warning", warning)
+    client.channels["main-id"] = {"name": "main", "params": {}}
+
+    await client.events.handle_channel_message(
+        {"id": "main-id", "type": "follow", "body": {"id": "u-1"}}
+    )
+    warning.assert_not_called()
+
+    await client.events.handle_channel_message(
+        {"id": "main-id", "type": "mention", "body": {"text": "no id"}}
+    )
+    warning.assert_called_once()
+
+
+async def test_chat_user_message_reuses_sender_from_main_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StreamingClient("https://example.com", "token")
+    enqueue = AsyncMock()
+    monkeypatch.setattr(client.events, "enqueue", enqueue)
+    client.channels = {
+        "main-id": {"name": "main", "params": {}},
+        "chat-id": {"name": "chatUser", "params": {"otherId": "user-1"}},
+    }
+    sender = {"id": "user-1", "username": "alice"}
+
+    await client.events.handle_channel_message(
+        {
+            "id": "main-id",
+            "type": "newChatMessage",
+            "body": {"id": "m-1", "fromUserId": "user-1", "fromUser": sender},
+        }
+    )
+    await client.events.handle_channel_message(
+        {
+            "id": "chat-id",
+            "type": "message",
+            "body": {"id": "m-2", "fromUserId": "user-1", "text": "hi"},
+        }
+    )
+
+    assert enqueue.await_args is not None
+    event = enqueue.await_args.args[1].event
+    assert (event.id, event.user.username) == ("m-2", "alice")
+    assert event.raw["fromUser"] == sender
+
+
 @pytest.mark.parametrize("inner_type", ["note", "mention", "follow"])
 async def test_streaming_routes_main_notifications_to_notification_handler(
     inner_type: str,
@@ -287,10 +391,9 @@ async def test_streaming_routes_main_notifications_to_notification_handler(
     client.events.on("note", on_note)
     client.events.on("mention", on_mention)
     client.events.on("notification", on_notification)
-    payload = {"id": "n-1", "type": inner_type, "note": {"id": "note-1"}}
-    _, event = _normalize("main", "notification", payload)
+    event = notification({"id": "n-1", "type": inner_type, "note": {"id": "note-1"}})
 
-    await client.events.dispatch("main", event)
+    await client.events.dispatch("main", Incoming("notification", event, "main-id"))
 
     on_note.assert_not_awaited()
     on_mention.assert_not_awaited()
@@ -432,7 +535,7 @@ async def test_main_chat_message_uses_matching_misskey_channel(
     send = AsyncMock()
     monkeypatch.setattr(client, "send_channel_message", send)
     try:
-        await client.events.handle_main_chat_message(message)
+        await client.events.handle_main_chat_message(chat_message(message))
 
         channel_id = next(
             channel_id
@@ -494,12 +597,12 @@ async def test_main_chat_message_survives_channel_rejection(
     )
 
     await client.events.handle_main_chat_message(
-        {"id": "message-1", "fromUserId": "user-1", "text": "hello"}
+        chat_message({"id": "message-1", "fromUserId": "user-1", "text": "hello"})
     )
 
     handler.assert_awaited_once()
     assert handler.await_args is not None
-    assert handler.await_args.args[0]["id"] == "message-1"
+    assert handler.await_args.args[0].id == "message-1"
 
 
 async def test_streaming_flushes_send_buffer_in_order(

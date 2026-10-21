@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from support.events import message
 from support.types import MakeBot, MakePluginDir, WriteConfig
 
 
@@ -24,7 +25,7 @@ async def test_priority_and_handled_short_circuit(
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
     results = await bot.plugin_manager.call_plugin_hook(
-        "on_message", {"id": "message-1", "user": {"username": "a"}}
+        "on_message", message({"id": "message-1", "user": {"username": "a"}})
     )
 
     assert results == [("high", {"handled": True, "response": "high"})]
@@ -60,7 +61,7 @@ async def test_hook_timeout_and_exception_are_isolated(
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
     results = await bot.plugin_manager.call_plugin_hook(
-        "on_message", {"id": "message-1", "user": {"username": "a"}}
+        "on_message", message({"id": "message-1", "user": {"username": "a"}})
     )
 
     assert results == [("healthy", {"handled": True, "response": "ok"})]
@@ -116,7 +117,7 @@ async def test_actor_lock_does_not_reenter_response_pipeline(
     results = await asyncio.wait_for(
         bot.plugin_manager.call_plugin_hook(
             "on_message",
-            {"id": "message-1", "user": {"id": "user-1", "username": "alice"}},
+            message({"id": "message-1", "user": {"id": "user-1", "username": "alice"}}),
         ),
         timeout=0.2,
     )

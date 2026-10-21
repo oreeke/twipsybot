@@ -166,6 +166,7 @@ class PostConfig(_Section):
 class ReplyConfig(_Section):
     mention: bool = True
     chat: bool = True
+    ignore_bots: bool = True
     memory: int = Field(default=10, ge=0, le=100)
     ctx_tokens: int = Field(default=2000, ge=0)
     rate_limit: Seconds = -1

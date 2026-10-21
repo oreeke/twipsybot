@@ -103,22 +103,21 @@ example = "twipsybot_example:plugin"
 
 | 类型 | 字段 |
 | --- | --- |
-| `MessageEvent` | `id text user room_id files raw` |
-| `MentionEvent` | `id text cw user files raw reply_id renote_id reply renote attachments` |
-| `NoteRef` | `id text cw user files raw` |
-| `NotificationEvent` | `id type user raw` |
+| `MessageEvent` | `id text user room_id room_name files raw` |
+| `MentionEvent` | `id text cw user files raw reply_id renote_id reply renote attachments kind mentions visibility` |
+| `NoteRef` | `id text cw user files raw hidden` |
+| `NotificationEvent` | `id type user note raw` |
 | `TimelineNoteEvent` | `id text cw user channel files raw` |
 | `AutoPostEvent` | `triggered_at` |
-| `UserRef` | `id username host handle` |
-| `FileRef` | `id mime_type url thumbnail_url raw` |
+| `UserRef` | `id username host is_bot handle` |
+| `FileRef` | `id mime_type url thumbnail_url name raw` |
 
 - 按 `priority` 降序调用。`on_message` / `on_mention` 返回 `HandledResult` 即终止后续插件与 AI；`on_context`、通知与时间线 Hook 不截断，所有插件都会收到。
 - 耗时任务（超过 Hook 的 180 秒上限，或不想让用户久等）用 `self.handled(response, followup=coro_fn)`：先发送 `response`，再在后台调用无参的 `async` 函数 `coro_fn`，其返回的 `HandledResult` 以同样方式补发（只取 `response` 与 `file_id`，忽略嵌套的 `followup`）。补发不受 Hook 超时约束，机器人关闭时被取消；`coro_fn` 抛出异常只记录日志，须自行返回失败提示。
 - 返回值须严格符合公共 TypedDict，多余字段会使结果失效。
 - 消息、提及与时间线事件的 `id` 始终非空；`NotificationEvent.id`、`UserRef.id`、`cw`、`host`、文件 URL 等可能为空。
-- `UserRef.handle` 为 `username@host`，本地用户为 `username`。`channel` 通常为 `homeTimeline`、`localTimeline`、`hybridTimeline`、`globalTimeline` 或 `antenna`。
-- `MentionEvent.reply` / `renote` 为被回复、被引用帖子（`NoteRef`），仅一层且无嵌套；对方已删除、不可见或服务端未内联时为 `None`，此时仍可从 `reply_id` / `renote_id` 判断关系。`attachments` 按本帖、被引用帖、被回复帖的顺序合并并按 ID 去重文件。
-- 事件数据类不可变；每个插件获得独立的 `raw` 副本，但嵌套值并非深度只读。`raw` 仅作只读后备，不保证长期兼容。
+- `MentionEvent.reply` / `renote` 仅一层且无嵌套；已删除、不可见或服务端未内联时为 `None`，仍可从 `reply_id` / `renote_id` 判断关系。`attachments` 按本帖、被引用帖、被回复帖的顺序合并并按 ID 去重。
+- 事件数据类不可变；每个插件获得独立的 `raw` 副本，但嵌套值并非深度只读。`raw` 仅作后备，不保证长期兼容。
 
 ### 补充上下文
 

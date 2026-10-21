@@ -1,10 +1,45 @@
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import Any, Protocol
+from datetime import datetime
+from typing import Any, Literal, NotRequired, Protocol, TypedDict
 
 import aiohttp
 from yarl import URL
+
+AutoPostVisibility = Literal["public", "home", "followers"]
+
+
+class HandledResult(TypedDict):
+    handled: Literal[True]
+    response: str
+    file_id: NotRequired[str]
+    followup: NotRequired[Callable[[], Awaitable["HandledResult"]]]
+
+
+class AutoPostItem(TypedDict):
+    text: str
+    file_ids: NotRequired[list[str]]
+
+
+class AutoPostResult(TypedDict):
+    contents: Sequence[str | AutoPostItem]
+    visibility: NotRequired[AutoPostVisibility]
+
+
+class PromptModificationResult(TypedDict):
+    prompt: str
+
+
+class ContextResult(TypedDict, total=False):
+    context: str
+    text: str
+    media: Sequence[Mapping[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class AutoPostEvent:
+    triggered_at: datetime
 
 
 class HttpService(Protocol):

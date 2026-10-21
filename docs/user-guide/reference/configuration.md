@@ -59,6 +59,7 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 | --- | --- | --- |
 | `mention` | `true` | 响应提及 |
 | `chat` | `true` | 响应私聊与群聊 |
+| `ignore_bots` | `true` | 忽略 Bot 账号的提及与聊天 |
 | `memory` | `10` | 上下文条数，0–100 |
 | `ctx_tokens` | `2000` | 上下文 token 预算，`0` 禁用 |
 | `rate_limit` | `-1` | 同一用户最小回复间隔 |

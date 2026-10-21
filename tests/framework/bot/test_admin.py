@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
+from support.events import message
 from support.factories import set_plugin_config
 from support.types import MakeBot, MakePluginDir, WriteConfig
 
@@ -62,7 +63,13 @@ async def test_admin_status_preserves_code_block_layout(
         Mock(return_value={f"p{i}": True for i in range(plugin_count)}),
     )
     response = await bot.admin.on_message(
-        {"text": "^status", "user": {"id": "user-2", "username": "bob"}}
+        message(
+            {
+                "id": "message-1",
+                "text": "^status",
+                "user": {"id": "user-2", "username": "bob"},
+            }
+        )
     )
     assert response is not None
     assert response.count("```") == 2
@@ -260,10 +267,13 @@ async def test_admin_resets_auto_post_counter(
     await bot.auto_post.post_count()
 
     response = await bot.admin.on_message(
-        {
-            "text": "^autopost reset",
-            "user": {"id": "user-2", "username": "bob"},
-        }
+        message(
+            {
+                "id": "message-1",
+                "text": "^autopost reset",
+                "user": {"id": "user-2", "username": "bob"},
+            }
+        )
     )
 
     assert response
@@ -283,7 +293,9 @@ async def test_admin_lists_and_toggles_plugins(
     user = {"id": "user-2", "username": "bob"}
 
     async def run(text: str) -> str:
-        response = await bot.admin.on_message({"text": text, "user": user})
+        response = await bot.admin.on_message(
+            message({"id": "message-1", "text": text, "user": user})
+        )
         assert response is not None
         return response
 
@@ -310,7 +322,13 @@ async def test_admin_plugin_on_rolls_back_when_start_fails(
     bot = await make_bot(config, plugins_dir=plugins_dir)
 
     response = await bot.admin.on_message(
-        {"text": "^plugin on demo", "user": {"id": "user-2", "username": "bob"}}
+        message(
+            {
+                "id": "message-1",
+                "text": "^plugin on demo",
+                "user": {"id": "user-2", "username": "bob"},
+            }
+        )
     )
 
     assert response
@@ -326,11 +344,13 @@ async def test_admin_string_allowlist_uses_exact_match(
     bot = await make_bot(write_config(bot={"admins": ["admin@example.com"]}))
 
     response = await bot.admin.on_message(
-        {
-            "id": "message-1",
-            "text": "^help",
-            "user": {"id": "admin", "username": "admin"},
-        }
+        message(
+            {
+                "id": "message-1",
+                "text": "^help",
+                "user": {"id": "admin", "username": "admin"},
+            }
+        )
     )
 
     assert response is not None
@@ -354,15 +374,15 @@ async def test_admin_can_reenable_chat(
     )
     plugin_hook = AsyncMock(wraps=bot.plugin_manager.call_plugin_hook)
     monkeypatch.setattr(bot.plugin_manager, "call_plugin_hook", plugin_hook)
-    message = {
+    raw = {
         "id": "message-1",
         "text": "^chat off",
         "user": {"id": "user-2", "username": "bob"},
     }
-    await bot.chat.handle(message)
+    await bot.chat.handle(message(raw))
     assert bot.config.get("reply.chat") is False
 
-    await bot.chat.handle({**message, "id": "message-2", "text": "^chat on"})
+    await bot.chat.handle(message({**raw, "id": "message-2", "text": "^chat on"}))
 
     assert bot.config.get("reply.chat") is True
     assert any(

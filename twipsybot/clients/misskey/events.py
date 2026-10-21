@@ -2,18 +2,28 @@ import asyncio
 import inspect
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from functools import partial
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from cachetools import TTLCache
 from loguru import logger
 
 from ...shared.logs import maybe_log_event_dump
-from .channels import CHAT_CHANNELS, NOTE_CHANNELS, ChannelType
+from .models import (
+    CHAT_CHANNELS,
+    NOTE_CHANNELS,
+    ChannelType,
+    MessageEvent,
+    parse_mention,
+    parse_message,
+    parse_notification,
+    parse_timeline_note,
+)
 
 if TYPE_CHECKING:
     from .stream import StreamingClient
 
-EventHandler = Callable[[dict[str, Any]], Awaitable[Any] | Any]
+EventHandler = Callable[[Any], Awaitable[Any] | Any]
 
 _CHAT_IDLE_SECONDS = 120
 _WORKERS = 24
@@ -23,41 +33,41 @@ _DEDUP_CACHE_MAX = 2000
 _DEDUP_CACHE_TTL = 600
 
 
-def _wrap(event_type: str, key: str, payload: dict[str, Any]) -> dict[str, Any]:
-    wrapped: dict[str, Any] = {"type": event_type, key: payload}
-    if isinstance(event_id := payload.get("id"), str) and event_id:
-        wrapped["id"] = event_id
-    return wrapped
+class Incoming(NamedTuple):
+    key: str
+    event: Any
+    channel_id: str
 
 
-def _normalize(
-    channel_name: str, event_type: str, body: Any
-) -> tuple[str, dict[str, Any]]:
-    if isinstance(body, dict):
-        if channel_name == ChannelType.MAIN:
-            match event_type:
-                case "mention" | "reply":
-                    return event_type, _wrap(event_type, "note", body)
-                case "notification" | "unreadNotification":
-                    return "notification", _wrap("notification", "notification", body)
-                case "newChatMessage":
-                    return event_type, {**body, "type": event_type}
-        elif channel_name in CHAT_CHANNELS and event_type == "message":
-            return event_type, {"type": event_type, **body}
-    return event_type, {"type": event_type, "body": body}
+_ROUTES: dict[tuple[str, str], tuple[str, Callable[[Any], Any]]] = {
+    ("main", "mention"): ("mention", parse_mention),
+    ("main", "reply"): ("mention", partial(parse_mention, kind="reply")),
+    ("main", "notification"): ("notification", parse_notification),
+    ("main", "unreadNotification"): ("notification", parse_notification),
+    ("main", "newChatMessage"): ("message", parse_message),
+    ("chat", "message"): ("message", parse_message),
+    ("note", "note"): ("note", parse_timeline_note),
+}
 
 
-def _dedup_key(event: dict[str, Any], event_type: str, channel_name: str) -> str | None:
-    event_id = event.get("id")
-    if not event_id and event_type == "note" and isinstance(event.get("body"), dict):
-        event_id = event["body"].get("id")
-    if not isinstance(event_id, str) or not event_id:
+def _category(channel_name: str) -> str:
+    if channel_name in CHAT_CHANNELS:
+        return "chat"
+    return "note" if channel_name in NOTE_CHANNELS else channel_name
+
+
+def _dedup_key(channel_name: str, event_type: str, event_id: str | None) -> str | None:
+    if not event_id:
         return None
-    if event_type == "note":
-        return f"note:{channel_name}:{event_id}"
-    if event_type in {"newChatMessage", "message"}:
-        return f"chatMessage:{event_id}"
-    return f"{event_type}:{event_id}"
+    match event_type:
+        case "note":
+            return f"note:{channel_name}:{event_id}"
+        case "newChatMessage" | "message":
+            return f"chatMessage:{event_id}"
+        case "unreadNotification":
+            return f"notification:{event_id}"
+        case _:
+            return f"{event_type}:{event_id}"
 
 
 class EventRouter:
@@ -69,7 +79,7 @@ class EventRouter:
             ttl=_DEDUP_CACHE_TTL,
             timer=time.monotonic,
         )
-        self.queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue(
+        self.queue: asyncio.Queue[tuple[str, Incoming] | None] = asyncio.Queue(
             maxsize=_QUEUE_MAX
         )
         self.worker_count = _WORKERS
@@ -114,6 +124,29 @@ class EventRouter:
         for task in tasks:
             task.cancel()
 
+    def _chat_body(self, body: Any) -> Any:
+        if not isinstance(body, dict) or not isinstance(
+            user_id := body.get("fromUserId"), str
+        ):
+            return body
+        if isinstance(user := body.get("fromUser"), dict):
+            if not body.get("toRoomId"):
+                self._chat_users[user_id] = user
+        elif user_id in self._chat_users:
+            return {**body, "fromUser": self._chat_users[user_id]}
+        return body
+
+    def _decode(
+        self, channel_id: str, channel_name: str, route: tuple[str, Callable], body: Any
+    ) -> Incoming | None:
+        key, parse = route
+        if key == "message":
+            body = self._chat_body(body)
+        elif key == "note" and isinstance(body, dict):
+            body = {**body, "streamingChannel": channel_name}
+        event = parse(body)
+        return Incoming(key, event, channel_id) if event else None
+
     async def handle_channel_message(self, body: dict[str, Any]) -> None:
         channel_id = body.get("id")
         if channel_id not in self._client.channels:
@@ -128,30 +161,35 @@ class EventRouter:
             )
             self._dump(channel_name, body)
             return
-        payload = body.get("body")
-        event_type, event = _normalize(
-            channel_name, event_type, {} if payload is None else payload
-        )
-        event.setdefault("streamingChannelId", channel_id)
-        key = _dedup_key(event, event_type, channel_name)
+        route = _ROUTES.get((_category(channel_name), event_type))
+        if route is None:
+            logger.debug(f"Skipping unsupported {channel_name} event: {event_type}")
+            self._dump(event_type, body)
+            return
+        incoming = self._decode(channel_id, channel_name, route, body.get("body"))
+        if incoming is None:
+            logger.warning(f"Invalid {channel_name} {event_type} event; skipping")
+            self._dump(event_type, body)
+            return
+        key = _dedup_key(channel_name, event_type, incoming.event.id)
         if key and key in self.processed:
             logger.debug(f"Duplicate event detected; skipping - {key}")
             return
         logger.debug(
             f"Received {channel_name} event: {event_type} (channel_id={channel_id})"
         )
-        if await self.enqueue(channel_name, event) and key:
+        if await self.enqueue(channel_name, incoming) and key:
             self.processed[key] = True
 
-    async def enqueue(self, channel_name: str, event: dict[str, Any]) -> bool:
+    async def enqueue(self, channel_name: str, incoming: Incoming) -> bool:
         try:
             async with asyncio.timeout(_QUEUE_PUT_TIMEOUT):
-                await self.queue.put((channel_name, event))
+                await self.queue.put((channel_name, incoming))
             return True
         except TimeoutError:
             logger.warning(
-                f"Event queue congested; dropping event: {event.get('type')} "
-                f"(id={event.get('id', 'unknown')})"
+                f"Event queue congested; dropping event: {incoming.key} "
+                f"(id={incoming.event.id or 'unknown'})"
             )
             return False
 
@@ -165,57 +203,35 @@ class EventRouter:
             finally:
                 self._busy -= 1
 
-    async def dispatch(self, channel_name: str, event: dict[str, Any]) -> None:
-        event_type = event.get("type")
-        if channel_name == ChannelType.MAIN:
-            match event_type:
-                case "newChatMessage":
-                    return await self.handle_main_chat_message(event)
-                case "notification":
-                    return await self.call_handlers("notification", event)
-                case "mention" | "reply":
-                    return await self.call_handlers("mention", event)
-        elif channel_name in CHAT_CHANNELS and event_type == "message":
-            return await self._handle_chat_message(event)
-        elif channel_name in NOTE_CHANNELS and event_type == "note":
-            return await self._handle_note(channel_name, event)
-        logger.debug(f"Unknown {channel_name} channel event type: {event_type}")
-        self._dump(event_type or channel_name, event)
+    async def dispatch(self, channel_name: str, incoming: Incoming) -> None:
+        key, event, channel_id = incoming
+        self._dump(key, event.raw)
+        if key != "message":
+            await self.call_handlers(key, event)
+        elif channel_name == ChannelType.MAIN:
+            await self.handle_main_chat_message(event)
+        else:
+            await self._handle_chat_message(event, channel_id)
 
-    async def handle_main_chat_message(self, event: dict[str, Any]) -> None:
+    async def handle_main_chat_message(self, message: MessageEvent) -> None:
         channel_id = None
-        if isinstance(room_id := event.get("toRoomId"), str) and room_id:
+        if room_id := message.room_id:
             channel_id = await self.open_chat_channel(
                 ChannelType.CHAT_ROOM, {"roomId": room_id}
             )
-        elif isinstance(other_id := event.get("fromUserId"), str) and other_id:
-            if isinstance(from_user := event.get("fromUser"), dict):
-                self._chat_users[other_id] = from_user
+        elif other_id := message.user.id:
             channel_id = await self.open_chat_channel(
                 ChannelType.CHAT_USER, {"otherId": other_id}
             )
-        message = {**event, "type": "message"}
-        if channel_id:
-            message["streamingChannelId"] = channel_id
-        await self._handle_chat_message(message)
+        await self._handle_chat_message(message, channel_id)
 
-    async def _handle_chat_message(self, event: dict[str, Any]) -> None:
-        message = dict(event)
-        if (
-            "fromUser" not in message
-            and isinstance(user_id := message.get("fromUserId"), str)
-            and user_id in self._chat_users
-        ):
-            message["fromUser"] = self._chat_users[user_id]
-        channel_id = message.get("streamingChannelId")
-        msg_id = message.get("id")
-        if (
-            channel_id
-            and isinstance(channel_id, str)
-            and isinstance(msg_id, str)
-            and msg_id
-        ):
-            await self._client.send_channel_message(channel_id, "read", {"id": msg_id})
+    async def _handle_chat_message(
+        self, message: MessageEvent, channel_id: str | None
+    ) -> None:
+        if channel_id:
+            await self._client.send_channel_message(
+                channel_id, "read", {"id": message.id}
+            )
             if channel_id in self.chat_tasks:
                 self.schedule_chat_disconnect(channel_id)
         await self.call_handlers("message", message)
@@ -249,15 +265,7 @@ class EventRouter:
             if self.chat_tasks.get(channel_id) is asyncio.current_task():
                 del self.chat_tasks[channel_id]
 
-    async def _handle_note(self, channel_name: str, event: dict[str, Any]) -> None:
-        body = event.get("body")
-        note = dict(body) if isinstance(body, dict) else event
-        note.setdefault("streamingChannel", channel_name)
-        logger.debug(f"Received {channel_name} note: {note.get('id', 'unknown')}")
-        self._dump(channel_name, note)
-        await self.call_handlers("note", note)
-
-    async def call_handlers(self, event_type: str, data: dict[str, Any]) -> None:
+    async def call_handlers(self, event_type: str, data: Any) -> None:
         for handler in self.handlers.get(event_type, []):
             try:
                 result = handler(data)

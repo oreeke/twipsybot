@@ -238,9 +238,8 @@ class OpenAIAPI:
         return text
 
     async def close(self):
-        if getattr(self, "client", None):
-            await self.client.close()
-            logger.debug("OpenAI API client closed")
+        await self.client.close()
+        logger.debug("OpenAI API client closed")
 
     async def generate_text(
         self,

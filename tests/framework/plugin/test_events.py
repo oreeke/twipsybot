@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from support.events import mention, message, notification, timeline_note
 from support.types import MakeBot, MakePluginDir, WriteConfig
 
 from twipsybot.plugin import (
     MentionEvent,
     MessageEvent,
 )
-from twipsybot.plugin.events import build_hook_event
 from twipsybot.plugin.manager import PluginManager, _valid_auto_post, _valid_handled
 
 
@@ -81,28 +81,35 @@ async def test_all_hooks_receive_stable_events(
 
     await manager.call_plugin_hook(
         "on_message",
-        {
-            "id": "message-1",
-            "text": "hello",
-            "user": {"username": "a"},
-            "toRoom": {"id": "room-1"},
-        },
+        message(
+            {
+                "id": "message-1",
+                "text": "hello",
+                "user": {"username": "a"},
+                "toRoom": {"id": "room-1"},
+            }
+        ),
     )
     await manager.call_plugin_hook(
-        "on_mention", {"id": "mention-1", "text": "hi", "user": {"username": "b"}}
+        "on_mention",
+        mention({"id": "mention-1", "text": "hi", "user": {"username": "b"}}),
     )
     await manager.call_plugin_hook(
         "on_notification",
-        {"id": "notification-1", "type": "reaction", "user": {"username": "c"}},
+        notification(
+            {"id": "notification-1", "type": "reaction", "user": {"username": "c"}}
+        ),
     )
     await manager.call_plugin_hook(
         "on_timeline_note",
-        {
-            "id": "note-1",
-            "text": "post",
-            "user": {"username": "d"},
-            "streamingChannel": "antenna",
-        },
+        timeline_note(
+            {
+                "id": "note-1",
+                "text": "post",
+                "user": {"username": "d"},
+                "streamingChannel": "antenna",
+            }
+        ),
     )
     await manager.call_plugin_hook("on_auto_post")
 
@@ -131,7 +138,7 @@ async def test_invalid_hook_results_are_rejected(
 
     assert (
         await bot.plugin_manager.call_plugin_hook(
-            "on_message", {"id": "message-1", "user": {"username": "a"}}
+            "on_message", message({"id": "message-1", "user": {"username": "a"}})
         )
         == []
     )
@@ -144,22 +151,6 @@ async def test_invalid_hook_results_are_rejected(
 
     plugin.on_auto_post = invalid_visibility
     assert await bot.plugin_manager.call_plugin_hook("on_auto_post") == []
-
-
-async def test_invalid_event_input_is_rejected(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "input",
-        body="async def on_message(self, event):\n"
-        "    raise AssertionError('must not run')\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-
-    assert await bot.plugin_manager.call_plugin_hook("on_message", {}) == []
-    assert await bot.plugin_manager.call_plugin_hook("on_mention", {}) == []
-    assert await bot.plugin_manager.call_plugin_hook("on_notification", {}) == []
-    assert await bot.plugin_manager.call_plugin_hook("on_timeline_note", {}) == []
 
 
 async def test_event_raw_is_isolated_between_plugins(
@@ -180,7 +171,7 @@ async def test_event_raw_is_isolated_between_plugins(
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     payload = {"id": "message-1", "user": {"username": "original"}}
 
-    results = await bot.plugin_manager.call_plugin_hook("on_message", payload)
+    results = await bot.plugin_manager.call_plugin_hook("on_message", message(payload))
 
     assert results[0][1]["response"] == "original"
     assert payload["user"]["username"] == "original"
@@ -198,10 +189,10 @@ async def test_reused_result_is_not_mutated(
         "    return self.result\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    payload = {"id": "message-1", "user": {"username": "alice"}}
+    event = message({"id": "message-1", "user": {"username": "alice"}})
 
-    first = await bot.plugin_manager.call_plugin_hook("on_message", payload)
-    second = await bot.plugin_manager.call_plugin_hook("on_message", payload)
+    first = await bot.plugin_manager.call_plugin_hook("on_message", event)
+    second = await bot.plugin_manager.call_plugin_hook("on_message", event)
 
     assert first == second
     plugin = bot.plugin_manager.get_plugin("reuse")
@@ -223,7 +214,7 @@ def test_message_hook_event_preserves_chat_file() -> None:
         },
     }
 
-    event = build_hook_event("on_message", raw)
+    event = message(raw)
 
     assert isinstance(event, MessageEvent)
     assert len(event.files) == 1
@@ -235,23 +226,20 @@ def test_message_hook_event_preserves_chat_file() -> None:
 
 def test_mention_hook_event_preserves_note_files() -> None:
     raw = {
-        "type": "mention",
-        "note": {
-            "id": "note-1",
-            "text": "@testbot describe",
-            "user": {"id": "user-1", "username": "alice"},
-            "fileIds": ["file-1"],
-            "files": [
-                {
-                    "id": "file-1",
-                    "type": "image/jpeg",
-                    "url": "https://example.com/image.jpg",
-                }
-            ],
-        },
+        "id": "note-1",
+        "text": "@testbot describe",
+        "user": {"id": "user-1", "username": "alice"},
+        "fileIds": ["file-1"],
+        "files": [
+            {
+                "id": "file-1",
+                "type": "image/jpeg",
+                "url": "https://example.com/image.jpg",
+            }
+        ],
     }
 
-    event = build_hook_event("on_mention", raw)
+    event = mention(raw)
 
     assert isinstance(event, MentionEvent)
     assert len(event.files) == 1
@@ -274,19 +262,17 @@ def test_mention_hook_event_exposes_related_notes() -> None:
         }
 
     raw = {
-        "type": "reply",
-        "note": {
-            **note("note-1", "file-1"),
-            "replyId": "note-2",
-            "renoteId": "note-3",
-            "reply": note("note-2", "file-2"),
-            "renote": note("note-3", "file-3"),
-        },
+        **note("note-1", "file-1"),
+        "replyId": "note-2",
+        "renoteId": "note-3",
+        "reply": note("note-2", "file-2"),
+        "renote": note("note-3", "file-3"),
     }
 
-    event = build_hook_event("on_mention", raw)
+    event = mention(raw, "reply")
 
     assert isinstance(event, MentionEvent)
+    assert event.kind == "reply"
     assert (event.reply_id, event.renote_id) == ("note-2", "note-3")
     assert event.reply is not None
     assert event.reply.text == "text-note-2"
@@ -305,7 +291,7 @@ def test_mention_hook_event_keeps_ids_when_related_notes_are_unavailable() -> No
         "reply": None,
     }
 
-    event = build_hook_event("on_mention", raw)
+    event = mention(raw)
 
     assert isinstance(event, MentionEvent)
     assert event.reply_id == "note-2"

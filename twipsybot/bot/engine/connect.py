@@ -4,7 +4,15 @@ from typing import Any
 from loguru import logger
 
 from ...clients.misskey.api import MisskeyAPI
-from ...clients.misskey.channels import NOTE_CHANNELS, ChannelSpec, ChannelType
+from ...clients.misskey.models import (
+    NOTE_CHANNELS,
+    ChannelSpec,
+    ChannelType,
+    MentionEvent,
+    MessageEvent,
+    NotificationEvent,
+    TimelineNoteEvent,
+)
 from ...clients.misskey.stream import StreamingClient
 from ...shared.config import Config
 from ...shared.keys import ConfigKeys
@@ -39,10 +47,10 @@ class StreamingConnector:
         misskey: MisskeyAPI,
         streaming: StreamingClient,
         runtime: BotRuntime,
-        on_mention: Callable[[dict[str, Any]], Awaitable[None]],
-        on_message: Callable[[dict[str, Any]], Awaitable[None]],
-        on_notification: Callable[[dict[str, Any]], Awaitable[None]],
-        on_timeline_note: Callable[[dict[str, Any]], Awaitable[Any]],
+        on_mention: Callable[[MentionEvent], Awaitable[None]],
+        on_message: Callable[[MessageEvent], Awaitable[None]],
+        on_notification: Callable[[NotificationEvent], Awaitable[None]],
+        on_timeline_note: Callable[[TimelineNoteEvent], Awaitable[Any]],
     ):
         self._config = config
         self._misskey = misskey

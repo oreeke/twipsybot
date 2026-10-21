@@ -9,7 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
-from ...plugin.events import AutoPostItem
+from ...plugin.contracts import AutoPostItem
 from ...plugin.manager import HookResult
 from ...shared.keys import ConfigKeys
 from ...shared.logs import format_log_text

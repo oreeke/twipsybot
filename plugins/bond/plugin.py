@@ -215,12 +215,8 @@ class BondPlugin(PluginBase):
         kind = "follow" if event.type == "receiveFollowRequest" else event.type
         if event.user is None or kind not in _NOTE_KINDS:
             return
-        note = event.raw.get("note")
-        if (
-            kind in _TEXT_KINDS
-            and isinstance(note, dict)
-            and _command(str(note.get("text") or ""))
-        ):
+        note = event.note
+        if kind in _TEXT_KINDS and note and _command(note.text):
             return
         await self._touch(event.user, kind)
 

@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.27.0] - 2026-10-21
+
+Misskey 流事件统一为类型化事件，新增插件开关命令
+
+### Added
+
+- `^plugin [list]`、`^plugin on|off <插件名>`：列出插件、启用或停用，写入 `data/settings.yaml`；启用失败时自动恢复为停用
+- `reply.ignore_bots` 忽略 Bot 账号的提及与聊天，避免机器人互相回复；关闭后与普通用户同等处理
+- 插件事件新增 `UserRef.is_bot`、`MessageEvent.room_name`、`NoteRef.hidden`、`MentionEvent.kind`、`mentions`、`visibility`、`NotificationEvent.note`、`FileRef.name`
+
+### Changed
+
+- `timeline.*` 修改后即时生效，订阅与天线随之增减，仅 `connect.*` 仍需重启
+- 流事件在入口一次解析为类型化事件，核心流程与插件共用同一份数据；已支持的事件缺少必需字段时记录 warning，不再静默丢弃
+- 插件事件的 `raw` 由只读映射改为普通 `dict`，每个插件仍获得独立副本
+- 模块整理：`admin` 移至 `bot/admin`，`bot/flows/notify.py` 更名为 `notification.py`，`payloads`、`channels` 并入 `models`，`plugin/events` 并入 `plugin/contracts`，`TCPClient` 更名为 `SharedSession`
+- 测试按框架与内置插件重组，覆盖率门槛 88%
+- 依赖 aiohttp 升级到 3.14.4
+
+### Fixed
+
+- `^status` 的插件启用数与实际状态不一致
+- Chat Completions 返回空 `choices` 时抛出 `APIConnectionError`，不再漏出 `IndexError`
+
+### Removed
+
+- `^reload <插件名>`，由 `^plugin on|off` 取代
+- 管理命令不再读取聊天事件的 `content` 键，仅使用 `text`
+
+<br>
+
 ## [0.26.0] - 2026-10-19
 
 新增补发逻辑，图片生成迁移为插件 T2X
@@ -522,6 +553,7 @@ TUI 新增实时日志页
 
 - 移除独立 Cmd 插件及其配置，管理命令改由核心 Admin 提供
 
+[0.27.0]: https://github.com/oreeke/twipsybot/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/oreeke/twipsybot/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/oreeke/twipsybot/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/oreeke/twipsybot/compare/v0.23.0...v0.24.0

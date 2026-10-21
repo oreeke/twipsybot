@@ -9,7 +9,7 @@ from loguru import logger
 
 from ...clients.fetch.public import PublicFetcher
 from ...clients.misskey.api import MisskeyAPI
-from ...clients.misskey.bridge import TCPClient
+from ...clients.misskey.bridge import SharedSession
 from ...clients.misskey.stream import StreamingClient
 from ...clients.openai.api import OpenAIAPI
 from ...db.sqlite import DBManager
@@ -37,20 +37,20 @@ class Neuro:
         try:
             instance_url = config.get_required(ConfigKeys.MISSKEY_URL)
             access_token = config.get_required(ConfigKeys.MISSKEY_TOKEN)
-            self._misskey_transport = TCPClient()
+            shared = SharedSession()
             nets = config.get(ConfigKeys.SYSTEM_ALLOW_NETS, [])
             self.fetcher = PublicFetcher(nets)
             self.misskey = MisskeyAPI(
                 instance_url,
                 access_token,
-                transport=self._misskey_transport,
+                shared=shared,
                 fetcher=PublicFetcher(nets, origin=instance_url),
             )
             self.streaming = StreamingClient(
                 instance_url,
                 access_token,
                 log_dump_events=bool(config.get(ConfigKeys.SYSTEM_DUMP_EVENTS)),
-                transport=self._misskey_transport,
+                shared=shared,
             )
             self.openai = OpenAIAPI(
                 config.get_required(ConfigKeys.AI_API_KEY),
@@ -95,8 +95,8 @@ class Neuro:
             on_mention=self.mention.handle,
             on_message=self.chat.handle,
             on_notification=self.notification.handle,
-            on_timeline_note=lambda note: self.plugin_manager.call_plugin_hook(
-                "on_timeline_note", note
+            on_timeline_note=lambda event: self.plugin_manager.call_plugin_hook(
+                "on_timeline_note", event
             ),
         )
         self.admin = AdminCommandService(self)

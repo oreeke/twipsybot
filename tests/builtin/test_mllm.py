@@ -82,7 +82,8 @@ async def test_mllm_builds_parts_by_mime() -> None:
         mime_type="video/mp4",
         url="https://example.com/files/raw.bin",
         thumbnail_url="https://example.com/thumb.webp",
-        raw={"name": "clip.mp4"},
+        raw={},
+        name="clip.mp4",
     )
 
     result = await plugin.on_context(

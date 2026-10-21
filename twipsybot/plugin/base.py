@@ -6,8 +6,7 @@ from typing import Any, ClassVar
 from loguru import logger
 from pydantic import BaseModel, BeforeValidator, ConfigDict
 
-from .contracts import PluginContext
-from .events import HandledResult
+from .contracts import HandledResult, PluginContext
 
 PLUGIN_API_VERSION = 3
 

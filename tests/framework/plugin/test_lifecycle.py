@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 import pytest
+from support.events import message
 from support.factories import set_plugin_config
 from support.types import MakeBot, MakePluginDir, WriteConfig
 
@@ -27,7 +28,7 @@ _RELOAD_BODY = (
     "async def on_message(self, event):\n"
     "    return self.handled(self.settings.reply)\n"
 )
-_MESSAGE = {"id": "_MESSAGE-1", "user": {"username": "alice"}}
+_MESSAGE = message({"id": "_MESSAGE-1", "user": {"username": "alice"}})
 
 
 async def test_lifecycle_order(
@@ -54,9 +55,7 @@ async def test_lifecycle_order(
     plugin = bot.plugin_manager.get_plugin("lifecycle")
     assert plugin is not None
 
-    await bot.plugin_manager.call_plugin_hook(
-        "on_message", {"id": "_MESSAGE-1", "user": {"username": "a"}}
-    )
+    await bot.plugin_manager.call_plugin_hook("on_message", _MESSAGE)
     await bot.plugin_manager.shutdown_plugins()
     await bot.plugin_manager.cleanup_plugins()
 
@@ -159,12 +158,7 @@ async def test_shutdown_stops_hook_dispatch(
 
     await bot.plugin_manager.shutdown_plugins()
 
-    assert (
-        await bot.plugin_manager.call_plugin_hook(
-            "on_message", {"id": "_MESSAGE-1", "user": {"username": "alice"}}
-        )
-        == []
-    )
+    assert await bot.plugin_manager.call_plugin_hook("on_message", _MESSAGE) == []
 
 
 async def test_shutdown_waits_for_active_hook_and_rejects_new_hooks(
@@ -192,9 +186,8 @@ async def test_shutdown_waits_for_active_hook_and_rejects_new_hooks(
 
     monkeypatch.setattr(plugin, "on_message", on_message, raising=False)
     monkeypatch.setattr(plugin, "on_shutdown", on_shutdown, raising=False)
-    payload = {"id": "_MESSAGE-1", "user": {"username": "alice"}}
     active_hook = asyncio.create_task(
-        bot.plugin_manager.call_plugin_hook("on_message", payload)
+        bot.plugin_manager.call_plugin_hook("on_message", _MESSAGE)
     )
     await hook_started.wait()
     shutdown = asyncio.create_task(bot.plugin_manager.shutdown_plugins())
@@ -202,7 +195,7 @@ async def test_shutdown_waits_for_active_hook_and_rejects_new_hooks(
         while bot.plugin_manager._accepting_hooks:
             await asyncio.sleep(0)
 
-    assert await bot.plugin_manager.call_plugin_hook("on_message", payload) == []
+    assert await bot.plugin_manager.call_plugin_hook("on_message", _MESSAGE) == []
     assert not shutdown.done()
     assert events == ["hook-started"]
 
@@ -238,9 +231,7 @@ async def test_shutdown_cancels_hook_after_grace_period(
 
     monkeypatch.setattr(plugin, "on_message", on_message, raising=False)
     active_hook = asyncio.create_task(
-        bot.plugin_manager.call_plugin_hook(
-            "on_message", {"id": "_MESSAGE-1", "user": {"username": "alice"}}
-        )
+        bot.plugin_manager.call_plugin_hook("on_message", _MESSAGE)
     )
     await hook_started.wait()
 

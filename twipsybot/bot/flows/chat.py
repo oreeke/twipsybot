@@ -6,14 +6,9 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 from loguru import logger
 
-from ...clients.misskey.payloads import (
-    extract_chat_text,
-    extract_user_handle,
-    extract_user_id,
-    extract_username,
-)
+from ...clients.misskey.models import MessageEvent, parse_message
 from ...shared.keys import ConfigKeys
-from ...shared.logs import format_log_text, maybe_log_event_dump
+from ...shared.logs import format_log_text
 from ..engine.pipeline import Augment, Deliver, Reply, Source, replied
 
 if TYPE_CHECKING:
@@ -29,7 +24,6 @@ class _ChatContext:
     user_id: str
     username: str
     handle: str | None
-    mention_to: str | None
     room_id: str | None
     conversation_id: str
     actor_id: str
@@ -96,38 +90,20 @@ class ChatHandler:
             history.append({"role": "assistant", "content": assistant_text})
         self._histories[conversation_id] = self._trim_history(history, limit)
 
-    async def handle(self, message: dict[str, Any]) -> None:
+    async def handle(self, message: MessageEvent) -> None:
         chat_enabled = self.bot.config.get(ConfigKeys.REPLY_CHAT)
-        admin_command = extract_chat_text(message).startswith("^")
+        admin_command = message.text.startswith("^")
         if not chat_enabled and not admin_command:
             return
-        if not message.get("id"):
-            logger.debug("Missing id; skipping")
+        if self.bot.bot_user_id and message.user.id == self.bot.bot_user_id:
             return
-        if self.bot.bot_user_id and extract_user_id(message) == self.bot.bot_user_id:
+        if self.bot.limits.is_ignored_bot(message.user):
+            logger.debug(f"Ignoring chat from bot account @{message.user.handle}")
             return
-        maybe_log_event_dump(
-            bool(self.bot.config.get(ConfigKeys.SYSTEM_DUMP_EVENTS)),
-            kind="Chat",
-            payload=message,
-        )
         try:
             await self._process(message)
         except Exception as e:
             logger.error(f"Error handling chat: {e}")
-
-    @staticmethod
-    def _parse_room(message: dict[str, Any]) -> tuple[str | None, str | None]:
-        to_room = message.get("toRoom")
-        room_id = message.get("toRoomId")
-        room_name = None
-        if isinstance(to_room, dict):
-            if not room_id:
-                room_id = to_room.get("id")
-            room_name = to_room.get("name")
-        room_id = room_id if isinstance(room_id, str) and room_id else None
-        room_name = room_name if isinstance(room_name, str) and room_name else None
-        return room_id, room_name
 
     @staticmethod
     def _log_incoming_chat(ctx: _ChatContext) -> None:
@@ -135,7 +111,7 @@ class ChatHandler:
         body = format_log_text(ctx.text) if ctx.text else "(no text; has media)"
         logger.info(f"Chat received from {prefix}@{ctx.username}: {body}")
 
-    async def _process(self, message: dict[str, Any]) -> None:
+    async def _process(self, message: MessageEvent) -> None:
         if not (ctx := self._parse_chat_context(message)):
             return
         self._log_incoming_chat(ctx)
@@ -144,14 +120,13 @@ class ChatHandler:
         async with self.bot.pipeline.hold(ctx.actor_id, ctx.username):
             if await self._run_command(message, ctx, deliver):
                 return
-            handle = ctx.handle or ctx.mention_to
             if self.bot.limits.is_response_blacklisted_user(
-                user_id=ctx.user_id, handle=handle
+                user_id=ctx.user_id, handle=ctx.handle
             ):
                 return
             await self.bot.pipeline.respond(
                 user_id=ctx.user_id,
-                handle=handle,
+                handle=ctx.handle,
                 hook="on_message",
                 event=message,
                 generate=partial(self._generate_ai_reply, ctx, limit),
@@ -159,7 +134,7 @@ class ChatHandler:
             )
 
     async def _run_command(
-        self, message: dict[str, Any], ctx: _ChatContext, deliver: Deliver
+        self, message: MessageEvent, ctx: _ChatContext, deliver: Deliver
     ) -> bool:
         if ctx.text.startswith("^"):
             if not ctx.room_id and (text := await self.bot.admin.on_message(message)):
@@ -170,7 +145,7 @@ class ChatHandler:
             ctx.text,
             user_id=ctx.user_id,
             username=ctx.username,
-            handle=ctx.handle or ctx.mention_to,
+            handle=ctx.handle,
             private=ctx.room_id is None,
         )
         if reply is None:
@@ -183,7 +158,7 @@ class ChatHandler:
         self, ctx: _ChatContext, limit: int, reply: Reply, source: Source
     ) -> None:
         text = self._format_chat_reply_text(
-            room_id=ctx.room_id, mention_to=ctx.mention_to, text=reply.text
+            room_id=ctx.room_id, handle=ctx.handle, text=reply.text
         )
         if ctx.room_id:
             await self.bot.misskey.send_room_message(ctx.room_id, text, reply.file_id)
@@ -193,45 +168,36 @@ class ChatHandler:
         if source in ("plugin", "ai") and ctx.text:
             self.append_turn(ctx.conversation_id, ctx.user_content, reply.text, limit)
 
-    def _parse_chat_context(self, message: dict[str, Any]) -> _ChatContext | None:
-        text = extract_chat_text(message)
-        user_id = extract_user_id(message)
-        if not isinstance(user_id, str) or not user_id:
+    def _parse_chat_context(self, message: MessageEvent) -> _ChatContext | None:
+        user = message.user
+        if not user.id:
             logger.debug("Chat missing required info: user_id is empty")
             return None
-        username = extract_username(message)
-        handle = extract_user_handle(message)
-        mention_to = handle or (username if username != "unknown" else None)
-        room_id, room_name = self._parse_room(message)
-        if not text and not (message.get("fileId") or message.get("file")):
+        if not message.text and not message.files:
             logger.debug("Chat missing required info: empty text and no media")
             return None
-        if room_id and not self.bot.is_bot_mentioned(text):
+        if message.room_id and not self.bot.is_bot_mentioned(message.text):
             logger.debug(
-                f"Room chat from @{username} does not mention the bot; skipping"
+                f"Room chat from @{user.username} does not mention the bot; skipping"
             )
             return None
-        conversation_id = f"room:{room_id}" if room_id else user_id
-        actor_id = room_id or user_id
-        room_label = room_name or room_id
         return _ChatContext(
-            text=str(text),
-            user_id=user_id,
-            username=username,
-            handle=handle,
-            mention_to=mention_to,
-            room_id=room_id,
-            conversation_id=conversation_id,
-            actor_id=actor_id,
-            room_label=room_label,
+            text=message.text,
+            user_id=user.id,
+            username=user.username,
+            handle=user.known_handle,
+            room_id=message.room_id,
+            conversation_id=f"room:{message.room_id}" if message.room_id else user.id,
+            actor_id=message.room_id or user.id,
+            room_label=message.room_name or message.room_id,
         )
 
     @staticmethod
     def _format_chat_reply_text(
-        *, room_id: str | None, mention_to: str | None, text: str
+        *, room_id: str | None, handle: str | None, text: str
     ) -> str:
-        if room_id and mention_to:
-            mention = mention_to if mention_to.startswith("@") else f"@{mention_to}"
+        if room_id and handle:
+            mention = handle if handle.startswith("@") else f"@{handle}"
             stripped = text.lstrip()
             if not stripped.startswith(mention):
                 return f"{mention}\n{text}"
@@ -297,14 +263,11 @@ class ChatHandler:
         messages = await self.bot.misskey.get_room_messages(room_id, limit=limit)
         bot_user_id = self.bot.bot_user_id
         history: list[dict[str, str]] = []
-        for msg in reversed(messages):
-            sender_id = extract_user_id(msg)
-            is_assistant = bool(
-                bot_user_id and isinstance(sender_id, str) and sender_id == bot_user_id
-            )
-            content = extract_chat_text(msg)
-            if not is_assistant:
-                content = f"{extract_username(msg)}: {content}"
+        for raw in reversed(messages):
+            if not (msg := parse_message(raw)):
+                continue
+            is_assistant = bool(bot_user_id and msg.user.id == bot_user_id)
+            content = msg.text if is_assistant else f"{msg.user.username}: {msg.text}"
             history.append(
                 {"role": "assistant" if is_assistant else "user", "content": content}
             )
@@ -315,8 +278,8 @@ class ChatHandler:
     ) -> list[dict[str, str]]:
         messages = await self.bot.misskey.get_messages(user_id, limit=limit)
         history: list[dict[str, str]] = []
-        for msg in reversed(messages):
-            role = "user" if extract_user_id(msg) == user_id else "assistant"
-            content = extract_chat_text(msg)
-            history.append({"role": role, "content": content})
+        for raw in reversed(messages):
+            if msg := parse_message(raw):
+                role = "user" if msg.user.id == user_id else "assistant"
+                history.append({"role": role, "content": msg.text})
         return history

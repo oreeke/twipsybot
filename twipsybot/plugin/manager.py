@@ -7,6 +7,7 @@ from collections import Counter
 from collections.abc import Callable
 from contextlib import contextmanager
 from copy import deepcopy
+from datetime import UTC, datetime
 from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
 from types import MappingProxyType
@@ -16,8 +17,7 @@ from loguru import logger
 
 from ..shared.config import Config
 from .base import PLUGIN_API_VERSION, PluginBase
-from .contracts import PluginContext
-from .events import AutoPostVisibility, build_hook_event
+from .contracts import AutoPostEvent, AutoPostVisibility, PluginContext
 from .services import (
     BotControlAdapter,
     HttpServiceAdapter,
@@ -553,25 +553,17 @@ class PluginManager:
         return isinstance(result, dict) and validator is not None and validator(result)
 
     async def call_plugin_hook(
-        self, hook_name: str, payload: Any = None, *, event_hook: str | None = None
+        self, hook_name: str, event: Any = None
     ) -> list[HookResult]:
         if not self._accepting_hooks or (task := asyncio.current_task()) is None:
             return []
+        if hook_name == "on_auto_post":
+            event = AutoPostEvent(triggered_at=datetime.now(UTC))
         results: list[HookResult] = []
-        shared_event = (
-            build_hook_event(hook_name) if hook_name == "on_auto_post" else None
-        )
         with self._track_hook_task(task):
             for plugin in self._iter_dispatch_plugins():
-                try:
-                    event = shared_event or build_hook_event(
-                        event_hook or hook_name, payload
-                    )
-                except ValueError as e:
-                    logger.warning(f"Invalid plugin event: hook={hook_name}: {e}")
-                    return []
                 if result := await self._call_single_plugin_hook(
-                    plugin, hook_name, event
+                    plugin, hook_name, deepcopy(event)
                 ):
                     results.append(result)
                     if hook_name in {"on_message", "on_mention"}:

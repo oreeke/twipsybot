@@ -163,8 +163,8 @@ async def test_misskey_api_stops_after_max_retries(
 
 async def test_misskey_api_does_not_retry_writes() -> None:
     post = Mock(side_effect=ClientError("down"))
-    transport = SimpleNamespace(session=SimpleNamespace(post=post))
-    api = MisskeyAPI("https://example.com", "token", transport=cast(Any, transport))
+    shared = SimpleNamespace(session=SimpleNamespace(post=post))
+    api = MisskeyAPI("https://example.com", "token", shared=cast(Any, shared))
 
     with pytest.raises(APIConnectionError):
         await api.make_request("notes/create")

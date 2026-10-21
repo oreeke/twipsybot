@@ -264,23 +264,25 @@ def test_responses_text_rejects_invalid_or_empty_output(
         extract_responses_text(response)
 
 
-@pytest.mark.parametrize(
-    ("content", "finish_reason", "message"),
-    (("truncated", "length", "max_tokens"), ("", "stop", None)),
-)
-def test_chat_completions_rejects_incomplete_output(
-    content: str, finish_reason: str, message: str | None
-) -> None:
-    response = SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(content=content), finish_reason=finish_reason
-            )
-        ]
+def _choice(content: str, finish_reason: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        message=SimpleNamespace(content=content), finish_reason=finish_reason
     )
 
+
+@pytest.mark.parametrize(
+    ("choices", "message"),
+    (
+        ([], "Empty choices"),
+        ([_choice("truncated", "length")], "max_tokens"),
+        ([_choice("", "stop")], None),
+    ),
+)
+def test_chat_completions_rejects_incomplete_output(
+    choices: list[Any], message: str | None
+) -> None:
     with pytest.raises(APIConnectionError, match=message):
-        process_chat_completions_response(response, "test")
+        process_chat_completions_response(SimpleNamespace(choices=choices), "test")
 
 
 async def test_responses_request_enables_json_output() -> None:

@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 from cachetools import TTLCache
 
+from ...clients.misskey.models import UserRef
 from ...db.sqlite import DBManager
 from ...shared.config import Config
 from ...shared.keys import ConfigKeys
@@ -63,6 +64,9 @@ class ResponseLimiter:
         return bool(users) and not users.isdisjoint(
             self._user_candidates(user_id=user_id, handle=handle)
         )
+
+    def is_ignored_bot(self, user: UserRef) -> bool:
+        return user.is_bot and bool(self._config.get(ConfigKeys.REPLY_IGNORE_BOTS))
 
     def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
         return self._in_user_list(

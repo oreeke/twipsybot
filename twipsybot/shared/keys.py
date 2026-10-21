@@ -23,6 +23,7 @@ class ConfigKeys:
     POST_PROMPT = "autopost.prompt"
     REPLY_MENTION = "reply.mention"
     REPLY_CHAT = "reply.chat"
+    REPLY_IGNORE_BOTS = "reply.ignore_bots"
     REPLY_MEMORY = "reply.memory"
     REPLY_CTX_TOKENS = "reply.ctx_tokens"
     REPLY_RATE_LIMIT = "reply.rate_limit"

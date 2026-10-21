@@ -7,12 +7,7 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 from loguru import logger
 
-from ...clients.misskey.payloads import (
-    extract_first_text,
-    extract_user_handle,
-    extract_user_id,
-    extract_username,
-)
+from ...clients.misskey.models import MessageEvent
 from ...shared.keys import ConfigKeys
 from ...shared.utils import normalize_tokens
 from ..engine.pipeline import Reply
@@ -206,13 +201,13 @@ class AdminCommandService:
             return f"命令执行失败: {e!s}"
         return f"用法: ^{name} {command.usage}" if result is None else result
 
-    async def on_message(self, message: dict[str, Any]) -> str | None:
-        text = extract_first_text(message, "text", "content")
-        if not text.startswith("^") or not (user_id := extract_user_id(message)):
+    async def on_message(self, message: MessageEvent) -> str | None:
+        text = message.text
+        if not text.startswith("^") or not (user_id := message.user.id):
             return None
         try:
-            username = extract_username(message)
-            handle = self._canonical_handle(username, extract_user_handle(message))
+            username = message.user.username
+            handle = self._canonical_handle(username, message.user.known_handle)
             if not self._is_authorized(user_id, handle):
                 return _code_block("命令", "您没有权限使用命令。")
             command_text = text[1:].strip()

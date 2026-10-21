@@ -73,9 +73,7 @@ class MLLMPlugin(PluginBase):
                 "type": "input_audio",
                 "input_audio": {"data": b64, "format": audio},
             }
-        name = file.raw.get("name")
-        if not (isinstance(name, str) and name):
-            name = PurePosixPath(urlsplit(file.url or "").path).name or "file"
+        name = file.name or PurePosixPath(urlsplit(file.url or "").path).name or "file"
         return {
             "type": "input_file",
             "filename": name,

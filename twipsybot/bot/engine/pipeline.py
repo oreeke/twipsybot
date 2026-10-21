@@ -71,10 +71,8 @@ class ResponsePipeline:
     ) -> AbstractAsyncContextManager[None]:
         return self._actor_locks.hold(actor_key(actor_id, actor_name))
 
-    async def _augment(self, hook: str, event: Any) -> Augment:
-        results = await self._plugins.call_plugin_hook(
-            "on_context", event, event_hook=hook
-        )
+    async def _augment(self, event: Any) -> Augment:
+        results = await self._plugins.call_plugin_hook("on_context", event)
         return Augment(
             "\n\n".join(r["context"] for _, r in results if "context" in r),
             next((r["text"] for _, r in results if "text" in r), None),
@@ -109,7 +107,7 @@ class ResponsePipeline:
             text, source = result["response"], "plugin"
             file_id, followup = result.get("file_id"), result.get("followup")
         else:
-            text, source = await generate(await self._augment(hook, event)), "ai"
+            text, source = await generate(await self._augment(event)), "ai"
         if not text:
             return
         await deliver(Reply(text, file_id), source)

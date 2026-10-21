@@ -21,7 +21,7 @@ from ...shared.errors import (
     AuthenticationError,
 )
 from ..fetch.public import PublicFetcher
-from .bridge import TCPClient
+from .bridge import SharedSession
 from .drive import MisskeyDrive
 
 NOTE_TEXT_MAX_LENGTH = 3000
@@ -37,12 +37,12 @@ class MisskeyAPI:
         instance_url: str,
         access_token: str,
         *,
-        transport: TCPClient | None = None,
+        shared: SharedSession | None = None,
         fetcher: PublicFetcher | None = None,
     ):
         self.instance_url = instance_url.rstrip("/")
         self.access_token = access_token
-        self.transport: TCPClient = transport or TCPClient()
+        self.shared: SharedSession = shared or SharedSession()
         self.fetcher = fetcher or PublicFetcher(origin=self.instance_url)
         self.drive: MisskeyDrive = MisskeyDrive(self)
         self._semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
@@ -51,13 +51,13 @@ class MisskeyAPI:
         self._antennas_cache_lock = asyncio.Lock()
 
     async def close(self) -> None:
-        await self.transport.close_session(silent=True)
+        await self.shared.close_session()
         await self.fetcher.close()
         logger.debug("Misskey API client closed")
 
     @property
     def session(self) -> aiohttp.ClientSession:
-        return self.transport.session
+        return self.shared.session
 
     @property
     def semaphore(self) -> asyncio.Semaphore:

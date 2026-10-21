@@ -11,7 +11,7 @@
     "preview": "vitepress preview ."
   },
   "overrides": {
-    "vite": "6.4.3",
+    "vite": "^6.4.5",
     "katex": "0.18.2"
   },
   "devDependencies": {

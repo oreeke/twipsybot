@@ -13,7 +13,7 @@ description: TwipsyBot 内置插件：关系记录、关键词回复、文生图
 | [**KeyAct**](keyact.md) | 精确关键词回复 | 提及、聊天 | 850 |
 | [**T2X**](t2x.md) | 文本生成图片 | 图片生成 API | 800 |
 | [**MLLM**](mllm.md) | 附件理解 | 多模态模型 | 750 |
-| [**Web**](web.md) | 联网检索与链接读取 | 检索后端（SearXNG） | 500 |
+| [**Web**](web.md) | 联网检索与链接读取 | 检索后端（SearXNG / DeepSeek） | 500 |
 | [**Topics**](topics.md) | 主题列表与 RSS 发帖 | 自动发帖 | 300 |
 | [**Radar**](radar.md) | 天线帖子互动 | 天线 | 50 |
 | [**Iincho**](iincho.md) | 本地时间线风险概览 | Local 时间线、审核 API | 40 |

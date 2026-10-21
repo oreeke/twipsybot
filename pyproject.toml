@@ -1,6 +1,6 @@
 [project]
 name = "twipsybot"
-version = "0.27.1"
+version = "0.27.2"
 description = "AI-powered Misskey bot with OpenAI-compatible APIs."
 readme = "README.md"
 license = "MIT"

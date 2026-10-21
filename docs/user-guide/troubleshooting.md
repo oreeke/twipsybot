@@ -78,7 +78,7 @@ docker compose logs --tail 200 twipsybot
 ### Web 不检索
 
 - `endpoint` 已配置且可达（日志出现 `Web plugin provider unavailable` 表示后端配置无效）；`searxng` 后端需已启用 `json` 输出且未被限流。
-- `always_on` 关闭时需以 `/web <问题>` 发起；开启时问题去掉链接与提及后不少于 `min_chars`。
+- `always_on` 关闭时需以 `/web <问题>` 发起；开启时问题去掉链接与提及后不少于 `min_query`。
 - 链接未被读取：地址为内网（需配置 `system.allow_nets`）、被域名规则拦截、非文本网页、超时或超过 `max_bytes`；需要登录或脚本渲染的页面无法读取。
 - 检索失败不影响回复，详见日志中的 `Web search failed`。
 

@@ -12,7 +12,13 @@ from aiohttp.test_utils import TestServer
 from plugins.web import plugin as web_plugin
 from plugins.web.plugin import WebPlugin
 from twipsybot.clients.fetch.public import PublicFetcher
-from twipsybot.plugin import MentionEvent, MessageEvent, NoteRef, UserRef
+from twipsybot.plugin import (
+    APIResponseError,
+    MentionEvent,
+    MessageEvent,
+    NoteRef,
+    UserRef,
+)
 from twipsybot.plugin.services import HttpServiceAdapter
 from twipsybot.shared.errors import BlockedURLError
 
@@ -235,18 +241,16 @@ async def test_web_fetches_links_from_replied_and_quoted_notes(
     assert result["context"].count("Hello") == 2
 
 
-async def test_web_follows_redirects_and_fetch_top(
+async def test_web_fetch_results_fetches_every_hit(
     make_web: Make,
 ) -> None:
     server_app = _app()
-    plugin, server = await make_web(server_app, {"fetch_top": 1}, _LOOPBACK)
+    plugin, server = await make_web(server_app, {"fetch_results": True}, nets=_LOOPBACK)
     url = str(server.make_url("/redirect"))
-    server_app[QUERIES].clear()
-    plugin._cache.clear()
     plugin._search = AsyncMock(
         return_value=[
             web_plugin._Source("S", url, "snip"),
-            web_plugin._Source("S2", "https://example.com/b", "snip2"),
+            web_plugin._Source("S2", "http://localhost:1/", "snip2"),
         ]
     )
 
@@ -320,6 +324,127 @@ def test_web_render_budget_and_tag_escape() -> None:
     custom = _plugin({"prompt": "仅供参考"})._render(sources[1:])
     assert custom.split("\n")[1:3] == ["仅供参考", ""]
     assert web_plugin._PROMPT not in custom
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("https://a.test/x，这是仓库", ["https://a.test/x"]),
+        ("https://a.test/x抓网页啊", ["https://a.test/x"]),
+        (
+            "看 https://a.test/x。再看 (https://b.test/y) HTTPS://c.test/k",
+            ["https://a.test/x", "https://b.test/y", "HTTPS://c.test/k"],
+        ),
+    ],
+)
+def test_web_urls_stop_at_non_ascii(text: str, expected: list[str]) -> None:
+    assert web_plugin._urls(text, 3) == expected
+
+
+def test_web_urls_respect_limit() -> None:
+    text = "https://a.test https://b.test https://a.test https://c.test"
+
+    assert web_plugin._urls(text, 2) == ["https://a.test", "https://b.test"]
+
+
+def _deepseek_app(
+    results: list[dict[str, Any]], pages: dict[str, dict[str, Any]]
+) -> web.Application:
+    calls: list[tuple[str, dict[str, Any], str]] = []
+
+    async def search(request: web.Request) -> web.Response:
+        calls.append(("search", await request.json(), request.headers["Authorization"]))
+        return web.json_response({"results": results})
+
+    async def fetch(request: web.Request) -> web.Response:
+        body = await request.json()
+        calls.append(("fetch", body, request.headers["Authorization"]))
+        if page := pages.get(body["url"]):
+            return web.json_response(page)
+        return web.json_response({"error": {}}, status=404)
+
+    app = web.Application()
+    app.router.add_post("/v1/tools/search", search)
+    app.router.add_post("/v1/tools/fetch", fetch)
+    app[QUERIES] = calls
+    return app
+
+
+async def test_web_deepseek_requires_api_key() -> None:
+    assert await _plugin({"provider": "deepseek"}).initialize() is False
+
+
+async def test_web_deepseek_searches_and_fetches_remotely(make_web: Make) -> None:
+    url = "https://example.com/a"
+    app = _deepseek_app(
+        [{"title": "T", "url": url, "summary": "long", "snippet": "short"}],
+        {url: {"title": "Doc", "content": "# Doc\nbody" + "x" * 100}},
+    )
+    plugin, _ = await make_web(
+        app,
+        {
+            "provider": "deepseek",
+            "api_key": "sk-test",
+            "max_results": 3,
+            "max_chars": 500,
+            "block_domains": "blocked.org",
+        },
+    )
+
+    result = await _on_context(plugin, f"/web 查询 {url} https://blocked.org/x")
+
+    assert result is not None
+    assert "[1] Doc\nhttps://example.com/a\n# Doc\nbody" in result["context"]
+    assert "[2] T\nhttps://example.com/a\nlong" in result["context"]
+    assert "blocked.org" not in result["context"]
+    searches = [call for call in app[QUERIES] if call[0] == "search"]
+    assert searches == [
+        (
+            "search",
+            {"query": "查询", "count": 3, "need_content": False},
+            "Bearer sk-test",
+        )
+    ]
+    fetches = [call[1]["url"] for call in app[QUERIES] if call[0] == "fetch"]
+    assert fetches == [url]
+    assert await plugin._page("https://missing.test/") is None
+
+
+async def test_web_deepseek_fetch_results_uses_need_content(make_web: Make) -> None:
+    url = "https://example.com/a"
+    app = _deepseek_app(
+        [{"title": "T", "url": url, "summary": "long", "content": "full" * 400}], {}
+    )
+    plugin, _ = await make_web(
+        app,
+        {
+            "provider": "deepseek",
+            "api_key": "sk-test",
+            "fetch_results": True,
+            "max_chars": 1000,
+        },
+    )
+
+    hits = await plugin._search("查询")
+
+    assert app[QUERIES][0][1]["need_content"] is True
+    assert [h.body for h in hits] == ["full" * 250]
+    assert len(app[QUERIES]) == 1
+
+
+async def test_web_deepseek_errors_do_not_leak_api_key(make_web: Make) -> None:
+    async def denied(request: web.Request) -> web.Response:
+        return web.json_response({}, status=402)
+
+    app = web.Application()
+    app.router.add_post("/v1/tools/search", denied)
+    plugin, _ = await make_web(app, {"provider": "deepseek", "api_key": "sk-secret"})
+
+    with pytest.raises(APIResponseError) as raised:
+        await plugin._provider.search("查询")
+
+    assert raised.value.status == 402
+    assert "sk-secret" not in repr(raised.value)
 
 
 async def test_web_uses_registered_provider_and_filters_results(

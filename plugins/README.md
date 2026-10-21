@@ -1,6 +1,6 @@
-## 插件开发
+## 扩展插件
 
-Plugin API v3，只从 `twipsybot.plugin` 导入公共接口。完整 API 见[插件开发](https://twipsybot.oreeke.com/dev-guide/plugins)。
+Plugin API v3，只从 `twipsybot.plugin` 导入公共接口。完整 API 见[扩展插件](https://twipsybot.oreeke.com/dev-guide/plugins)。
 
 ### 最小示例
 

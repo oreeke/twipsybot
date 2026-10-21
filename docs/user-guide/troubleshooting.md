@@ -53,14 +53,13 @@ docker compose logs --tail 200 twipsybot
 ### Radar 无互动
 
 - 天线在 Misskey 中能看到帖子，`timeline.antennas` 正确。
-- 至少启用反应、回复、引用、转帖之一。
-- 固定文本为空且未开启 `reply_ai` / `quote_ai` 时不会回复 / 引用。
+- 至少启用反应、回复、引用、转帖之一；固定文本为空且未开启 `reply_ai` / `quote_ai` 时不会回复 / 引用。
 
 ### Topics 不发帖
 
 - `autopost.mode` 为 `rotation` 或 `schedule`，轮转未达每日上限。
 - list 模式下 `list` 不能为空，引用的 `prompts/` 文件需存在，否则插件启动失败。
-- RSS 模式：检查 URL、网络与 HTTP 状态，条目需含标题与链接。已发布条目不会重复；AI 改写失败回退为标题，拉取失败跳过该源。
+- RSS 模式：检查 URL、网络与 HTTP 状态，条目需含标题与链接；拉取失败跳过该源。
 
 ### MLLM 不识别附件
 
@@ -78,15 +77,13 @@ docker compose logs --tail 200 twipsybot
 
 ### Web 不检索
 
-- `endpoint` 已配置且可达；`searxng` 后端需已启用 `json` 输出。
+- `endpoint` 已配置且可达（日志出现 `Web plugin provider unavailable` 表示后端配置无效）；`searxng` 后端需已启用 `json` 输出且未被限流。
 - `always_on` 关闭时需以 `/web <问题>` 发起；开启时问题去掉链接与提及后不少于 `min_chars`。
-- 链接为内网地址（需配置 `system.allow_nets`）、被域名规则拦截或非文本网页时不会读取。
+- 链接未被读取：地址为内网（需配置 `system.allow_nets`）、被域名规则拦截、非文本网页、超时或超过 `max_bytes`；需要登录或脚本渲染的页面无法读取。
 - 检索失败不影响回复，详见日志中的 `Web search failed`。
 
 ### Iincho 无报告
 
-- 已开启 `timeline.local`。
-- 有效样本少于 `min_notes` 时正常跳过；不补采启动前帖子，不补发失败周期。
+- 已开启 `timeline.local`；有效样本少于 `min_notes` 时正常跳过。
 - 配置了 `bot.admins` 时，文本模型需支持 JSON 输出。
-- `openai` 后端需端点支持 `/moderations` 与 `omni-moderation-latest`，否则改用 `cloudflare`。
-- `cloudflare` 后端：401/403 检查账户 ID 与 Workers AI 权限，429 调小 `cf_concurrency` 或 `sample_size`。
+- `openai` 后端需端点支持 `/moderations` 与 `omni-moderation-latest`，否则改用 `cloudflare`；其 401/403 检查账户 ID 与 Workers AI 权限，429 调小 `cf_concurrency` 或 `sample_size`。

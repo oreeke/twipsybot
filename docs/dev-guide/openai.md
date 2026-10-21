@@ -35,9 +35,8 @@ description: TwipsyBot 使用的 OpenAI 兼容 API、接口模式、多模态能
 - 共享 16 并发槽位；SDK 单次超时 60 秒、最多重试 2 次；文本与审核外层等待上限 120 秒。
 - `max_tokens` 映射：Responses 为 `max_output_tokens`；Chat Completions 对 OpenAI 官方域名用 `max_completion_tokens`，其他端点用 `max_tokens`。`temperature` 与 JSON Object 参数按接口转换。
 - 聊天历史按 `reply.ctx_tokens` 由新到旧截取：已知模型用对应 tiktoken 编码，未知模型用 `o200k_base`，编码不可用时按字符近似；分词表缓存于 `data/tiktoken`。
-- 保留认证、参数、连接与响应格式错误语义，不吞异常、不额外重试。
+- 认证、参数、连接与响应格式错误原样抛出，不额外重试。
 
 ## 扩展与测试
 
-- 新能力在客户端层统一请求格式与响应提取，业务代码不依赖服务商的原始 SDK 响应对象。
-- 测试不调用真实服务，通过模拟 SDK 响应验证。
+- 新能力在客户端层统一请求格式与响应提取，业务代码不依赖服务商的原始 SDK 响应对象；测试通过模拟 SDK 响应验证。

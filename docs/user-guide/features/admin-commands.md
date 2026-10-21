@@ -23,7 +23,7 @@ description: TwipsyBot 的状态查询、模型切换、功能开关、名单管
 | `^plugin [list]` | 列出插件及启用状态 |
 | `^plugin on\|off <插件名>` | 启用 / 停用插件，写入 `data/settings.yaml` |
 
-模型、开关与名单的修改写入 `data/settings.yaml`，作为唯一事实来源，重启后保留。
+模型、开关与名单的修改写入 `data/settings.yaml`。
 
 ### 名单
 
@@ -64,4 +64,4 @@ bot:
     - "operator@example.com"
 ```
 
-推荐用户 ID，跨实例账号使用 `username@host`。管理员自动豁免回复限制。
+推荐用户 ID，跨实例账号使用 `username@host`。

@@ -26,8 +26,6 @@ timeline:
   antennas: ["project-news"]
 ```
 
-天线决定 Radar 的作用范围，启用自动互动前先收窄规则并观察结果。
-
 ## 插件依赖
 
 | 插件 | 事件源 |

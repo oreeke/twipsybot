@@ -10,10 +10,11 @@ Python 3.12+。核心保持轻量，独立功能优先以插件实现。
 | 页面 | 内容 |
 | --- | --- |
 | [**开发环境**](setup.md) | 依赖安装与本地运行 |
-| [**架构**](architecture.md) | 启动流程、响应管道与模块边界 |
-| [**Misskey**](misskey.md) | REST、Streaming、权限与客户端约束 |
+| [**架构**](architecture.md) | 启动流程、热重载与模块边界 |
+| [**流程**](flows.md) | 响应管道、提及、聊天、限制与自动发帖 |
+| [**Misskey**](misskey.md) | REST、Streaming、事件规范化、出站抓取与权限 |
 | [**OpenAI**](openai.md) | 兼容 API、接口模式与请求约束 |
-| [**插件开发**](plugins.md) | 插件 API、事件、服务与存储 |
+| [**扩展插件**](plugins.md) | 插件 API、事件、服务与存储 |
 | [**测试**](testing.md) | pytest、Pyright 与 pre-commit |
 | [**维护**](maintenance.md) | 依赖、发布、镜像与兼容性 |
 

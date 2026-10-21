@@ -98,7 +98,7 @@ Fake-IP 代理等环境会把域名解析到保留网段，需将其填入 `allo
 | `enabled` | `false` | 启用插件 |
 | `priority` | 插件默认值 | 越大越先执行 |
 
-内置默认优先级：Bond `900` · KeyAct `850` · T2X `800` · MLLM `750` · Web `500` · Topics `300` · Radar `50` · Iincho `40`。其余字段见各[插件](../plugins/)页面。
+内置默认优先级见[插件](../plugins/)。其余字段见各插件页面。
 
 ```yaml
 plugins:
@@ -110,5 +110,3 @@ plugins:
       # 测试
       ping = pong
 ```
-
-多行字段（KeyAct `rules`、Topics `rss_list`、Web `allow_domains` / `block_domains`）原样保存，也接受 YAML 列表。

@@ -49,8 +49,6 @@ plugins:
 - 参考资料只附加在本次请求中，不写入聊天历史。
 - 模型引用来源时，会在回复末尾用编号超链接标注，如 `1 2`，点击编号即可打开对应网页；是否标注由模型决定。
 
-`/web` 不是管理命令，关注机器人的用户均可使用（见[对话](../features/interactions.md)）。
-
 ## SearXNG
 
 `provider: searxng` 需启用 JSON 输出，否则会返回 403。在 `settings.yml` 中：
@@ -78,9 +76,3 @@ services:
 - 网页抓取仅访问公网地址，重定向同样校验，`endpoint` 不受限。Fake-IP 代理需配置 [`system.allow_nets`](../reference/configuration.md#链接下载安全)。
 - 网页内容仅作参考，并要求模型不执行其中的指令，但无法完全杜绝提示注入；公开服务建议配合 `allow_domains`。
 - 用户的问题会发送到检索后端及其上游搜索引擎，链接会被机器人所在服务器直接访问。
-
-## 排查
-
-- 无任何检索：确认插件已启用、`endpoint` 正确（日志有 `Web plugin provider unavailable` 则后端配置无效），且 `always_on` 或 `/web` 条件满足。
-- 日志出现 `Web search failed`：检查后端是否可达；SearXNG 还需确认已启用 JSON 输出、未被限流。
-- 链接未被读取：地址为内网（见 `system.allow_nets`）、被域名规则拦截、非文本网页，或超时 / 超过 `max_bytes`；需要登录或脚本渲染的页面无法读取。

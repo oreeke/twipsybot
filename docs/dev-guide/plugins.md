@@ -1,9 +1,9 @@
 ---
-title: 插件开发
+title: 扩展插件
 description: 使用 TwipsyBot 插件 API 编写事件 Hook、配置、存储与自动发帖扩展。
 ---
 
-# 插件开发
+# 扩展插件
 
 本地插件位于 `plugins/<name>/plugin.py`，以模块级 `plugin` 导出插件类。插件目录按包加载，多模块插件可用相对导入（如 `from .helper import x`）。如需自动安装依赖或独立版本管理时请用 [Entry Points](#entry-points)。配置来自 `plugins.<name>`，可由 `twipsybot cfg` 编辑。
 
@@ -129,12 +129,11 @@ return {
 }
 ```
 
-- 仅在没有插件接管 `on_message` / `on_mention` 时调用，所有插件按优先级都会被调用，不会互相截断。
+- `on_context` 与通知、时间线 Hook 不截断，所有插件按优先级依次调用。仅在没有插件接管时调用 `on_context`，须自设超时并容忍失败。
 - `context` 在本次请求中置于用户内容之前，不写入聊天历史；多个插件的 `context` 按优先级以空行拼接。
 - `text` 用于替换事件中的原文（如去掉命令前缀），多个插件返回时取优先级最高者。
 - `media` 为多模态内容片段（Responses 风格的 `input_image`、`input_audio`、`input_file` 等），按优先级合并后与文本一起作为当前用户消息发送，不写入聊天历史；内容为 Base64 编码，不要求宿主解码。使用 Chat Completions 时，宿主会把 `input_file` 转换为 `file`。
 - 三个字段均可省略，但至少返回其一，且 `context`、`text` 须为非空字符串、`media` 须为非空列表；返回其他字段使结果失效。
-- 事件类型与来源一致：聊天为 `MessageEvent`，提及为 `MentionEvent`。仅在 AI 回复前调用，须自设超时并容忍失败。
 
 ### 自动发帖
 
@@ -150,7 +149,7 @@ return {"prompt": "围绕开源维护写一篇短文。"}
 ```
 
 - `contents` 直接发布、不调用 AI；每项为文本或 `AutoPostItem`。`prompt` 置于全局自动发帖提示词之前，一并交给 AI 生成。文本均须非空。
-- 多插件返回时 `contents` 优先于 `prompt`，同类取优先级最高者；多篇间隔 10 秒发布。
+- 多插件返回时 `contents` 优先于 `prompt`，同类取优先级最高者。
 - 轮转模式下两者都受 `autopost.daily_max` 约束，定时模式不受限。
 - `on_auto_post_published(content)` 仅在本插件 `AutoPostResult` 的内容发布成功后调用，适合提交去重记录或推进轮换位置。
 
@@ -212,7 +211,7 @@ notes = await self.context.misskey.call_api(
 ```
 
 - `endpoint` 为 `notes/search` 这类相对路径，仅允许字母、数字、`_`、`-` 与 `/` 分隔；`params` 为 JSON 请求体，不得含 `i`，否则抛出 `ValueError`。
-- 默认不重试，避免重复提交写操作；仅幂等读取端点才传 `retry=True`，此时连接错误与限流最多重试 2 次。
+- 默认不重试，避免重复提交写操作；仅幂等读取端点才传 `retry=True`（重试规则见 [Misskey](misskey.md#rest)）。
 - 返回解析后的 JSON，无响应体时返回 `{}`。失败抛出 `APIResponseError`（`twipsybot.plugin` 导出），可读取 `status`、`code`、`retry_after`。
 - 仅支持 JSON 请求，文件上传请用 `drive.upload_bytes`。可调用的端点由机器人令牌权限决定，新增权限须同步更新[快速开始](../user-guide/getting-started.md)。
 
@@ -254,4 +253,4 @@ async with self.context.http.open(url) as resp:
 - **公共**：`twipsybot.plugin` 导出的 `PluginBase`、`PluginContext`、事件、结果与服务 `Protocol`，以及本文记载的 `PluginBase` 辅助方法。
 - **内部**：其他 `twipsybot.*` 模块（含 `bot`、`clients`、`db`）、`PluginManager`、未文档化的私有属性与事件 `raw`。
 
-插件 API v3 仅做向后兼容扩展；删除、重命名公共成员或改变其语义需提升主版本号。
+不兼容修改须提升 API 版本，见[维护](maintenance.md#兼容性)。

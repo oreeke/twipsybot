@@ -43,7 +43,7 @@ docker compose exec twipsybot twipsybot cfg
 `connect.ai_base_url` 留空使用 OpenAI 官方端点，`bot.model` 默认使用 `gpt-6-luna`。
 :::
 
-令牌无效或权限不足时持续等待修正，实例不可达时每 60 秒重试。API 密钥与模型不在启动时校验，错误会在首次回复时写入日志：
+API 密钥与模型不在启动时校验，错误会在首次回复时写入日志；令牌或连接问题见[故障排查](troubleshooting.md#startup-blocked)：
 
 ```bash
 docker compose logs -f twipsybot
@@ -54,18 +54,7 @@ docker compose logs -f twipsybot
 1. 用其他账号 `@` 机器人。
 2. 管理员私聊发送 `^status`，确认模型与 `mention`、`chat`、`autopost` 开关。
 
-无回复时依次检查令牌权限、`bot.model` 与端点和密钥是否匹配、`reply.mention` / `reply.chat`，以及日志中的鉴权、模型或 Streaming 错误。详见[故障排查](troubleshooting.md)。
-
-## 常用设置
-
-| 字段 | 作用 |
-| --- | --- |
-| `bot.model` | 文本模型 |
-| `bot.admins` | 管理员名单 |
-| `autopost.mode` | `off` / `rotation` / `schedule` |
-| `reply.mention` · `reply.chat` | 提及 / 聊天开关 |
-
-保存热更新；带 `↻` 的字段需执行 `docker compose restart twipsybot`。详见[配置](configuration.md)。
+配置热更新，带 `↻` 的字段需执行 `docker compose restart twipsybot`。
 
 ## 本地运行（可选）
 

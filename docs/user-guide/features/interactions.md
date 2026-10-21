@@ -30,15 +30,5 @@ description: 配置 TwipsyBot 的提及与聊天回复、上下文、回复限�
 ## 名单
 
 - 白名单与 `bot.admins` 豁免间隔和轮数限制；黑名单禁用普通 AI 回复。
-- 支持用户 ID、`username@host` 或 `@username@host`；推荐用户 ID，用户名不区分大小写。
+- 支持用户 ID、`username` / `username@host` 或 `@username@host`（省略 host 视为本站）；推荐用户 ID，用户名不区分大小写。
 - 白名单不授予管理权限，管理权限仅由 `bot.admins` 决定。
-
-## 示例
-
-```yaml
-reply:
-  rate_limit: 30s
-  max_turns: 30
-  turns_release: 1d
-  whitelist: ["trusted-user-id"]
-```

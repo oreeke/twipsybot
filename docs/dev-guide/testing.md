@@ -27,14 +27,13 @@ tests/
 
 约定：
 
-- `tests/` 在 `pythonpath` 上，其下的目录名即顶层导入名，因此顶层目录不得与 `twipsybot`、`plugins` 等真实包同名，这也是内置插件目录叫 `builtin` 的原因。
+- `tests/` 在 `pythonpath` 上，其下的目录名即顶层导入名，因此顶层目录不得与 `twipsybot`、`plugins` 等真实包同名，这也是内置插件目录叫 `builtin` 的原因；以 `--import-mode=importlib` 运行，不同目录可有同名测试文件。
 - `support/` 是唯一带 `__init__.py` 的目录，其余测试目录不需要也不要添加。
 - 通过 `make_bot` 与模拟服务做黑盒验证，网络行为不使用真实请求。
 - 共享常量与工厂放进 `support/`，仅某个目录使用的 fixture 放进该目录的 `conftest.py`，用例文件内只保留自己用到的辅助。
 - 用例名写成「行为 + 条件」，不写实现细节。
 - 文件超过约 600 行时按主题再拆。
 - 覆盖率统计 `twipsybot` 与 `plugins`，含分支，低于 `fail_under` 时 `--cov` 失败。
-- pytest 以 `--import-mode=importlib` 与 `pythonpath = ["tests"]` 运行，不同目录可以出现同名测试文件。
 
 插件测试至少覆盖：
 
@@ -56,12 +55,4 @@ uvx pre-commit run --all-files
 - Pyright 以 basic 模式检查 `twipsybot`、`plugins` 与 `tests`。
 - pre-commit 检查锁文件、自动修复 Ruff lint 与格式。
 
-## 提交前
-
-```bash
-uvx pre-commit run --all-files
-uv run --locked pytest -q
-uv run --locked pyright
-```
-
-CI 在 push 与 PR 上运行测试、锁文件检查与 pre-commit，但不能替代本地针对性测试。
+提交前依次运行 pre-commit、pytest 与 Pyright；CI 在 push 与 PR 上运行测试、锁文件检查与 pre-commit，但不能替代本地针对性测试。

@@ -25,7 +25,7 @@ description: TwipsyBot 的部署、配置、功能、插件与开发文档。
 
 | 页面 | 内容 |
 | --- | --- |
-| [**快速开始**](user-guide/getting-started.md) | 部署与验证 |
+| [**快速开始**](user-guide/getting-started.md) | 部署与功能验证 |
 | [**配置**](user-guide/configuration.md) | TUI、YAML、生效方式与模型 |
 | [**功能**](user-guide/features/) | 对话、发帖、时间线与管理命令 |
 | [**插件**](user-guide/plugins/) | 内置插件与启用方式 |
@@ -71,9 +71,9 @@ description: TwipsyBot 的部署、配置、功能、插件与开发文档。
 - 订阅时间线与天线、关键词回复、天线贴互动、识图、联网检索。
 - 互动命令：查状态、亲密度、切模型、功能开关、清理旧帖等。
 - 白名单、黑名单、对话间隔与次数限制。
-- SQLite 保存状态，配置热更新，无需额外数据库。
+- SQLite 保存状态，配置热更新。
 
-::: tip 🧩 插件扩展
+::: tip 🧩 扩展插件
 可添加任何 Misskey API 支持的功能（即使本项目未封装的端点，见 [`call_api`](dev-guide/plugins.md#misskey-与-drive)）。
 :::
 

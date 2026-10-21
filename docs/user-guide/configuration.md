@@ -27,13 +27,10 @@ docker compose exec twipsybot twipsybot cfg    # Docker
 | `Ctrl+S` | 保存 |
 | `Ctrl+R` | 从磁盘重新加载 |
 | `Ctrl+Q` | 退出，有未保存修改时确认 |
-| `Ctrl+P` | 命令面板，可切换主题 |
-| `/` | 聚焦 `logs` 页搜索框 |
 
 - 字段实时校验，无效项标红并阻止保存；状态栏显示未保存、无效与需重启（`↻`）数量。
 - 保存只写改动字段并合并到最新文件，不会覆盖管理命令同时写入的变更。
 - 列表字段每行一个值；KeyAct `rules`、Topics `rss_list` 原样保存。
-- `logs` 页：`lines` 设置显示行数（50–5000，默认 200），`search` 高亮关键词，重复 `Enter` 由新到旧跳转。
 
 ## YAML
 
@@ -87,9 +84,7 @@ autopost:
   prompt: prompts/auto-post.md
 ```
 
-支持 `.md` 与 `.txt`，文件内容原样作为提示词。
-
-Docker 示例将宿主机 `./prompts` 只读挂载到 `/app/prompts`。
+支持 `.md` 与 `.txt`，文件内容原样作为提示词。Docker 示例将宿主机 `./prompts` 只读挂载到 `/app/prompts`。
 
 ## 日志
 

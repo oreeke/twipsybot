@@ -55,3 +55,6 @@ data/
 
 # GitHub
 .github/*.md
+
+# Changelog
+CHANGELOG.md

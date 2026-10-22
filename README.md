@@ -17,7 +17,7 @@
 <a href="https://github.com/oreeke/twipsybot/pkgs/container/twipsybot">
     <img alt="docker ghcr" src="https://img.shields.io/badge/docker-ghcr-2496ed.svg?style=for-the-badge&labelColor=303030&logo=docker&logoColor=2496ed"></a>
 
-<br>··· [使用手册](https://twipsybot.oreeke.com/) ··· [开发指南](https://twipsybot.oreeke.com/dev-guide/) ··· [变更日志](./CHANGELOG.md) ···
+<br>··· [使用手册](https://twipsybot.oreeke.com/) ··· [开发指南](https://twipsybot.oreeke.com/dev-guide/) ···
 <br><br>💌<br><br>
 
 </div>

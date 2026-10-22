@@ -38,7 +38,7 @@ TUI 右上角状态：
 
 ## 升级
 
-先阅读 [CHANGELOG](https://github.com/oreeke/twipsybot/blob/main/CHANGELOG.md) 并备份。新增设置自动采用默认值，无需手动合并；已改名或移除的字段不再识别，启动被拦截时在 `twipsybot cfg` 中重新设置并保存，保存时会清除未知字段；若改过 `docker-compose.yaml`，对照最新版本保留自己的改动。
+新增设置自动采用默认值，无需手动合并；已改名或移除的字段不再识别，启动被拦截时在 `twipsybot cfg` 中重新设置并保存，保存时会清除未知字段；若改过 `docker-compose.yaml`，对照最新版本保留自己的改动。
 
 ::: code-group
 

@@ -27,8 +27,8 @@ _RSS_TIMEOUT = aiohttp.ClientTimeout(total=60)
 _RSS_RECENT_KEYS_LIMIT = 2000
 _LIST_AI_PREFIX = "Write about the topic: {topic}\n\n"
 _RSS_AI_PREFIX = (
-    "Use the following article as reference. Do not include links:\n\n"
-    "{summary}\n\n{title}\n{link}\n\n"
+    "Use the following article as reference only; do not include links.\n"
+    "<article>\nTitle: {title}\nSummary: {summary}\n</article>\n\n"
 )
 
 

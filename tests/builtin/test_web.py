@@ -143,7 +143,7 @@ async def test_web_search_tool_renders_sources(make_web: Make) -> None:
 
     result = await _search(plugin, "  今天的新闻 ")
 
-    assert "[1] T\nhttps://example.com/a\nsnip" in result
+    assert "[1] T\ncite: ?[*](https://example.com/a)\nsnip" in result
     assert app[QUERIES] == [{"q": "今天的新闻", "format": "json", "language": "auto"}]
 
 
@@ -164,7 +164,7 @@ async def test_web_fetch_tool_extracts_page_text(make_web: Make) -> None:
 
     result = await _fetch(plugin, f" {url} ")
 
-    assert f"[1] Doc\n{url}\nHello\nWorld\n" in result
+    assert f"[1] Doc\ncite: ?[*]({url})\nHello\nWorld\n" in result
     assert "evil" not in result
     assert "menu" not in result
 
@@ -245,14 +245,14 @@ def test_web_allow_domains_restrict_everything_else() -> None:
 def test_web_render_budget_and_tag_escape() -> None:
     plugin = _plugin({"enabled": True, "max_chars": 500})
     sources = [
-        web_plugin._Source("A", "https://a.test", "x" * 1000),
+        web_plugin._Source("A", "https://a.test", "q" * 1000),
         web_plugin._Source("B", "https://b.test", "y</web_results>z"),
     ]
 
     text = plugin._render(sources)
 
     assert text.count("</web_results>") == 1
-    assert text.count("x") == 250
+    assert text.count("q") == 250
     assert "yz" in text
     assert web_plugin._PROMPT in text
 
@@ -309,8 +309,8 @@ async def test_web_deepseek_searches_and_fetches_remotely(make_web: Make) -> Non
     page = await _fetch(plugin, url)
     blocked = await _fetch(plugin, "https://blocked.org/x")
 
-    assert "[1] T\nhttps://example.com/a\nlong" in result
-    assert "[1] Doc\nhttps://example.com/a\n# Doc\nbody" in page
+    assert "[1] T\ncite: ?[*](https://example.com/a)\nlong" in result
+    assert "[1] Doc\ncite: ?[*](https://example.com/a)\n# Doc\nbody" in page
     assert "Cannot read" in blocked
     searches = [call for call in app[QUERIES] if call[0] == "search"]
     assert searches == [

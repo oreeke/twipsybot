@@ -8,18 +8,17 @@ import pytest
 from pydantic import ValidationError
 
 from plugins.t2x.plugin import T2XPlugin
-from twipsybot.plugin import HandledResult, MentionEvent, MessageEvent, UserRef
+from twipsybot.plugin import HandledResult, MessageEvent, UserRef
 
 ALICE = UserRef(id="u1", username="alice", host=None)
 _PNG = b"\x89PNG\r\n\x1a\nimage"
-_FAILED = {"handled": True, "response": "图片生成失败，请稍后再试。"}
+_EVENT = MessageEvent(
+    id="m1", text="画猫", user=ALICE, room_id=None, files=(), raw=cast(Any, {})
+)
 
 
 def _plugin(
-    image: dict[str, Any] | None = None,
-    *,
-    admin: bool = True,
-    generated: bytes | str = _PNG,
+    image: dict[str, Any] | None = None, *, generated: bytes | str = _PNG
 ) -> tuple[T2XPlugin, SimpleNamespace]:
     drive = SimpleNamespace(
         fetch_bytes=AsyncMock(return_value=_PNG),
@@ -30,47 +29,48 @@ def _plugin(
         config={"enabled": True, "image": {"model": "gpt-image-2", **(image or {})}},
         openai=SimpleNamespace(generate_image=AsyncMock(return_value=generated)),
         misskey=SimpleNamespace(drive=drive),
-        bot=SimpleNamespace(is_admin=lambda user_id, handle: admin),
     )
     return T2XPlugin(cast(Any, context)), context
 
 
-def _message(text: str) -> MessageEvent:
-    return MessageEvent(
-        id="m1", text=text, user=ALICE, room_id=None, files=(), raw=cast(Any, {})
+async def _finish(ack: str | HandledResult) -> HandledResult:
+    assert isinstance(ack, dict)
+    assert (
+        ack["response"]
+        == "Image generation started; it will be sent automatically when ready."
     )
-
-
-def _mention(text: str) -> MentionEvent:
-    return MentionEvent(
-        id="n1", text=text, cw=None, user=ALICE, files=(), raw=cast(Any, {})
-    )
-
-
-async def _finish(ack: HandledResult | None) -> HandledResult:
-    assert ack is not None
-    assert ack["response"] == "正在生成图片，请稍候…"
     followup = ack.get("followup")
     assert followup
     return await followup()
 
 
+def test_t2x_exposes_admin_only_draw_tool() -> None:
+    plugin, _ = _plugin()
+
+    [spec] = plugin._tools
+    assert (spec.name, spec.access) == ("draw", "admin")
+    assert spec.schema["required"] == ["prompt"]
+    assert (
+        spec.schema["properties"]["prompt"]["description"] == "Description of the image"
+    )
+
+
 async def test_t2x_acknowledges_before_generating() -> None:
     plugin, context = _plugin()
 
-    ack = await plugin.on_message(_message("/img 一只猫"))
+    ack = await plugin.draw(_EVENT, "一只猫")
 
-    assert ack is not None
-    assert ack["response"] == "正在生成图片，请稍候…"
+    assert isinstance(ack, dict)
+    assert "followup" in ack
     context.openai.generate_image.assert_not_awaited()
 
 
 async def test_t2x_generates_uploads_and_attaches_image() -> None:
     plugin, context = _plugin({"size": "1024x1024", "quality": "high"})
 
-    result = await _finish(await plugin.on_message(_message("/img  一只猫 ")))
+    result = await _finish(await plugin.draw(_EVENT, " 一只猫 "))
 
-    assert result == {"handled": True, "response": "图片生成完成", "file_id": "file-1"}
+    assert result == {"handled": True, "response": "", "file_id": "file-1"}
     context.openai.generate_image.assert_awaited_once_with(
         "一只猫",
         model="gpt-image-2",
@@ -89,7 +89,7 @@ async def test_t2x_forwards_dedicated_endpoint() -> None:
         {"base_url": " https://img.example/v1 ", "api_key": "secret"}
     )
 
-    await _finish(await plugin.on_mention(_mention("@bot\t/IMG\n一只猫")))
+    await _finish(await plugin.draw(_EVENT, "一只猫"))
 
     kwargs = context.openai.generate_image.await_args.kwargs
     assert kwargs["base_url"] == "https://img.example/v1"
@@ -102,30 +102,11 @@ def test_t2x_requires_api_key_for_dedicated_endpoint() -> None:
         _plugin({"base_url": "https://img.example/v1"})
 
 
-@pytest.mark.parametrize(
-    "text", ["/img", "/img   ", "/image 猫", "画一只猫", "x /img 猫"]
-)
-async def test_t2x_ignores_other_text(text: str) -> None:
-    plugin, context = _plugin()
-
-    assert await plugin.on_message(_message(text)) is None
-    context.openai.generate_image.assert_not_awaited()
-
-
-async def test_t2x_rejects_non_admin() -> None:
-    plugin, context = _plugin(admin=False)
-
-    result = await plugin.on_mention(_mention("/img 一只猫"))
-
-    assert result == {"handled": True, "response": "您没有权限使用命令。"}
-    context.openai.generate_image.assert_not_awaited()
-
-
 async def test_t2x_downloads_url_before_upload() -> None:
     plugin, context = _plugin(generated="https://example.com/image.jpg")
     context.misskey.drive.fetch_bytes.return_value = b"\xff\xd8\xffimage"
 
-    result = await _finish(await plugin.on_message(_message("/img 猫")))
+    result = await _finish(await plugin.draw(_EVENT, "猫"))
 
     assert result.get("file_id") == "file-1"
     context.misskey.drive.fetch_bytes.assert_awaited_once_with(
@@ -148,7 +129,7 @@ async def test_t2x_detects_image_type(
 ) -> None:
     plugin, context = _plugin(generated=data)
 
-    await _finish(await plugin.on_message(_message("/img 猫")))
+    await _finish(await plugin.draw(_EVENT, "猫"))
 
     context.misskey.drive.upload_bytes.assert_awaited_once_with(
         data, name=name, content_type=content_type
@@ -168,17 +149,18 @@ async def test_t2x_followup_reports_failure(failure: str) -> None:
     elif failure == "no-id":
         context.misskey.drive.upload_bytes.return_value = {}
 
-    result = await _finish(await plugin.on_message(_message("/img 猫")))
+    result = await _finish(await plugin.draw(_EVENT, "猫"))
 
-    assert result == _FAILED
+    assert result == {"handled": True, "response": "Image generation failed."}
     if failure == "invalid":
         context.misskey.drive.upload_bytes.assert_not_awaited()
 
 
-async def test_t2x_without_model_fails_immediately() -> None:
+async def test_t2x_without_model_reports_unconfigured() -> None:
     plugin, context = _plugin({"model": ""})
 
-    result = await plugin.on_message(_message("/img 猫"))
-
-    assert result == _FAILED
+    assert (
+        await plugin.draw(_EVENT, "猫")
+        == "Image generation is not configured and cannot be used."
+    )
     context.openai.generate_image.assert_not_awaited()

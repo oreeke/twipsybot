@@ -22,7 +22,6 @@ class _Config(PluginConfig):
 
 class Demo(PluginBase):
     api_version = PLUGIN_API_VERSION
-    priority = 7
     config_class = _Config
 
 

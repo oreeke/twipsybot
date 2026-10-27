@@ -5,7 +5,7 @@ description: TwipsyBot 使用的 Misskey REST API、Streaming Channel、权限�
 
 # Misskey
 
-REST 查询与写入，Streaming 接收实时事件，协议适配集中在 `twipsybot/clients/misskey`。业务代码调用客户端方法，不自行拼接 endpoint、认证参数或 WebSocket 消息；插件使用 [`PluginContext.misskey`](plugins.md#misskey-与-drive)，未封装的端点经其 `call_api()` 复用同一请求通道。
+REST 与 Streaming 的协议适配集中在 `twipsybot/clients/misskey`，业务代码只调用客户端方法。插件使用 [`PluginContext.misskey`](plugins.md#misskey-与-drive)，未封装的端点用 `call_api()`。
 
 基于 Misskey API `2026.9.0`，随官方更新同步维护。
 
@@ -31,10 +31,9 @@ REST 查询与写入，Streaming 接收实时事件，协议适配集中在 `twi
 | `drive/files/create` | 上传文件 | `drive.upload_bytes()` |
 | 文件 URL（`GET`） | 下载文件 | `drive.fetch_bytes()`、`drive.download_bytes()`，经 `clients/fetch` 校验目标 |
 
-- 共享 32 并发槽位，单次超时 60 秒，统一经 `MisskeyAPI` / `MisskeyDrive` 复用会话与约束。
-- 读请求对连接错误与限流最多重试 2 次（指数退避加抖动，遵循 `retry_after`，上限 60 秒）；写请求不重试，避免重复提交。
-- 帖子最长 3000 字符、聊天 2000 字符，客户端统一安全截断。
-- 可见性、联合范围与权限由服务端校验收敛；指定可见帖子按事件原可见性回复。
+- 共享 32 并发槽位，单次超时 60 秒。
+- 读请求对连接错误与限流最多重试 2 次（指数退避加抖动，遵循 `retry_after`，上限 60 秒）；写请求不重试。
+- 帖子最长 3000 字符、聊天 2000 字符，超出安全截断；指定可见帖子按原可见性回复。
 
 ## Streaming
 
@@ -45,12 +44,11 @@ REST 查询与写入，Streaming 接收实时事件，协议适配集中在 `twi
 | `antenna` | 指定天线帖子 |
 | `chatUser` · `chatRoom` | 指定用户 / 房间的聊天消息 |
 
-- 自动断线重连与 Channel 恢复，动态聊天订阅以 `pong` 确认；单连接最多 32 个 Channel。
-- 断线期间待发消息有限缓冲，溢出时丢弃最早消息。
+- 自动断线重连与 Channel 恢复，单连接最多 32 个 Channel；断线期间待发消息有限缓冲，溢出丢弃最早的。
 
 ## 事件规范化
 
-`events.py` 的 `EventRouter` 把 Streaming 帧收敛为不可变事件，flow 与插件只见规范化结果，不见 WebSocket 结构。
+`events.py` 的 `EventRouter` 把 Streaming 帧收敛为不可变事件，flow 与插件不接触 WebSocket 结构。
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -67,21 +65,21 @@ flowchart LR
 | `main` · `newChatMessage`、`chatUser` / `chatRoom` · `message` | `MessageEvent` | `room_id` 区分私聊与群聊 |
 | 时间线、`antenna` · `note` | `TimelineNoteEvent` | 注入来源 `channel` |
 
-- **容错解析**：缺 `id` 的 payload 丢弃并告警，缺失的用户字段降级为 `unknown`、文件 URL 等为 `None`；模型保留 `raw` 以读取未建模字段。
-- **统一语义**：`cw` 与正文合并为 `body`；文件取 `files` 与 `fileIds`（聊天为 `file` 与 `fileId`）并按 ID 去重；`MentionEvent` 内联 `reply`、`renote`（仅一层）并聚合 `attachments`。
-- **聊天订阅**：`main` 的聊天事件缺少发送者详情时，由按用户缓存的 `fromUser` 补全；收到后按需订阅对应 `chatUser` / `chatRoom` 以发送 `read` 回执，空闲 120 秒退订。
-- **去重键**：事件 ID 短期（10 分钟）去重；时间线按 `Channel + 帖子 ID`，聊天与通知跨 Channel 共用同一键，避免 `main` 与专属 Channel 重复投递。
-- **并发**：24 个 worker 消费 1000 容量队列，入队等待 1 秒仍满则丢弃；单个 handler 异常只记录，不影响其他事件。
-- **新增事件**：在客户端层注册路由与解析器，再由 flow 转为业务行为或插件事件，下游不依赖原始结构。
+- **容错解析**：缺 `id` 的 payload 丢弃并告警；缺失的用户字段降级为 `unknown`，文件 URL 等为 `None`；保留 `raw`。
+- **统一语义**：`cw` 与正文合并为 `body`；文件取 `files` 与 `fileIds`（聊天为 `file` 与 `fileId`）并按 ID 去重；`MentionEvent` 内联一层 `reply`、`renote` 并聚合 `attachments`。
+- **聊天订阅**：`main` 的聊天事件缺发送者详情时，由按用户缓存的 `fromUser` 补全；按需订阅 `chatUser` / `chatRoom` 发送 `read` 回执，空闲 120 秒退订。
+- **去重**：事件 ID 10 分钟内去重；时间线按 `Channel + 帖子 ID`，聊天与通知跨 Channel 共用同一键。
+- **并发**：24 worker 消费 1000 队列，入队等待 1 秒仍满则丢弃；单个 handler 异常只记录。
+- 新增事件：在客户端层注册路由与解析器，下游不依赖原始结构。
 
 ## 出站抓取
 
 `clients/fetch` 的 `PublicFetcher` 是所有用户可控 URL（Drive 附件、网页、插件 `http`）的唯一出口，默认仅允许公网目标：
 
-- 在 DNS 解析之后按实际 IP 校验（含 NAT64 还原），而非仅检查主机名，防止 DNS rebinding。
-- 禁用自动重定向，逐跳重新校验，最多 3 跳；仅 `http` / `https`，不带 Cookie。
-- `system.allow_nets` 追加放行网段，热重载即时生效；Misskey 实例自身为免校验源，保证本站 Drive 可下载。
-- 响应流式读取并按调用方上限截断或拒绝，Drive 下载默认上限 32 MiB。
+- 在 DNS 解析后按实际 IP 校验（含 NAT64 还原），防止 DNS rebinding。
+- 禁用自动重定向，逐跳校验，最多 3 跳；仅 `http` / `https`，不带 Cookie。
+- `system.allow_nets` 追加放行网段，热重载生效；Misskey 实例自身免校验。
+- 响应流式读取并按上限截断或拒绝，Drive 下载默认 32 MiB。
 
 ## 权限
 
@@ -94,7 +92,7 @@ flowchart LR
 | `write:reactions` | 添加反应 |
 | `write:account` | 写入个人备注（`users/update-memo`） |
 
-新增 API 能力时，同步更新[快速开始](../user-guide/getting-started.md)的权限表并保持最小权限。
+新增 API 能力时同步更新[快速开始](../user-guide/getting-started.md)的权限表，保持最小权限。
 
 ## 错误与测试
 

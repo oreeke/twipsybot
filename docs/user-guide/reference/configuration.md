@@ -22,7 +22,7 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |
-| `system_prompt` | `你是一个可爱的AI助手...` | 系统提示词，可引用 `prompts/*.md`（或 `*.txt`） |
+| `system_prompt` | `You are a cute AI assistant...` | 系统提示词，可引用 `prompts/*.md`（或 `*.txt`） |
 | `admins` | `[]` | 管理员用户 ID 或 `username@host` |
 | `model` | `gpt-6-luna` | 文本模型 |
 | `api_mode` | `auto` | `auto` / `chat` / `responses` |
@@ -45,7 +45,7 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |
-| `prompt` | `生成一篇有趣的社交帖子...` | 可引用 `prompts/*.md`（或 `*.txt`） |
+| `prompt` | `Write an interesting social media post...` | 可引用 `prompts/*.md`（或 `*.txt`） |
 | `visibility` | `public` | `public` / `home` / `followers` |
 | `local_only` | `false` | 仅本地发布，不联合 |
 | `mode` | `off` | `off` / `rotation`（每 `interval` 发帖）/ `schedule`（在 `times` 各时间点发帖） |
@@ -63,9 +63,9 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 | `memory` | `10` | 上下文条数，0–100 |
 | `ctx_tokens` | `2000` | 上下文 token 预算，`0` 禁用 |
 | `rate_limit` | `-1` | 同一用户最小回复间隔 |
-| `rate_limit_msg` | `我需要休息一下...` | 间隔提示，留空静默 |
+| `rate_limit_msg` | 空 | 间隔提示，留空静默 |
 | `max_turns` | `-1` | 每用户回复次数上限，`-1` 不限且不计数 |
-| `max_turns_msg` | `我要回家了...` | 上限提示，留空静默 |
+| `max_turns_msg` | 空 | 上限提示，留空静默 |
 | `turns_release` | `1h` | 达上限后的解除时间，`-1` 改为拉黑 |
 | `whitelist` | `[]` | 豁免间隔与次数限制，管理员自动豁免 |
 | `blacklist` | `[]` | 禁用普通回复 |
@@ -96,9 +96,8 @@ Fake-IP 代理等环境会把域名解析到保留网段，需将其填入 `allo
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |
 | `enabled` | `false` | 启用插件 |
-| `priority` | 插件默认值 | 越大越先执行 |
 
-内置默认优先级见[插件](../plugins/)。其余字段见各插件页面。
+其余字段见各插件页面。
 
 ```yaml
 plugins:

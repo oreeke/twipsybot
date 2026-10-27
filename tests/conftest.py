@@ -38,7 +38,7 @@ async def misskey_server() -> AsyncIterator[FakeMisskeyServer]:
 @pytest_asyncio.fixture
 async def openai_server() -> AsyncIterator[FakeOpenAIServer]:
     calls: list[dict[str, Any]] = []
-    reply = {"text": DEFAULT_AI_REPLY}
+    reply: dict[str, Any] = {"text": DEFAULT_AI_REPLY}
     server = TestServer(build_openai_app(calls, reply))
     await server.start_server()
     try:

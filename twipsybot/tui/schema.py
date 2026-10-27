@@ -235,12 +235,16 @@ def _specs(
     root: int,
     restart: Callable[[str], bool],
     file: File | None = None,
+    *,
+    prefixed: bool = False,
 ) -> Iterable[Spec]:
     for name, field in model.model_fields.items():
         sub_path = (*path, field_key(name, field))
         annotation, optional = _unwrap(field.annotation)
         if _is_model(annotation):
-            yield from _specs(annotation, sub_path, root, restart, file)
+            yield from _specs(
+                annotation, sub_path, root, restart, file, prefixed=prefixed
+            )
             continue
         default = field.get_default(call_default_factory=True)
         if LineText in field.metadata:
@@ -250,15 +254,18 @@ def _specs(
         else:
             kind, choices = _classify(name, annotation, default)
         when = next((m for m in field.metadata if isinstance(m, When)), None)
+        group, label = " ".join(sub_path[root:-1]), sub_path[-1]
+        if prefixed:
+            group, _, label = label.partition("_")
         yield Spec(
             path=sub_path,
-            label=sub_path[-1].replace("_", " "),
+            label=label.replace("_", " "),
             kind=kind,
             default=to_widget(kind, default),
             choices=choices,
             optional=optional,
             restart=restart(".".join(sub_path)),
-            group=" ".join(sub_path[root:-1]).replace("_", " "),
+            group=group.replace("_", " "),
             hint=field.description or "",
             file=file or ("secrets" if kind == "secret" else "settings"),
             when=(".".join((*path, when.field)), when.value) if when else None,
@@ -270,12 +277,11 @@ def _plugin_meta(plugin: type[PluginBase]) -> type[BaseModel]:
         f"{plugin.__name__}Meta",
         __config__=ConfigDict(extra="ignore", strict=True),
         enabled=(bool, False),
-        priority=(int, plugin.priority),
     )
 
 
 def build_sections(plugins: Mapping[str, type[PluginBase]]) -> list[Section]:
-    secrets = tuple(_specs(Secrets, (), 0, lambda _: True, "secrets"))
+    secrets = tuple(_specs(Secrets, (), 0, lambda _: True, "secrets", prefixed=True))
     sections = [Section("connect", "connect", (), (SecretsFile,), secrets)]
     for name, field in Settings.model_fields.items():
         if _is_model(model := field.annotation):

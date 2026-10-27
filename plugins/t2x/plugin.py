@@ -1,5 +1,5 @@
-import re
 from functools import partial
+from typing import Annotated
 
 from loguru import logger
 from pydantic import ConfigDict, Field, SecretStr, model_validator
@@ -10,14 +10,10 @@ from twipsybot.plugin import (
     MessageEvent,
     PluginBase,
     PluginConfig,
-    UserRef,
+    tool,
 )
 
-_IMAGE_COMMAND = re.compile(
-    r"^\s*(?:@\S+\s+)*/img\s+(?P<prompt>\S.*)$", re.IGNORECASE | re.DOTALL
-)
-_DENIED = "您没有权限使用命令。"
-_FAILED = "图片生成失败，请稍后再试。"
+_FAILED = "Image generation failed."
 
 
 class _ImageConfig(PluginConfig):
@@ -51,28 +47,27 @@ def _detect_image_type(data: bytes) -> tuple[str, str]:
 
 
 class T2XPlugin(PluginBase):
-    api_version = 3
-    priority = 800
+    api_version = 4
     config_class = _Config
     settings: _Config
 
-    async def on_mention(self, event: MentionEvent) -> HandledResult | None:
-        return await self._handle(event.text, event.user)
-
-    async def on_message(self, event: MessageEvent) -> HandledResult | None:
-        return await self._handle(event.text, event.user)
-
-    async def _handle(self, text: str, user: UserRef) -> HandledResult | None:
-        if not (match := _IMAGE_COMMAND.match(text)):
-            return None
-        if not self.context.bot.is_admin(user.id, user.handle):
-            return self.handled(_DENIED)
+    @tool(
+        "Generate an image from a text description and send it. Generation takes "
+        "a while; the image is sent automatically when ready.",
+        access="admin",
+        effect=True,
+    )
+    async def draw(
+        self,
+        event: MessageEvent | MentionEvent,
+        prompt: Annotated[str, Field(description="Description of the image")],
+    ) -> str | HandledResult:
         if not self.settings.image.model:
             logger.warning("T2X image model is not configured")
-            return self.handled(_FAILED)
-        prompt = match["prompt"].strip()
+            return "Image generation is not configured and cannot be used."
         return self.handled(
-            "正在生成图片，请稍候…", followup=partial(self._followup, prompt)
+            "Image generation started; it will be sent automatically when ready.",
+            followup=partial(self._followup, prompt.strip()),
         )
 
     async def _followup(self, prompt: str) -> HandledResult:
@@ -81,7 +76,7 @@ class T2XPlugin(PluginBase):
         except Exception:
             logger.exception("Image generation failed")
             return self.handled(_FAILED)
-        return self.handled("图片生成完成", file_id)
+        return self.handled("", file_id)
 
     async def _generate_image(self, prompt: str) -> str:
         config = self.settings.image

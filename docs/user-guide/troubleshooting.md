@@ -1,6 +1,6 @@
 ---
 title: 故障排查
-description: 排查 TwipsyBot 启动、鉴权、模型接口、命令与插件问题。
+description: 排查 TwipsyBot 启动、鉴权、模型接口、工具与插件问题。
 ---
 
 # 故障排查
@@ -43,10 +43,11 @@ docker compose logs --tail 200 twipsybot
 - KeyAct 是否接管后失败。
 - Streaming 是否已连接，必要时临时调为 `DEBUG`。
 
-## `/post` 无效
+## 工具未被调用
 
-- 仅 `bot.admins` 可用。
-- 仅限私聊且需提供主题。
+- 所用模型须支持工具调用；端点拒绝时本次请求退回不带工具，日志出现 `Tool calling rejected`。
+- 对应插件已启用，且用户满足[工具](features/interactions.md#工具)的权限要求；发帖与生成图片仅限 `bot.admins`。
+- 已读取网页、引用或回复他人的帖子、群聊历史含他人发言时，发帖、生成图片、删除记录不提供；改在私聊中发起。
 
 ## 插件
 
@@ -69,16 +70,16 @@ docker compose logs --tail 200 twipsybot
 - 细节不足时确认 `use_thumbnail` 已关闭。
 - 从日志区分 Drive 下载失败与模型拒绝。
 
-### T2X `/img` 无效
+### T2X 无法生成图片
 
-- 仅 `bot.admins` 可用；插件未启用时 `/img` 交给 AI 当普通消息。
+- 仅 `bot.admins` 可用，并受[工具](features/interactions.md#工具)的限制。
 - 需配置 `image.model`；`image.base_url` 须配合 `image.api_key`。
 - 结果须为 JPEG、PNG 或 WebP，令牌需 Drive 写权限。
 
 ### Web 不检索
 
 - `endpoint` 已配置且可达（日志出现 `Web plugin provider unavailable` 表示后端配置无效）；`searxng` 后端需已启用 `json` 输出且未被限流。
-- `always_on` 关闭时需以 `/web <问题>` 发起；开启时问题去掉链接与提及后不少于 `min_query`。
+- 仅关注机器人的用户与管理员可用，且所用模型须支持工具调用。
 - 链接未被读取：地址为内网（需配置 `system.allow_nets`）、被域名规则拦截、非文本网页、超时或超过 `max_bytes`；需要登录或脚本渲染的页面无法读取。
 - 检索失败不影响回复，详见日志中的 `Web search failed`。
 

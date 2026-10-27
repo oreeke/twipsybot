@@ -22,10 +22,14 @@ _DELAY_PATTERN = re.compile(r"(?:\d+[mhd])+")
 _DELAY_ERROR = "delay must be between 1m and 1d, e.g. 30m, 2h, 1d"
 _MAX_PENDING = 100
 _REPLY_AI_PROMPT = (
-    "根据帖子内容写一句自然回复。\n不要复述原文，不要加引号。\n不超过30字：\n{content}"
+    "Write one natural reply to the post, in the post's language.\n"
+    "Do not repeat the original text or add quotation marks.\n"
+    "At most 30 characters:\n{content}"
 )
 _QUOTE_AI_PROMPT = (
-    "根据帖子内容写一句简短感想。\n不要复述原文，不要加引号。\n不超过30字：\n{content}"
+    "Write one brief comment on the post, in the post's language.\n"
+    "Do not repeat the original text or add quotation marks.\n"
+    "At most 30 characters:\n{content}"
 )
 
 
@@ -69,8 +73,7 @@ class _Config(PluginConfig):
 
 
 class RadarPlugin(PluginBase):
-    api_version = 3
-    priority = 50
+    api_version = 4
     config_class = _Config
     settings: _Config
 

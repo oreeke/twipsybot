@@ -7,20 +7,18 @@ from support.events import message
 from support.types import MakeBot, MakePluginDir, WriteConfig
 
 
-async def test_priority_and_handled_short_circuit(
+async def test_handled_result_short_circuits_later_plugins(
     make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
 ) -> None:
     plugins_dir = make_plugin_dir(
-        "low",
+        "second",
         body="async def on_message(self, event):\n"
         "    await self.context.storage.set('called', 'yes')\n"
-        "    return self.handled('low')\n",
-        config="enabled: true\npriority: 10\n",
+        "    return self.handled('second')\n",
     )
     make_plugin_dir(
-        "high",
-        body="async def on_message(self, event):\n    return self.handled('high')\n",
-        config="enabled: true\npriority: 20\n",
+        "first",
+        body="async def on_message(self, event):\n    return self.handled('first')\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
@@ -28,8 +26,8 @@ async def test_priority_and_handled_short_circuit(
         "on_message", message({"id": "message-1", "user": {"username": "a"}})
     )
 
-    assert results == [("high", {"handled": True, "response": "high"})]
-    assert await bot.db.get_plugin_data("low", "called") is None
+    assert results == [("first", {"handled": True, "response": "first"})]
+    assert await bot.db.get_plugin_data("second", "called") is None
 
 
 async def test_hook_timeout_and_exception_are_isolated(
@@ -46,17 +44,14 @@ async def test_hook_timeout_and_exception_are_isolated(
         body="async def on_message(self, event):\n"
         "    import asyncio\n"
         "    await asyncio.sleep(1)\n",
-        config="enabled: true\npriority: 30\n",
     )
     make_plugin_dir(
         "error",
         body="async def on_message(self, event):\n    raise RuntimeError('boom')\n",
-        config="enabled: true\npriority: 20\n",
     )
     make_plugin_dir(
         "healthy",
         body="async def on_message(self, event):\n    return self.handled('ok')\n",
-        config="enabled: true\npriority: 10\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 

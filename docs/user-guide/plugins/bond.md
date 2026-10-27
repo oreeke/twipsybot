@@ -16,11 +16,11 @@ plugins:
     daily_cap: 10
     half_life_days: 30
     levels: |-
-      0 = 陌生
-      5 = 初识
-      20 = 熟悉
-      50 = 朋友
-      120 = 挚友
+      0 = Stranger
+      5 = Acquaintance
+      20 = Familiar
+      50 = Friend
+      120 = Close friend
     profile_ttl_hours: 24
     context_enabled: true
     context_max_chars: 600
@@ -54,7 +54,6 @@ plugins:
 ## 记录
 
 - 聊天在消息到达时计入；提及、回复、引用、转帖、反应、关注与关注请求从通知计入，不受回复开关影响。
-- 优先级高于 KeyAct，其他插件接管的聊天同样计入；命令本身不计入。
 - 资料经 `users/show` 获取并缓存，含昵称、语言、生日、所在地、简介、备注与双方关注状态；获取失败 10 分钟后重试。
 - 刷新时发现对方取消关注即扣分；对方迁移账号后，新账号首次刷新时合并旧账号记录。
 
@@ -64,13 +63,14 @@ plugins:
 
 ```text
 <bond>
-对象：@alice（Alice）
-关系：朋友（亲密度 56）
-互动：聊天 42、提及 8、反应 15
-相识于 2026-03-01；连续互动 4 天
-状态：互相关注；今天是对方生日；语言 ja-JP
-简介：……
-备注：……
+The following is your relationship profile with the current user. ……
+User: @alice (Alice)
+Relationship: Friend (closeness 56)
+Interactions: chat 42, mention 8, reaction 15
+first met 2026-03-01; 4-day interaction streak
+Status: mutual follow; today is their birthday; language ja-JP
+Bio: ……
+Note: ……
 </bond>
 ```
 
@@ -78,15 +78,15 @@ plugins:
 
 ## 个人备注
 
-`memo_sync` 开启后，等级变化时在机器人对该用户的 Misskey 个人备注末尾写入一行 `[bond] 朋友 · 2026-10-07`，其余内容保留；最低等级不写入。
+`memo_sync` 开启后，等级变化时在机器人对该用户的 Misskey 个人备注末尾写入一行 `[bond] Friend · 2026-10-07`，其余内容保留；最低等级不写入。
 
 管理员登录机器人账号即可在用户主页查看或编辑备注，非 `[bond]` 行会作为备注进入关系档案。写入需令牌具备 `write:account` 权限，失败仅记录警告。
 
-## 用户命令
+## 用户工具
 
-| 命令 | 作用 |
+| 工具 | 作用 |
 | --- | --- |
-| `/bond` | 查看自己的关系卡片 |
-| `/forget` | 删除自己的全部记录与备注中的 `[bond]` 行 |
+| `bond_card` | 查看自己的关系卡片 |
+| `bond_forget` | 删除自己的全部记录与备注中的 `[bond]` 行 |
 
-提及与聊天均可使用，需单独发送命令，仅关注机器人的用户可用。`/forget` 后继续互动会重新记录；未关注者可在简介加入退出标签或屏蔽机器人来删除记录。
+所有用户可用，对话中说明即可，也可用 `/card`、`/forget` 强制调用。删除后继续互动会重新记录；想长期不被记录，可在简介加入退出标签或屏蔽机器人。

@@ -10,7 +10,7 @@ from twipsybot.plugin import (
     MentionEvent,
     MessageEvent,
 )
-from twipsybot.plugin.manager import PluginManager, _valid_auto_post, _valid_handled
+from twipsybot.plugin.manager import PluginManager, _valid_auto_post, valid_handled
 
 
 @pytest.mark.parametrize(
@@ -27,7 +27,7 @@ from twipsybot.plugin.manager import PluginManager, _valid_auto_post, _valid_han
     ],
 )
 def test_handled_result_validation(result: dict[str, Any], valid: bool) -> None:
-    assert _valid_handled(result) is valid
+    assert valid_handled(result) is valid
 
 
 @pytest.mark.parametrize(
@@ -160,13 +160,11 @@ async def test_event_raw_is_isolated_between_plugins(
         "mutator",
         body="async def on_message(self, event):\n"
         "    event.raw['user']['username'] = 'changed'\n",
-        config="enabled: true\npriority: 20\n",
     )
     make_plugin_dir(
         "observer",
         body="async def on_message(self, event):\n"
         "    return self.handled(event.raw['user']['username'])\n",
-        config="enabled: true\npriority: 10\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     payload = {"id": "message-1", "user": {"username": "original"}}

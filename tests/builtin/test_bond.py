@@ -128,7 +128,7 @@ def test_bond_levels_parse_and_reject_invalid() -> None:
     def build(config: dict[str, Any]) -> BondPlugin:
         return BondPlugin(cast(Any, SimpleNamespace(config=config)))
 
-    assert build({}).settings.levels[-1] == (120.0, "挚友")
+    assert build({}).settings.levels[-1] == (120.0, "Close friend")
     assert build({"levels": ["10 = b", "1 = a"]}).settings.levels == (
         (10.0, "b"),
         (1.0, "a"),
@@ -161,9 +161,12 @@ async def test_bond_records_chat_and_injects_context(
     assert record is not None
     assert record["counts"] == {"chat": 1}
     assert record["profile"]["is_followed"] is True
-    assert "对象：@alice（Alice）" in context
-    assert "互相关注；今天是对方生日；语言 ja-JP；所在地 Tokyo；猫模式" in context
-    assert "备注：VIP" in context
+    assert "User: @alice (Alice)" in context
+    assert (
+        "mutual follow; today is their birthday; language ja-JP; location Tokyo; cat mode"
+        in context
+    )
+    assert "Note: VIP" in context
     assert "[bond]" not in context
     assert context.count("</bond>") == 1
     misskey.show_user.assert_awaited_once_with("u1")
@@ -185,14 +188,14 @@ async def test_bond_applies_daily_cap_streak_and_decay(
     record = await _record(db)
     assert record is not None
     assert (record["score"], record["streak"]) == (pytest.approx(2.0), 2)
-    assert "连续互动 2 天" in await _context(plugin, _chat())
+    assert "2-day interaction streak" in await _context(plugin, _chat())
 
     clock.advance(days=3)
     await plugin.on_message(_chat())
     record = await _record(db)
     assert record is not None
     assert (record["score"], record["streak"]) == (pytest.approx(1.25), 1)
-    assert "距上次来访 3 天" in await _context(plugin, _chat())
+    assert "3 days since last visit" in await _context(plugin, _chat())
 
 
 async def test_bond_counts_note_notifications(db: DBManager, clock: Clock) -> None:
@@ -203,7 +206,6 @@ async def test_bond_counts_note_notifications(db: DBManager, clock: Clock) -> No
         _notify("receiveFollowRequest"),
         _notify("reaction"),
         _notify("mention", text="@bot hello"),
-        _notify("mention", text="@bot /bond"),
         _notify("achievementEarned"),
         _notify("reaction", user=None),
         _notify("reaction", user=UserRef(id="bot", username="bot", host=None)),
@@ -231,7 +233,7 @@ async def test_bond_penalizes_unfollow_on_refresh(db: DBManager, clock: Clock) -
     record = await _record(db)
     assert record is not None
     assert record["score"] == pytest.approx(0.5, abs=1e-3)
-    assert "对方关注了你" not in context
+    assert "they follow you" not in context
     assert misskey.show_user.await_count == 2
 
 
@@ -265,10 +267,9 @@ async def test_bond_syncs_memo_without_touching_admin_notes(
     await plugin.on_message(_chat())
     assert users["u1"]["memo"] == f"VIP\n[bond] B · {clock.today}"
 
-    result = await plugin.on_mention(_mention("@bot /forget"))
+    result = await plugin.forget(_mention("@bot 忘了我吧"))
 
-    assert result is not None
-    assert result["response"].startswith("已忘记")
+    assert result.startswith("All records of this user have been deleted.")
     assert users["u1"]["memo"] == "VIP"
     assert await _record(db) is None
     assert misskey.update_user_memo.await_count == 2
@@ -291,29 +292,45 @@ async def test_bond_skips_memo_for_lowest_level_and_failures(
     misskey.update_user_memo.assert_awaited_once()
 
 
-async def test_bond_commands(db: DBManager, clock: Clock) -> None:
+async def test_bond_tools(db: DBManager, clock: Clock) -> None:
     plugin, _, _ = await _plugin(db)
 
-    empty = await plugin.on_mention(_mention("@bot /bond"))
-    assert empty == {"handled": True, "response": "我们还没有互动记录。"}
+    assert (
+        await plugin.card(_mention("@bot 我们熟吗"))
+        == "There is no interaction record with this user yet."
+    )
 
     await plugin.on_message(_chat())
-    card = await plugin.on_message(_chat("/BOND"))
-    assert card is not None
-    assert card["response"].startswith("关系：陌生（亲密度 1）")
+    card = await plugin.card(_chat("我们熟吗"))
+    assert card.startswith("Relationship: Stranger (closeness 1)")
     record = await _record(db)
     assert record is not None
     assert record["counts"] == {"chat": 1}
 
-    assert await plugin.on_mention(_mention("@bot /bond please")) is None
-    forget = await plugin.on_message(_chat("/forget"))
-    assert forget is not None
-    assert "#nobot" in forget["response"]
+    forget = await plugin.forget(_chat("忘了我"))
+    assert "#nobot" in forget
     assert await _record(db) is None
 
     no_hint, _, _ = await _plugin(db, {"opt_out_tags": []})
-    forget = await no_hint.on_mention(_mention("/forget"))
-    assert forget == {"handled": True, "response": "已忘记与你的全部记录。"}
+    assert (
+        await no_hint.forget(_mention("忘了我"))
+        == "All records of this user have been deleted."
+    )
+
+
+async def test_bond_tools_require_known_user(db: DBManager) -> None:
+    plugin, _, _ = await _plugin(db)
+    anonymous = MessageEvent(
+        id="m1",
+        text="hi",
+        user=UserRef(id=None, username="ghost", host=None),
+        room_id=None,
+        files=(),
+        raw={},
+    )
+
+    assert await plugin.card(anonymous) == "Cannot identify the user."
+    assert await plugin.forget(anonymous) == "Cannot identify the user."
 
 
 @pytest.mark.parametrize(("moved", "merged"), (("u1", True), (None, False)))
@@ -345,7 +362,7 @@ async def test_bond_retries_profile_after_failure(db: DBManager, clock: Clock) -
     misskey.show_user.side_effect = RuntimeError("down")
 
     await plugin.on_message(_chat())
-    assert "状态" not in await _context(plugin, _chat())
+    assert "Status" not in await _context(plugin, _chat())
 
     clock.advance(minutes=5)
     await plugin.on_message(_chat())
@@ -354,7 +371,7 @@ async def test_bond_retries_profile_after_failure(db: DBManager, clock: Clock) -
     misskey.show_user.side_effect = None
     misskey.show_user.return_value = _user(isFollowed=True)
     clock.advance(minutes=6)
-    assert "对方关注了你" in await _context(plugin, _chat())
+    assert "they follow you" in await _context(plugin, _chat())
     assert misskey.show_user.await_count == 2
 
 

@@ -10,7 +10,6 @@ from loguru import logger
 from ...clients.misskey.models import MessageEvent
 from ...shared.keys import ConfigKeys
 from ...shared.utils import normalize_tokens
-from ..engine.pipeline import Reply
 from . import handlers
 
 if TYPE_CHECKING:
@@ -24,7 +23,6 @@ class _Command:
     run: Callable[[str], Any]
     title: str
     usage: str = ""
-    private_only: bool = False
 
     def help(self, name: str) -> str:
         usage = f" (用法: {name} {self.usage})" if self.usage else ""
@@ -35,28 +33,6 @@ def _code_block(title: str, text: str) -> str:
     lines = text.splitlines() if text.strip() else ["(空)"]
     heading = title if title.endswith((":", "：")) else f"{title}:"
     return "\n".join([heading, "```", *lines, "```"])
-
-
-def _strip_mentions(text: str) -> str:
-    value = text.strip()
-    while value.startswith("@"):
-        parts = value.split(maxsplit=1)
-        value = parts[1] if len(parts) == 2 else ""
-    return value
-
-
-def _is_slash_command(text: str) -> bool:
-    token = next(iter(_strip_mentions(text).split(maxsplit=1)), "")
-    return len(token) > 1 and token.startswith("/")
-
-
-def _extract_slash_command(text: str) -> tuple[str, str] | None:
-    if len(parts := _strip_mentions(text).split(maxsplit=1)) != 2:
-        return None
-    token, argument = parts
-    if not token.startswith("/") or len(token) == 1:
-        return None
-    return token[1:].casefold(), argument.strip()
 
 
 class AdminCommandService:
@@ -104,21 +80,12 @@ class AdminCommandService:
                 "on|off <插件名>",
             ),
         }
-        self._slash_commands = {
-            "post": _Command(
-                bot.auto_post.generate_response,
-                "手动发帖",
-                "[-p|-h|-f] [-l] <发一篇关于夏天的帖子，150 字>",
-                private_only=True,
-            ),
-        }
         self._followers = TTLCache[str, bool](maxsize=1024, ttl=_FOLLOWER_TTL)
         logger.info(f"Admin initialized: Command groups: {len(self._commands)}")
 
     def _help_text(self) -> str:
-        return "\n\n".join(
-            "\n".join(command.help(prefix + name) for name, command in table.items())
-            for prefix, table in (("^", self._commands), ("/", self._slash_commands))
+        return "\n".join(
+            command.help(f"^{name}") for name, command in self._commands.items()
         )
 
     def _canonical_handle(self, username: str, handle: str | None) -> str | None:
@@ -151,7 +118,7 @@ class AdminCommandService:
         if (normalized := user_id.strip().lower()) and normalized not in blacklist:
             await self.bot.settings.update({key: [*blacklist, normalized]})
 
-    async def _is_follower(self, user_id: str | None) -> bool:
+    async def is_follower(self, user_id: str | None) -> bool:
         if not user_id:
             return False
         if (cached := self._followers.get(user_id)) is not None:
@@ -163,33 +130,6 @@ class AdminCommandService:
             return False
         self._followers[user_id] = followed = bool(user.get("isFollowed"))
         return followed
-
-    async def handle_slash_command(
-        self,
-        text: str,
-        *,
-        user_id: str | None,
-        username: str,
-        handle: str | None,
-        private: bool,
-    ) -> Reply | None:
-        if not _is_slash_command(text):
-            return None
-        handle = self._canonical_handle(username, handle) or handle
-        admin = bool(user_id and self._is_authorized(user_id, handle))
-        if not admin and not await self._is_follower(user_id):
-            logger.info(f"Ignored slash command from non-follower: @{username}")
-            return Reply("")
-        if not (parsed := _extract_slash_command(text)):
-            return None
-        name, argument = parsed
-        if not (command := self._slash_commands.get(name)):
-            return None
-        if command.private_only and not private:
-            return Reply("")
-        if not admin:
-            return Reply("您没有权限使用命令。")
-        return await command.run(argument)
 
     async def _execute(self, name: str, command: _Command, args: str) -> str:
         try:

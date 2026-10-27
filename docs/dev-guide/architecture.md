@@ -43,6 +43,7 @@ twipsybot/
 │   │   ├── engine/     核心编排、连接、热重载、限流、响应管道与运行状态
 │   │   └── flows/      提及、聊天、通知与发帖流程
 │   ├── clients/
+│   │   ├── fetch/      公网出站抓取
 │   │   ├── misskey/    REST 与 Streaming 客户端
 │   │   └── openai/     OpenAI 兼容客户端
 │   ├── db/             SQLite 状态存储
@@ -101,10 +102,9 @@ Linux 处理 `SIGINT`、`SIGTERM`、`SIGHUP`，Windows 处理 `SIGINT`、`SIGTER
 - 插件仅通过命名空间隔离的 `PluginStorage` 读写字符串。
 - 回复限制状态带内存缓存，以 SQLite 为准；聊天历史短期缓存，过期从 Misskey 重新获取。
 - actor lock 串行化同一用户的操作；不同用户与事件并发，共享内存状态需自行同步。
-- 关闭时为 Hook 保留 3 秒，整体最多 5 秒；Hook 与生命周期超时见[插件开发](plugins.md#失败处理)。
+- 关闭时为 Hook 保留 3 秒，整体最多 5 秒；Hook 与生命周期超时见[插件开发](plugins.md#约束)。
 
 ## 修改原则
 
 - 协议差异放 `clients`，业务流程放 `flows`，跨流程状态与调度放 `engine`。
-- 可独立启停的能力优先做成插件。
 - 设置读写统一走 `shared.config` 与 `shared.settings`，不直接解析 YAML。

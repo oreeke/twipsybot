@@ -1,8 +1,9 @@
 import asyncio
 import base64
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import openai
 import tiktoken
@@ -18,17 +19,46 @@ from openai import (
 from ...shared.consts import API_MAX_RETRIES, API_TIMEOUT, REQUEST_TIMEOUT
 from ...shared.errors import APIConnectionError, AuthenticationError
 from .extract import (
+    ToolCalls,
+    extract_chat_calls,
+    extract_responses_calls,
     extract_responses_text,
     process_chat_completions_response,
 )
 from .requests import (
     TokenParam,
+    ToolSpecs,
     make_chat_completions_request,
     make_responses_request,
 )
 
 _MODERATION_BATCH = 100
 _MAX_CONCURRENCY = 16
+_MAX_TOOL_ROUNDS = 3
+
+
+class ToolSet(Protocol):
+    @property
+    def specs(self) -> ToolSpecs: ...
+
+    async def run(self, name: str, arguments: str) -> str: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _Turn:
+    text: str = ""
+    calls: ToolCalls = ()
+    items: tuple[dict[str, Any], ...] = ()
+    responses: bool = False
+
+    def result(self, call_id: str, output: str) -> dict[str, Any]:
+        if self.responses:
+            return {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": output,
+            }
+        return {"role": "tool", "tool_call_id": call_id, "content": output}
 
 
 class OpenAIAPI:
@@ -92,7 +122,8 @@ class OpenAIAPI:
         temperature: float | None,
         call_type: str,
         json_output: bool = False,
-    ) -> str:
+        tools: ToolSpecs | None = None,
+    ) -> _Turn:
         response = await make_chat_completions_request(
             client=self.client,
             semaphore=self._semaphore,
@@ -102,8 +133,26 @@ class OpenAIAPI:
             max_tokens=max_tokens,
             temperature=temperature,
             json_output=json_output,
+            tools=tools,
         )
-        return process_chat_completions_response(response, call_type)
+        if calls := extract_chat_calls(response):
+            message = response.choices[0].message
+            item: dict[str, Any] = {
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": name, "arguments": arguments},
+                    }
+                    for call_id, name, arguments in calls
+                ],
+            }
+            if reasoning := getattr(message, "reasoning_content", None):
+                item["reasoning_content"] = reasoning
+            return _Turn("", calls, (item,))
+        return _Turn(process_chat_completions_response(response, call_type))
 
     @property
     def uses_responses_api(self) -> bool:
@@ -198,11 +247,12 @@ class OpenAIAPI:
         temperature: float | None,
         call_type: str,
         json_output: bool = False,
-    ) -> str:
-        args = (messages, max_tokens, temperature, call_type, json_output)
+        tools: ToolSpecs | None = None,
+    ) -> _Turn:
+        args = (messages, max_tokens, temperature, call_type, json_output, tools)
         try:
             if not self.uses_responses_api:
-                text = await self._chat_completions(*args)
+                turn = await self._chat_completions(*args)
             else:
                 try:
                     response = await make_responses_request(
@@ -213,8 +263,16 @@ class OpenAIAPI:
                         max_tokens=max_tokens,
                         temperature=temperature,
                         json_output=json_output,
+                        tools=tools,
                     )
-                    text = extract_responses_text(response)
+                    if calls := extract_responses_calls(response):
+                        items = tuple(
+                            item.model_dump(exclude_none=True)
+                            for item in response.output
+                        )
+                        turn = _Turn("", calls, items, True)
+                    else:
+                        turn = _Turn(extract_responses_text(response))
                 except APIStatusError as e:
                     if not self._is_responses_unavailable(e):
                         raise
@@ -222,7 +280,7 @@ class OpenAIAPI:
                     logger.warning(
                         f"Responses API unavailable; falling back to Chat Completions: {e}"
                     )
-                    text = await self._chat_completions(*args)
+                    turn = await self._chat_completions(*args)
         except OpenAIAuthenticationError as e:
             logger.error(f"API authentication failed: {e}")
             raise AuthenticationError(self._safe_error_message(e)) from e
@@ -233,9 +291,10 @@ class OpenAIAPI:
             logger.error(f"Invalid API response format: {e}")
             raise ValueError(self._safe_error_message(e)) from e
         logger.debug(
-            f"OpenAI API {call_type} call succeeded; output length: {len(text)}"
+            f"OpenAI API {call_type} call succeeded; output length: {len(turn.text)}; "
+            f"tool calls: {len(turn.calls)}"
         )
-        return text
+        return turn
 
     async def close(self):
         await self.client.close()
@@ -252,19 +311,43 @@ class OpenAIAPI:
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt.strip()}]
         if system_prompt:
             messages.insert(0, {"role": "system", "content": system_prompt.strip()})
-        return await self._call_api(
+        turn = await self._call_api(
             messages, max_tokens, temperature, "single-turn text", json_output
         )
+        return turn.text
 
     async def generate_chat(
         self,
         messages: list[dict[str, Any]],
         max_tokens: int | None = None,
         temperature: float | None = None,
+        tools: ToolSet | None = None,
     ) -> str:
-        return await self._call_api(
-            messages, max_tokens, temperature, "multi-turn chat"
-        )
+        args = (max_tokens, temperature, "multi-turn chat")
+        if not tools or not tools.specs:
+            return (await self._call_api(messages, *args)).text
+        for step in range(_MAX_TOOL_ROUNDS):
+            try:
+                turn = await self._call_api(messages, *args, tools=tools.specs)
+            except ValueError as e:
+                if step:
+                    raise
+                logger.warning(f"Tool calling rejected; retrying without tools: {e}")
+                break
+            if not turn.calls:
+                return turn.text
+            outputs = await asyncio.gather(
+                *(tools.run(name, arguments) for _, name, arguments in turn.calls)
+            )
+            messages = [
+                *messages,
+                *turn.items,
+                *(
+                    turn.result(call_id, output)
+                    for (call_id, _, _), output in zip(turn.calls, outputs, strict=True)
+                ),
+            ]
+        return (await self._call_api(messages, *args)).text
 
     async def moderate_texts(self, texts: list[str]) -> list[frozenset[str]]:
         results: list[frozenset[str]] = []

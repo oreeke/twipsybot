@@ -213,6 +213,27 @@ async def test_create_note_does_not_turn_empty_visibility_public() -> None:
     request.assert_awaited_once_with("notes/create", {"text": "text", "visibility": ""})
 
 
+@pytest.mark.parametrize(
+    ("method", "file_key"), [("create_note", "fileIds"), ("send_message", "fileId")]
+)
+async def test_empty_text_is_omitted_when_sending_only_a_file(
+    method: str, file_key: str
+) -> None:
+    request = AsyncMock(return_value={})
+    api = object.__new__(MisskeyAPI)
+    api.make_request = request
+
+    if method == "create_note":
+        await api.create_note("", file_ids=["f1"])
+    else:
+        await api.send_message("u1", "", "f1")
+
+    call = request.await_args
+    assert call is not None
+    assert "text" not in call.args[1]
+    assert call.args[1][file_key] in (["f1"], "f1")
+
+
 async def test_user_endpoints_use_misskey_api() -> None:
     read = AsyncMock(return_value={"id": "u1"})
     request = AsyncMock(return_value={})

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,9 +14,7 @@ from plugins.web.plugin import WebPlugin
 from twipsybot.clients.fetch.public import PublicFetcher
 from twipsybot.plugin import (
     APIResponseError,
-    MentionEvent,
     MessageEvent,
-    NoteRef,
     UserRef,
 )
 from twipsybot.plugin.services import HttpServiceAdapter
@@ -61,8 +59,12 @@ def _plugin(config: dict[str, Any] | None = None) -> WebPlugin:
     return WebPlugin(_context(config or {}))
 
 
-async def _on_context(plugin: WebPlugin, text: str) -> dict[str, Any] | None:
-    return cast(dict[str, Any] | None, await plugin.on_context(_event(text)))
+async def _search(plugin: WebPlugin, query: str) -> str:
+    return await plugin.search(_event(""), query)
+
+
+async def _fetch(plugin: WebPlugin, url: str) -> str:
+    return await plugin.fetch(_event(""), url)
 
 
 Make = Callable[..., Awaitable[tuple[WebPlugin, TestServer]]]
@@ -126,119 +128,52 @@ async def test_web_requires_searxng_endpoint() -> None:
     assert await plugin.initialize() is False
 
 
-async def test_web_manual_command_searches_and_strips_prefix(
-    make_web: Make,
-) -> None:
+def test_web_tools_require_followers() -> None:
+    plugin = _plugin()
+
+    assert {(s.name, s.access) for s in plugin._tools} == {
+        ("search", "followers"),
+        ("fetch", "followers"),
+    }
+
+
+async def test_web_search_tool_renders_sources(make_web: Make) -> None:
     app = _app([{"title": "T", "url": "https://example.com/a", "content": "snip"}])
     plugin, _ = await make_web(app)
 
-    result = await _on_context(plugin, ("@bot /web  今天的新闻"))
+    result = await _search(plugin, "  今天的新闻 ")
 
-    assert result is not None
-    assert result["text"] == "@bot 今天的新闻"
-    assert "[1] T\nhttps://example.com/a\nsnip" in result["context"]
+    assert "[1] T\nhttps://example.com/a\nsnip" in result
     assert app[QUERIES] == [{"q": "今天的新闻", "format": "json", "language": "auto"}]
 
 
-async def test_web_always_on_toggle(
-    make_web: Make,
-) -> None:
-    results = [{"title": "T", "url": "https://example.com/a", "content": "c"}]
-    plugin, _ = await make_web(_app(results))
+async def test_web_failed_search_degrades(make_web: Make) -> None:
+    plugin, _ = await make_web(web.Application())
 
-    assert await _on_context(plugin, ("今天天气怎么样")) is None
-    assert await _on_context(plugin, ("/web")) is None
-
-    always, _ = await make_web(_app(results), {"always_on": True})
-    result = await _on_context(always, ("今天天气怎么样"))
-    assert result is not None
-    assert "text" not in result
-    assert await _on_context(always, ("你好")) is None
-
-
-async def test_web_rewrite_query(
-    make_web: Make,
-) -> None:
-    generate = AsyncMock(return_value='"weather beijing"\nextra')
-    app = _app([{"title": "T", "url": "https://example.com/a"}])
-    plugin, _ = await make_web(
-        app,
-        {"query_mode": "rewrite"},
-        generate_text=generate,
-        max_tokens=512,
-        temperature=0.7,
+    assert await _search(plugin, "查询失败") == (
+        f"<web_results>{web_plugin._EMPTY_PROMPT}</web_results>"
     )
 
-    await _on_context(plugin, ("/web 北京天气如何"))
-
-    assert app[QUERIES][0]["q"] == "weather beijing"
-    assert generate.call_args.args[1:] == (web_plugin._REWRITE_PROMPT, 512, 0.7)
-    generate.side_effect = RuntimeError("boom")
-    await _on_context(plugin, ("/web 北京天气如何呀"))
-    assert app[QUERIES][1]["q"] == "北京天气如何呀"
-
-
-async def test_web_failed_search_degrades(
-    make_web: Make,
-) -> None:
-    app = web.Application()
-    plugin, _ = await make_web(app)
-
-    assert await _on_context(plugin, ("普通的一句话")) is None
-    result = await _on_context(plugin, ("/web 查询失败"))
-
-    assert result == {
-        "context": f"<web_results>{web_plugin._EMPTY_PROMPT}</web_results>",
-        "text": "查询失败",
-    }
-
     custom, _ = await make_web(web.Application(), {"empty_prompt": "  没找到  "})
-    result = await _on_context(custom, ("/web 查询失败"))
-    assert result is not None
-    assert result["context"] == "<web_results>没找到</web_results>"
+    assert await _search(custom, "查询失败") == "<web_results>没找到</web_results>"
 
 
-async def test_web_fetches_links_without_always_on(
-    make_web: Make,
-) -> None:
+async def test_web_fetch_tool_extracts_page_text(make_web: Make) -> None:
     plugin, server = await make_web(_app(), nets=_LOOPBACK)
     url = str(server.make_url("/page"))
 
-    result = await _on_context(plugin, (f"看看 [这个]({url}) 说了啥"))
+    result = await _fetch(plugin, f" {url} ")
 
-    assert result is not None
-    assert "text" not in result
-    assert f"[1] Doc\n{url}\nHello\nWorld\n" in result["context"]
-    assert "evil" not in result["context"]
-    assert "menu" not in result["context"]
+    assert f"[1] Doc\n{url}\nHello\nWorld\n" in result
+    assert "evil" not in result
+    assert "menu" not in result
 
 
-async def test_web_fetches_links_from_replied_and_quoted_notes(
-    make_web: Make,
-) -> None:
-    plugin, server = await make_web(_app(), nets=_LOOPBACK)
-    page, redirect = (str(server.make_url(path)) for path in ("/page", "/redirect"))
-    user = UserRef(id="u1", username="alice", host=None)
+async def test_web_fetch_tool_reports_unreadable_pages(make_web: Make) -> None:
+    plugin, server = await make_web(_app())
 
-    def note(note_id: str, text: str) -> NoteRef:
-        return NoteRef(id=note_id, text=text, cw=None, user=user, files=(), raw={})
-
-    event = MentionEvent(
-        id="m1",
-        text="总结一下",
-        cw=None,
-        user=user,
-        files=(),
-        raw={},
-        reply=note("n1", f"看这个 {page}"),
-        renote=note("n2", f"{redirect} {page}"),
-    )
-
-    result = cast(dict[str, Any] | None, await plugin.on_context(event))
-
-    assert result is not None
-    assert "text" not in result
-    assert result["context"].count("Hello") == 2
+    assert "Cannot read" in await _fetch(plugin, str(server.make_url("/page")))
+    assert "Cannot read" in await _fetch(plugin, "file:///etc/passwd")
 
 
 async def test_web_fetch_results_fetches_every_hit(
@@ -254,7 +189,7 @@ async def test_web_fetch_results_fetches_every_hit(
         ]
     )
 
-    sources = await plugin._collect("q", [])
+    sources = await plugin._collect("q")
 
     assert [s.body for s in sources] == ["Hello\nWorld", "snip2"]
 
@@ -326,27 +261,6 @@ def test_web_render_budget_and_tag_escape() -> None:
     assert web_plugin._PROMPT not in custom
 
 
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("https://a.test/x，这是仓库", ["https://a.test/x"]),
-        ("https://a.test/x抓网页啊", ["https://a.test/x"]),
-        (
-            "看 https://a.test/x。再看 (https://b.test/y) HTTPS://c.test/k",
-            ["https://a.test/x", "https://b.test/y", "HTTPS://c.test/k"],
-        ),
-    ],
-)
-def test_web_urls_stop_at_non_ascii(text: str, expected: list[str]) -> None:
-    assert web_plugin._urls(text, 3) == expected
-
-
-def test_web_urls_respect_limit() -> None:
-    text = "https://a.test https://b.test https://a.test https://c.test"
-
-    assert web_plugin._urls(text, 2) == ["https://a.test", "https://b.test"]
-
-
 def _deepseek_app(
     results: list[dict[str, Any]], pages: dict[str, dict[str, Any]]
 ) -> web.Application:
@@ -391,12 +305,13 @@ async def test_web_deepseek_searches_and_fetches_remotely(make_web: Make) -> Non
         },
     )
 
-    result = await _on_context(plugin, f"/web 查询 {url} https://blocked.org/x")
+    result = await _search(plugin, "查询")
+    page = await _fetch(plugin, url)
+    blocked = await _fetch(plugin, "https://blocked.org/x")
 
-    assert result is not None
-    assert "[1] Doc\nhttps://example.com/a\n# Doc\nbody" in result["context"]
-    assert "[2] T\nhttps://example.com/a\nlong" in result["context"]
-    assert "blocked.org" not in result["context"]
+    assert "[1] T\nhttps://example.com/a\nlong" in result
+    assert "[1] Doc\nhttps://example.com/a\n# Doc\nbody" in page
+    assert "Cannot read" in blocked
     searches = [call for call in app[QUERIES] if call[0] == "search"]
     assert searches == [
         (

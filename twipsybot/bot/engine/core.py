@@ -79,7 +79,11 @@ class Neuro:
             bot=self,
         )
         self.pipeline = ResponsePipeline(
-            limits=self.limits, plugins=self.plugin_manager, runtime=self.runtime
+            limits=self.limits,
+            plugins=self.plugin_manager,
+            runtime=self.runtime,
+            is_admin=lambda user: self.admin.is_admin(user.id, user.handle),
+            is_follower=lambda user_id: self.admin.is_follower(user_id),
         )
         self.bot_user_id = None
         self.bot_username = None
@@ -87,6 +91,7 @@ class Neuro:
         self.mention = MentionHandler(self)
         self.notification = NotificationHandler(self)
         self.auto_post = AutoPostService(self)
+        self.pipeline.add_tools("note", self.auto_post)
         self.connect = StreamingConnector(
             config=config,
             misskey=self.misskey,

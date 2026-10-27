@@ -3,6 +3,28 @@ from typing import Any
 
 from ...shared.errors import APIConnectionError
 
+ToolCalls = tuple[tuple[str, str, str], ...]
+
+
+def extract_responses_calls(response: Any) -> ToolCalls:
+    output = getattr(response, "output", None)
+    if not isinstance(output, list):
+        return ()
+    return tuple(
+        (item.call_id, item.name, item.arguments)
+        for item in output
+        if getattr(item, "type", None) == "function_call"
+    )
+
+
+def extract_chat_calls(response: Any) -> ToolCalls:
+    if not response.choices:
+        return ()
+    return tuple(
+        (call.id, call.function.name, call.function.arguments)
+        for call in response.choices[0].message.tool_calls or ()
+    )
+
 
 def extract_responses_text(response: Any) -> str:
     if getattr(response, "status", None) == "incomplete":

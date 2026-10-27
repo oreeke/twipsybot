@@ -117,7 +117,7 @@ class _Section(BaseModel):
 
 
 class BotConfig(_Section):
-    system_prompt: str = "你是一个可爱的AI助手..."
+    system_prompt: str = "You are a cute AI assistant..."
     admins: list[str] = []
     model: str = Field(default="gpt-6-luna", min_length=1)
     api_mode: Literal["auto", "chat", "responses"] = "auto"
@@ -134,7 +134,7 @@ class TimelineConfig(_Section):
 
 
 class PostConfig(_Section):
-    prompt: str = "生成一篇有趣的社交帖子..."
+    prompt: str = "Write an interesting social media post..."
     visibility: Visibility = "public"
     local_only: bool = False
     mode: Literal["off", "rotation", "schedule"] = "off"
@@ -170,9 +170,9 @@ class ReplyConfig(_Section):
     memory: int = Field(default=10, ge=0, le=100)
     ctx_tokens: int = Field(default=2000, ge=0)
     rate_limit: Seconds = -1
-    rate_limit_msg: str = "我需要休息一下..."
+    rate_limit_msg: str = ""
     max_turns: int = Field(default=-1, ge=-1)
-    max_turns_msg: str = "我要回家了..."
+    max_turns_msg: str = ""
     turns_release: Seconds = 3600
     whitelist: list[str] = []
     blacklist: list[str] = []

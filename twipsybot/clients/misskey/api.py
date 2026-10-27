@@ -198,9 +198,10 @@ class MisskeyAPI:
         file_ids: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         data: dict[str, Any] = {
-            "text": self._limit_text(text, NOTE_TEXT_MAX_LENGTH, "note"),
             "visibility": "public" if visibility is None else visibility,
         }
+        if text:
+            data["text"] = self._limit_text(text, NOTE_TEXT_MAX_LENGTH, "note")
         if file_ids:
             data["fileIds"] = file_ids
         if reply_id:
@@ -289,7 +290,8 @@ class MisskeyAPI:
     async def _send_chat(
         self, target: str, data: dict[str, Any], text: str, file_id: str | None
     ) -> dict[str, Any]:
-        data["text"] = self._limit_text(text, CHAT_TEXT_MAX_LENGTH, "chat message")
+        if text:
+            data["text"] = self._limit_text(text, CHAT_TEXT_MAX_LENGTH, "chat message")
         if file_id:
             data["fileId"] = file_id
         result = await self.make_request(f"chat/messages/{target}", data)

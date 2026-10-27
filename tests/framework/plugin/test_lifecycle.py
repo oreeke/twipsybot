@@ -269,21 +269,16 @@ async def test_reload_plugin_replaces_instance_with_new_config(
 async def test_reload_plugin_failure_disables_only_that_plugin(
     make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
 ) -> None:
-    plugins_dir = make_plugin_dir(
-        "broken", body=_RELOAD_BODY, config="enabled: true\npriority: 20\n"
-    )
+    plugins_dir = make_plugin_dir("broken", body=_RELOAD_BODY)
     make_plugin_dir(
         "healthy",
         body="async def on_message(self, event):\n    return self.handled('ok')\n",
-        config="enabled: true\npriority: 10\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     manager = bot.plugin_manager
     old = manager.get_plugin("broken")
     assert old is not None
-    set_plugin_config(
-        bot.config.root, "broken", {"enabled": True, "priority": 20, "reply": [1]}
-    )
+    set_plugin_config(bot.config.root, "broken", {"enabled": True, "reply": [1]})
 
     assert await bot.settings.reload() == {"broken": "failed"}
 

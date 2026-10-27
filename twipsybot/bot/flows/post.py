@@ -1,19 +1,21 @@
 import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
+from pydantic import Field
 
+from ...clients.misskey.models import MentionEvent, MessageEvent
+from ...plugin.base import tool
 from ...plugin.contracts import AutoPostItem
 from ...plugin.manager import HookResult
 from ...shared.keys import ConfigKeys
 from ...shared.logs import format_log_text
-from ..engine.pipeline import Reply
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro
@@ -125,37 +127,30 @@ class AutoPostService:
             self.posts_today = 0
         logger.debug("Post counter reset")
 
-    async def generate_response(self, prompt: str) -> Reply:
-        prompt, visibility, local_only = self._parse_manual_options(prompt)
-        try:
-            content = await self._create_ai_post(
-                prompt, visibility=visibility, local_only=local_only
-            )
-        except Exception:
-            logger.exception("Manual post failed")
-            return Reply("发帖失败，请稍后再试。")
-        logger.info(f"Manual post succeeded: {format_log_text(content)}")
-        return Reply("发帖完成")
-
-    @staticmethod
-    def _parse_manual_options(prompt: str) -> tuple[str, str | None, bool | None]:
-        visibility = None
-        local_only = None
-        remaining = prompt
-        while (parts := remaining.split(maxsplit=1)) and parts[0] in {
-            "-p",
-            "-h",
-            "-f",
-            "-l",
-        }:
-            option = parts[0]
-            remaining = parts[1] if len(parts) == 2 else ""
-            if option == "-l":
-                local_only = True
-            else:
-                visibility = {"-p": "public", "-h": "home", "-f": "followers"}[option]
-                local_only = local_only or False
-        return remaining, visibility, local_only
+    @tool(
+        "Publish a note to the timeline right now. Write the complete note text "
+        "yourself. Use only when the user explicitly asks you to post.",
+        access="admin",
+        effect=True,
+    )
+    async def publish(
+        self,
+        event: MessageEvent | MentionEvent,
+        text: Annotated[str, Field(description="The complete note text to publish")],
+        visibility: Annotated[
+            Literal["public", "home", "followers"] | None,
+            Field(description="Note visibility; null uses the configured default"),
+        ],
+        local_only: Annotated[
+            bool | None,
+            Field(description="Whether to keep the note local; null uses the default"),
+        ],
+    ) -> str:
+        if not (text := text.strip()):
+            return "Error: the note text is empty"
+        await self._send_note(text, visibility, local_only)
+        logger.info(f"Manual post succeeded: {format_log_text(text)}")
+        return "Note published."
 
     async def _allowed(self, limit: int | None) -> bool:
         return self.bot.runtime.running and (
@@ -262,15 +257,9 @@ class AutoPostService:
         logger.info(f"Auto-post succeeded: {format_log_text(content)}")
         await self._record(max_posts)
 
-    async def _create_ai_post(
-        self,
-        prompt: str,
-        plugin_prompt: str = "",
-        *,
-        visibility: str | None = None,
-        local_only: bool | None = None,
-    ) -> str:
-        content = await self.generate(plugin_prompt, prompt)
+    async def _send_note(
+        self, content: str, visibility: str | None, local_only: bool | None
+    ) -> None:
         await self.bot.misskey.create_note(
             content,
             visibility=(
@@ -284,6 +273,10 @@ class AutoPostService:
                 else self.bot.config.get(ConfigKeys.POST_LOCAL_ONLY)
             ),
         )
+
+    async def _create_ai_post(self, prompt: str, plugin_prompt: str = "") -> str:
+        content = await self.generate(plugin_prompt, prompt)
+        await self._send_note(content, None, None)
         return content
 
     async def generate(self, plugin_prompt: str = "", prompt: str | None = None) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 from typing import Any
 
 from aiohttp import web
@@ -69,7 +70,7 @@ def build_misskey_app(
 
 class FakeOpenAIServer:
     def __init__(
-        self, server: TestServer, calls: list[dict[str, Any]], reply: dict[str, str]
+        self, server: TestServer, calls: list[dict[str, Any]], reply: dict[str, Any]
     ):
         self._server = server
         self.calls = calls
@@ -82,13 +83,34 @@ class FakeOpenAIServer:
     def set_reply(self, text: str) -> None:
         self._reply["text"] = text
 
+    def set_tool_call(self, name: str, **arguments: Any) -> None:
+        self._reply["tool"] = {"name": name, "arguments": arguments}
+
 
 def build_openai_app(
-    calls: list[dict[str, Any]], reply: dict[str, str]
+    calls: list[dict[str, Any]], reply: dict[str, Any]
 ) -> web.Application:
     async def chat_completions(request: web.Request) -> web.Response:
         payload = await request.json()
         calls.append(payload)
+        message: dict[str, Any] = {"role": "assistant", "content": reply["text"]}
+        finish_reason = "stop"
+        if (tool := reply.get("tool")) and payload["messages"][-1]["role"] != "tool":
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": tool["name"],
+                            "arguments": json.dumps(tool["arguments"]),
+                        },
+                    }
+                ],
+            }
+            finish_reason = "tool_calls"
         return web.json_response(
             {
                 "id": "chatcmpl-test",
@@ -96,11 +118,7 @@ def build_openai_app(
                 "created": 0,
                 "model": payload.get("model", "test-model"),
                 "choices": [
-                    {
-                        "index": 0,
-                        "finish_reason": "stop",
-                        "message": {"role": "assistant", "content": reply["text"]},
-                    }
+                    {"index": 0, "finish_reason": finish_reason, "message": message}
                 ],
             }
         )

@@ -66,7 +66,7 @@ async def test_incompatible_plugin_signature_is_rejected_at_load(
 
 @pytest.mark.parametrize(
     ("name", "api_version"),
-    [("boolean", "True"), ("float", "3.0"), ("legacy", "2"), ("future", "4")],
+    [("boolean", "True"), ("float", "4.0"), ("legacy", "3"), ("future", "5")],
 )
 async def test_incompatible_plugin_api_is_rejected(
     name: str,
@@ -98,7 +98,7 @@ async def test_plugin_module_uses_explicit_export(
     (plugin_dir / "plugin.py").write_text(
         "from twipsybot.plugin import PluginBase\n\n"
         "class Reply(PluginBase):\n"
-        "    api_version = 3\n"
+        "    api_version = 4\n"
         "    async def on_message(self, event):\n"
         "        return self.handled('explicit')\n\n"
         "plugin = Reply\n",
@@ -122,7 +122,7 @@ async def test_plugin_module_requires_explicit_export(
     (plugin_dir / "plugin.py").write_text(
         "from twipsybot.plugin import PluginBase\n\n"
         "class ImplicitPlugin(PluginBase):\n"
-        "    api_version = 3\n",
+        "    api_version = 4\n",
         encoding="utf-8",
     )
 
@@ -140,7 +140,7 @@ async def test_failed_plugin_import_removes_partial_module(
         "broken_import",
         "from twipsybot.plugin import PluginBase\n\n"
         "class BrokenImportPlugin(PluginBase):\n"
-        "    api_version = 3\n\n"
+        "    api_version = 4\n\n"
         "plugin = BrokenImportPlugin\n"
         "raise RuntimeError('broken import')\n",
     )
@@ -165,7 +165,7 @@ async def test_plugin_directory_supports_relative_imports(
         "from twipsybot.plugin import PluginBase\n"
         "from .helper import VALUE\n\n"
         "class MultiFilePlugin(PluginBase):\n"
-        "    api_version = 3\n"
+        "    api_version = 4\n"
         "    value = VALUE\n\n"
         "plugin = MultiFilePlugin\n",
         encoding="utf-8",
@@ -207,7 +207,7 @@ async def test_entry_point_plugin_uses_central_config(
     import twipsybot.plugin.manager as manager_module
 
     class ExternalPlugin(PluginBase):
-        api_version = 3
+        api_version = 4
 
     entry_point = SimpleNamespace(name="external", load=lambda: ExternalPlugin)
     monkeypatch.setattr(

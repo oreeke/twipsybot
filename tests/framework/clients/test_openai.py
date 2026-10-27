@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from httpx2 import Request, Response
-from openai import APIStatusError
+from openai import APIStatusError, BadRequestError
 
 from twipsybot.clients.openai.api import OpenAIAPI
 from twipsybot.clients.openai.extract import (
@@ -281,8 +281,10 @@ def _choice(content: str, finish_reason: str) -> SimpleNamespace:
 def test_chat_completions_rejects_incomplete_output(
     choices: list[Any], message: str | None
 ) -> None:
+    response = SimpleNamespace(choices=choices)
+
     with pytest.raises(APIConnectionError, match=message):
-        process_chat_completions_response(SimpleNamespace(choices=choices), "test")
+        process_chat_completions_response(response, "test")
 
 
 async def test_responses_request_enables_json_output() -> None:
@@ -355,7 +357,7 @@ async def test_http_405_falls_back_to_chat_completions(
         body={},
     )
     responses = AsyncMock(side_effect=error)
-    fallback = AsyncMock(return_value="fallback")
+    fallback = AsyncMock(return_value=module._Turn("fallback"))
     monkeypatch.setattr(module, "make_responses_request", responses)
     api = OpenAIAPI("test", "m")
     monkeypatch.setattr(api, "_chat_completions", fallback)
@@ -365,6 +367,137 @@ async def test_http_405_falls_back_to_chat_completions(
     assert result == "fallback"
     fallback.assert_awaited_once()
     await api.close()
+
+
+class _Tools:
+    specs: tuple[dict[str, Any], ...] = (
+        {"name": "t_x", "description": "d", "parameters": {"type": "object"}},
+    )
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def run(self, name: str, arguments: str) -> str:
+        self.calls.append((name, arguments))
+        return f"out:{arguments}"
+
+
+def _chat_reply(text: str | None, *calls: tuple[str, str, str]) -> SimpleNamespace:
+    message = SimpleNamespace(
+        content=text,
+        tool_calls=[
+            SimpleNamespace(id=i, function=SimpleNamespace(name=n, arguments=a))
+            for i, n, a in calls
+        ]
+        or None,
+    )
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="stop")]
+    )
+
+
+def _chat_api(*replies: Any) -> tuple[OpenAIAPI, AsyncMock]:
+    api = OpenAIAPI("test", "m", api_mode="chat")
+    create = AsyncMock(side_effect=replies)
+    api.client = cast(
+        Any,
+        SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        ),
+    )
+    return api, create
+
+
+async def test_chat_tool_calls_run_in_parallel_and_feed_back_results() -> None:
+    api, create = _chat_api(
+        _chat_reply(None, ("c1", "t_x", "1"), ("c2", "t_x", "2")),
+        _chat_reply("done"),
+    )
+    tools = _Tools()
+
+    assert (
+        await api.generate_chat([{"role": "user", "content": "hi"}], tools=tools)
+        == "done"
+    )
+
+    assert tools.calls == [("t_x", "1"), ("t_x", "2")]
+    first, second = (call.kwargs for call in create.await_args_list)
+    assert first["tools"] == [{"type": "function", "function": tools.specs[0]}]
+    assert second["tools"] == first["tools"]
+    assert second["messages"][1:] == [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "t_x", "arguments": "1"},
+                },
+                {
+                    "id": "c2",
+                    "type": "function",
+                    "function": {"name": "t_x", "arguments": "2"},
+                },
+            ],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "out:1"},
+        {"role": "tool", "tool_call_id": "c2", "content": "out:2"},
+    ]
+
+
+async def test_responses_tool_calls_feed_back_function_outputs() -> None:
+    item = {"type": "function_call", "call_id": "c1", "name": "t_x", "arguments": "1"}
+    call = SimpleNamespace(
+        model_dump=lambda **_: item, **{**item, "type": "function_call"}
+    )
+    create = AsyncMock(
+        side_effect=[
+            SimpleNamespace(status="completed", output=[call], output_text=""),
+            SimpleNamespace(status="completed", output=[], output_text="done"),
+        ]
+    )
+    api = OpenAIAPI("test", "m")
+    api.client = cast(Any, SimpleNamespace(responses=SimpleNamespace(create=create)))
+
+    assert (
+        await api.generate_chat([{"role": "user", "content": "hi"}], tools=_Tools())
+        == "done"
+    )
+
+    first, second = (call.kwargs for call in create.await_args_list)
+    assert first["tools"] == [{"type": "function", **_Tools.specs[0]}]
+    assert second["input"][1:] == [
+        item,
+        {"type": "function_call_output", "call_id": "c1", "output": "out:1"},
+    ]
+
+
+async def test_tool_rounds_are_capped_then_answer_without_tools() -> None:
+    looping = [_chat_reply(None, ("c", "t_x", "{}"))] * 3
+    api, create = _chat_api(*looping, _chat_reply("final"))
+
+    assert await api.generate_chat([], tools=_Tools()) == "final"
+
+    assert [("tools" in call.kwargs) for call in create.await_args_list] == [
+        True,
+        True,
+        True,
+        False,
+    ]
+
+
+async def test_tool_support_rejection_retries_without_tools() -> None:
+    rejected = BadRequestError(
+        "tools unsupported",
+        response=Response(400, request=Request("POST", "https://example.com")),
+        body={},
+    )
+    api, create = _chat_api(rejected, _chat_reply("plain"))
+
+    assert await api.generate_chat([], tools=_Tools()) == "plain"
+
+    assert "tools" not in create.await_args_list[1].kwargs
 
 
 async def test_openai_client_uses_sdk_retries() -> None:

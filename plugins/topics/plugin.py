@@ -25,8 +25,11 @@ from twipsybot.plugin import (
 _TOPIC_SUFFIXES = {".md", ".txt"}
 _RSS_TIMEOUT = aiohttp.ClientTimeout(total=60)
 _RSS_RECENT_KEYS_LIMIT = 2000
-_LIST_AI_PREFIX = "以{topic}为主题\n\n"
-_RSS_AI_PREFIX = "参考以下文章，不加链接：\n\n{summary}\n\n{title}\n{link}\n\n"
+_LIST_AI_PREFIX = "Write about the topic: {topic}\n\n"
+_RSS_AI_PREFIX = (
+    "Use the following article as reference. Do not include links:\n\n"
+    "{summary}\n\n{title}\n{link}\n\n"
+)
 
 
 class _Config(PluginConfig):
@@ -58,8 +61,7 @@ class _Config(PluginConfig):
 
 
 class TopicsPlugin(PluginBase):
-    api_version = 3
-    priority = 300
+    api_version = 4
     config_class = _Config
     settings: _Config
 

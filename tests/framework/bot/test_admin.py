@@ -13,7 +13,6 @@ from support.factories import set_plugin_config
 from support.types import MakeBot, MakePluginDir, WriteConfig
 
 from twipsybot.bot.admin import handlers
-from twipsybot.bot.admin.service import _extract_slash_command, _is_slash_command
 from twipsybot.bot.flows.post import AutoPostService
 from twipsybot.shared.keys import ConfigKeys
 from twipsybot.shared.settings import read_settings
@@ -209,39 +208,6 @@ def test_auto_post_status_does_not_show_previous_day_count() -> None:
     assert service.posts_today == 5
 
 
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("/img 一只戴眼镜的猫", ("img", "一只戴眼镜的猫")),
-        ("@testbot /post 星空下的城市", ("post", "星空下的城市")),
-        ("@testbot\t/IMG\n星空下的城市", ("img", "星空下的城市")),
-        ("/img", None),
-        ("画图 一只戴眼镜的猫", None),
-        ("/image watercolor landscape", ("image", "watercolor landscape")),
-        ("介绍一下绘画", None),
-        ("", None),
-        ("   ", None),
-    ],
-)
-def test_slash_command_detection(text: str, expected: tuple[str, str] | None) -> None:
-    assert _extract_slash_command(text) == expected
-
-
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("/bond", True),
-        ("@testbot @alice /web 新闻", True),
-        ("@testbot", False),
-        ("/", False),
-        ("你好 /web", False),
-        ("https://example.com/web", False),
-    ],
-)
-def test_slash_command_prefix_detection(text: str, expected: bool) -> None:
-    assert _is_slash_command(text) is expected
-
-
 async def test_admin_commands_persist_to_settings(
     make_bot: MakeBot, write_config: WriteConfig
 ) -> None:
@@ -316,9 +282,11 @@ async def test_admin_lists_and_toggles_plugins(
 async def test_admin_plugin_on_rolls_back_when_start_fails(
     make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
 ) -> None:
-    plugins_dir = make_plugin_dir("demo")
+    plugins_dir = make_plugin_dir(
+        "demo", body="async def on_startup(self):\n    raise RuntimeError('boom')\n"
+    )
     config = write_config(bot={"admins": ["user-2"]})
-    set_plugin_config(config.root, "demo", {"enabled": False, "priority": "x"})
+    set_plugin_config(config.root, "demo", {"enabled": False})
     bot = await make_bot(config, plugins_dir=plugins_dir)
 
     response = await bot.admin.on_message(

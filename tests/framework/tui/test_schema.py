@@ -36,6 +36,12 @@ def test_sections_are_generated_from_models() -> None:
         "ai_api_key",
     ]
     assert specs["ai_base_url"].restart
+    assert [(s.group, s.label) for s in sections["connect"].specs] == [
+        ("misskey", "url"),
+        ("misskey", "token"),
+        ("ai", "base url"),
+        ("ai", "api key"),
+    ]
     assert not specs["bot.model"].restart
     assert specs["bot.api_mode"].choices == ("auto", "chat", "responses")
     assert specs["plugins.topics.rss_list"].kind == "lines"
@@ -71,6 +77,5 @@ def test_sections_are_generated_from_models() -> None:
     assert specs["timeline.global"].kind == "bool"
     assert specs["bot.system_prompt"].kind == "multiline"
     assert specs["reply.whitelist"].kind == "list"
-    assert specs["plugins.keyact.priority"].default == "850"
     assert specs["plugins.iincho.moderation.cf_api_token"].kind == "secret"
     assert specs["plugins.iincho.moderation.provider"].group == "moderation"

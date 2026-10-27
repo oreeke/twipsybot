@@ -64,31 +64,29 @@ async def test_auto_post_counter_self_corrects_after_date_change(
     assert await bot.db.get_auto_post_state() == (bot.auto_post._today(), 0)
 
 
-async def test_auto_post_uses_highest_priority_prompt(
+async def test_auto_post_uses_first_plugin_prompt(
     make_bot: MakeBot,
     make_plugin_dir: MakePluginDir,
     write_config: WriteConfig,
     openai_server: FakeOpenAIServer,
 ) -> None:
     plugins_dir = make_plugin_dir(
-        "high",
+        "first",
         "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class HighPlugin(PluginBase):\n"
+        "class FirstPlugin(PluginBase):\n"
         "    api_version = PLUGIN_API_VERSION\n"
         "    async def on_auto_post(self, event):\n"
-        "        return {'prompt': 'high '}\n\n"
-        "plugin = HighPlugin\n",
-        config="enabled: true\npriority: 20\n",
+        "        return {'prompt': 'first '}\n\n"
+        "plugin = FirstPlugin\n",
     )
     make_plugin_dir(
-        "low",
+        "second",
         "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
-        "class LowPlugin(PluginBase):\n"
+        "class SecondPlugin(PluginBase):\n"
         "    api_version = PLUGIN_API_VERSION\n"
         "    async def on_auto_post(self, event):\n"
-        "        return {'prompt': 'low '}\n\n"
-        "plugin = LowPlugin\n",
-        config="enabled: true\npriority: 10\n",
+        "        return {'prompt': 'second '}\n\n"
+        "plugin = SecondPlugin\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     bot.runtime.running = True
@@ -96,7 +94,7 @@ async def test_auto_post_uses_highest_priority_prompt(
     await bot.auto_post.run()
 
     prompt = openai_server.calls[0]["messages"][-1]["content"]
-    assert prompt == "high 写一条随笔"
+    assert prompt == "first 写一条随笔"
 
 
 async def test_auto_post_generate_prepends_plugin_prompt(

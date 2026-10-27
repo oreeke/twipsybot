@@ -1,16 +1,30 @@
+import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
+from copy import deepcopy
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
+from pydantic import ValidationError
 
+from ...plugin.base import ToolEntry, tool_specs
+from ...plugin.contracts import HandledResult
+from ...plugin.manager import valid_handled
 from ...shared.locks import KeyedAsyncLock, actor_key
 from .limits import ResponseLimiter
 
 if TYPE_CHECKING:
     from ...plugin.manager import PluginManager
     from .runtime import BotRuntime
+
+_TOOL_TIMEOUT_SECONDS = 60.0
+_MAX_TOOL_CHARS = 8000
+_TOOL_COMMAND = re.compile(
+    r"^(?P<head>(?:@\S+\s+)*)/(?P<name>\w+)(?:\s+(?P<rest>.*))?$", re.DOTALL
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,11 +33,83 @@ class Reply:
     file_id: str | None = None
 
 
+class Toolbox:
+    def __init__(self, event: Any, entries: dict[str, ToolEntry]):
+        self._event = event
+        self._entries = entries
+        self._tainted = False
+        self.file_id: str | None = None
+        self.followups: list[Callable[[], Awaitable[HandledResult]]] = []
+
+    @property
+    def specs(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": name,
+                "description": entry.spec.description,
+                "parameters": entry.spec.schema,
+            }
+            for name, entry in self._entries.items()
+            if not (self._tainted and entry.spec.effect)
+        ]
+
+    def taint(self) -> None:
+        self._tainted = True
+
+    def command(self, text: str) -> tuple[str, str] | None:
+        if not (match := _TOOL_COMMAND.match(text)):
+            return None
+        for name, entry in self._entries.items():
+            if match["name"] in {name, entry.spec.name}:
+                return name, f"{match['head']}{match['rest'] or ''}"
+        return None
+
+    async def run(self, name: str, arguments: str) -> str:
+        if (entry := self._entries.get(name)) is None:
+            return f"Error: unknown tool {name}"
+        if self._tainted and entry.spec.effect:
+            return "Error: unavailable because untrusted content was read this turn"
+        try:
+            params = entry.spec.params.model_validate_json(arguments or "{}")
+        except ValidationError as e:
+            return "Error: invalid arguments: " + "; ".join(
+                f"{'.'.join(map(str, err['loc']))} {err['msg']}" for err in e.errors()
+            )
+        try:
+            async with asyncio.timeout(_TOOL_TIMEOUT_SECONDS):
+                result = await entry.call(deepcopy(self._event), dict(params))
+        except TimeoutError:
+            logger.warning(f"Tool timeout: source={entry.label} tool={entry.spec.name}")
+            return "Error: tool timed out"
+        except Exception as e:
+            logger.exception(
+                f"Tool failed: source={entry.label} tool={entry.spec.name}: {e}"
+            )
+            return "Error: tool execution failed"
+        self._tainted = self._tainted or entry.spec.external
+        return self._finish(entry, result)
+
+    def _finish(self, entry: ToolEntry, result: Any) -> str:
+        if isinstance(result, dict) and valid_handled(result):
+            self.file_id = self.file_id or result.get("file_id")
+            if followup := result.get("followup"):
+                self.followups.append(followup)
+            result = result["response"]
+        if not isinstance(result, str):
+            logger.warning(
+                f"Ignoring invalid tool result: source={entry.label} "
+                f"tool={entry.spec.name}"
+            )
+            return "Error: tool returned an invalid result"
+        return result[:_MAX_TOOL_CHARS]
+
+
 @dataclass(frozen=True, slots=True)
 class Augment:
     context: str = ""
     text: str | None = None
     media: tuple[dict[str, Any], ...] = ()
+    tools: Toolbox | None = None
 
     def rewrite(self, prompt: str, original: str) -> str:
         if self.text is None or not original:
@@ -45,7 +131,7 @@ class Augment:
         return [*text, *self.media]
 
 
-Source = Literal["admin", "command", "limit", "plugin", "ai"]
+Source = Literal["admin", "limit", "plugin", "ai"]
 Deliver = Callable[[Reply, Source], Awaitable[None]]
 
 
@@ -60,11 +146,44 @@ class ResponsePipeline:
         limits: ResponseLimiter,
         plugins: "PluginManager",
         runtime: "BotRuntime",
+        is_admin: Callable[[Any], bool],
+        is_follower: Callable[[str | None], Awaitable[bool]],
     ):
         self._limits = limits
         self._plugins = plugins
         self._runtime = runtime
+        self._is_admin = is_admin
+        self._is_follower = is_follower
         self._actor_locks = KeyedAsyncLock()
+        self._host_tools: list[ToolEntry] = []
+
+    def add_tools(self, label: str, owner: object) -> None:
+        self._host_tools += [
+            ToolEntry(label, spec, partial(self._call_host_tool, owner, spec.name))
+            for spec in tool_specs(owner)
+        ]
+
+    @staticmethod
+    async def _call_host_tool(
+        owner: object, name: str, event: Any, arguments: dict[str, Any]
+    ) -> Any:
+        return await getattr(owner, name)(event, **arguments)
+
+    async def toolbox(self, event: Any) -> Toolbox | None:
+        candidates = [*self._host_tools, *self._plugins.plugin_tools()]
+        levels = {"all"}
+        if self._is_admin(event.user):
+            levels |= {"followers", "admin"}
+        elif any(e.spec.access == "followers" for e in candidates) and (
+            await self._is_follower(event.user.id)
+        ):
+            levels.add("followers")
+        entries = {
+            f"{entry.label}_{entry.spec.name}": entry
+            for entry in candidates
+            if entry.spec.access in levels
+        }
+        return Toolbox(event, entries) if entries else None
 
     def hold(
         self, actor_id: str | None, actor_name: str | None
@@ -73,10 +192,17 @@ class ResponsePipeline:
 
     async def _augment(self, event: Any) -> Augment:
         results = await self._plugins.call_plugin_hook("on_context", event)
+        contexts = [r["context"] for _, r in results if "context" in r]
+        text = next((r["text"] for _, r in results if "text" in r), None)
+        tools = await self.toolbox(event)
+        if tools and text is None and (command := tools.command(event.text)):
+            name, text = command
+            contexts.append(f"The user requested the tool {name}; call it directly.")
         return Augment(
-            "\n\n".join(r["context"] for _, r in results if "context" in r),
-            next((r["text"] for _, r in results if "text" in r), None),
+            "\n\n".join(contexts),
+            text,
             tuple(m for _, r in results for m in r.get("media", ())),
+            tools,
         )
 
     async def respond(
@@ -100,18 +226,22 @@ class ResponsePipeline:
                 return
         source: Source
         file_id: str | None = None
-        followup = None
+        followups: list[Callable[[], Awaitable[Any]]] = []
         if results := await self._plugins.call_plugin_hook(hook, event):
             name, result = results[0]
             logger.debug(f"{hook} handled by plugin: {name}")
             text, source = result["response"], "plugin"
-            file_id, followup = result.get("file_id"), result.get("followup")
+            file_id = result.get("file_id")
+            followups = [f] if (f := result.get("followup")) else []
         else:
-            text, source = await generate(await self._augment(event)), "ai"
+            augment = await self._augment(event)
+            text, source = await generate(augment), "ai"
+            if tools := augment.tools:
+                file_id, followups = tools.file_id, tools.followups
         if not text:
             return
         await deliver(Reply(text, file_id), source)
-        if followup:
+        for followup in followups:
             self._runtime.spawn(self._deliver_followup(followup, deliver, source))
         if user_id:
             await self._limits.record_response(user_id, count_turn=True)

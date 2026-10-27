@@ -141,18 +141,7 @@ class ChatHandler:
                 await deliver(Reply(text), "admin")
                 logger.debug("Chat handled by Admin")
             return True
-        reply = await self.bot.admin.handle_slash_command(
-            ctx.text,
-            user_id=ctx.user_id,
-            username=ctx.username,
-            handle=ctx.handle,
-            private=ctx.room_id is None,
-        )
-        if reply is None:
-            return False
-        if reply.text:
-            await deliver(reply, "command")
-        return True
+        return False
 
     async def _deliver(
         self, ctx: _ChatContext, limit: int, reply: Reply, source: Source
@@ -203,6 +192,13 @@ class ChatHandler:
                 return f"{mention}\n{text}"
         return text
 
+    @staticmethod
+    def _has_other_speakers(ctx: _ChatContext, history: list[dict[str, str]]) -> bool:
+        own = f"{ctx.username}: "
+        return any(
+            m["role"] == "user" and not m["content"].startswith(own) for m in history
+        )
+
     async def _generate_ai_reply(
         self, ctx: _ChatContext, limit: int, augment: Augment
     ) -> str | None:
@@ -228,6 +224,8 @@ class ChatHandler:
         ):
             history.pop()
         history = self.bot.openai.trim_chat_history(history, token_budget)
+        if ctx.room_id and augment.tools and self._has_other_speakers(ctx, history):
+            augment.tools.taint()
         messages: list[dict[str, Any]] = []
         if self.bot.system_prompt:
             messages.append({"role": "system", "content": self.bot.system_prompt})
@@ -238,7 +236,9 @@ class ChatHandler:
                 "content": augment.content(augment.apply(user_content, ctx.text)),
             }
         )
-        return await self.bot.openai.generate_chat(messages, **self.bot.ai_config)
+        return await self.bot.openai.generate_chat(
+            messages, **self.bot.ai_config, tools=augment.tools
+        )
 
     async def get_chat_history(
         self,

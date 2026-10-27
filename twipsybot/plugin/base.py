@@ -1,14 +1,16 @@
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import Any, ClassVar
+from dataclasses import dataclass
+from typing import Any, ClassVar, Literal, get_type_hints
 
 from loguru import logger
-from pydantic import BaseModel, BeforeValidator, ConfigDict
+from pydantic import BaseModel, BeforeValidator, ConfigDict, create_model
 
 from .contracts import HandledResult, PluginContext
 
-PLUGIN_API_VERSION = 3
+PLUGIN_API_VERSION = 4
+ToolAccess = Literal["all", "followers", "admin"]
 
 
 def _split_lines(value: Any) -> Any:
@@ -25,9 +27,70 @@ class PluginConfig(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True, validate_default=True)
 
 
+@dataclass(frozen=True, slots=True)
+class ToolSpec:
+    name: str
+    description: str
+    access: ToolAccess
+    external: bool
+    effect: bool
+    params: type[BaseModel]
+    schema: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolEntry:
+    label: str
+    spec: ToolSpec
+    call: Callable[[Any, dict[str, Any]], Awaitable[Any]]
+
+
+def tool(
+    description: str,
+    *,
+    access: ToolAccess = "all",
+    external: bool = False,
+    effect: bool = False,
+):
+    def mark(method):
+        parameters = inspect.signature(method).parameters
+        if not inspect.iscoroutinefunction(method) or [*parameters][:2] != [
+            "self",
+            "event",
+        ]:
+            raise TypeError(
+                f"tool {method.__name__} must be `async def (self, event, ...)`"
+            )
+        hints = get_type_hints(method, include_extras=True)
+        fields: dict[str, Any] = {
+            name: (hints.get(name, Any), ... if p.default is p.empty else p.default)
+            for name, p in list(parameters.items())[2:]
+        }
+        params = create_model(
+            method.__name__, __config__=ConfigDict(extra="forbid"), **fields
+        )
+        schema = params.model_json_schema()
+        schema.pop("title", None)
+        for prop in schema.get("properties", {}).values():
+            prop.pop("title", None)
+        method.__tool__ = ToolSpec(
+            method.__name__, description, access, external, effect, params, schema
+        )
+        return method
+
+    return mark
+
+
+def tool_specs(owner: object) -> tuple[ToolSpec, ...]:
+    return tuple(
+        method.__tool__
+        for _, method in inspect.getmembers(type(owner), inspect.isfunction)
+        if hasattr(method, "__tool__")
+    )
+
+
 class PluginBase:
     api_version: ClassVar[int]
-    priority: ClassVar[int] = 0
     config_class: ClassVar[type[PluginConfig]] = PluginConfig
     settings: PluginConfig
 
@@ -35,7 +98,7 @@ class PluginBase:
         self.context = context
         self.settings = self.config_class.model_validate(context.config)
         self._enabled = self._parse_bool(context.config.get("enabled"), False)
-        self._priority = int(context.config.get("priority", type(self).priority))
+        self._tools = tool_specs(self)
         self._initialized = False
         self._started = False
         self._resources_to_cleanup = []

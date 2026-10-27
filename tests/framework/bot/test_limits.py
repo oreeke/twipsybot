@@ -87,11 +87,10 @@ async def test_permanent_turn_limit_uses_manageable_blacklist(
     ]
 
 
-async def test_admin_and_slash_commands_bypass_response_limits(
+async def test_admin_commands_bypass_response_limits(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
 ) -> None:
     bot = await make_bot(
         write_config(
@@ -106,13 +105,9 @@ async def test_admin_and_slash_commands_bypass_response_limits(
     await bot.limits.record_response("user-2", count_turn=False)
 
     await bot.chat.handle(message({**CHAT_MESSAGE, "text": "^help"}))
-    await bot.chat.handle(
-        message({**CHAT_MESSAGE, "id": "msg-2", "text": "/post 夏夜的风"})
-    )
 
-    assert len(misskey_server.calls["notes/create"]) == 1
-    replies = misskey_server.calls["chat/messages/create-to-user"]
-    assert all(reply["text"] != "请求太频繁" for reply in replies)
+    [reply] = misskey_server.calls["chat/messages/create-to-user"]
+    assert reply["text"].startswith("可用命令")
 
 
 async def test_rate_limit_returns_configured_reply_without_second_ai_call(

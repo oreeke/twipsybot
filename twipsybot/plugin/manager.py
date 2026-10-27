@@ -8,6 +8,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
+from functools import partial
 from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
 from types import MappingProxyType
@@ -16,7 +17,7 @@ from typing import Any, Literal, get_args
 from loguru import logger
 
 from ..shared.config import Config
-from .base import PLUGIN_API_VERSION, PluginBase
+from .base import PLUGIN_API_VERSION, PluginBase, ToolEntry, ToolSpec
 from .contracts import AutoPostEvent, AutoPostVisibility, PluginContext
 from .services import (
     BotControlAdapter,
@@ -67,7 +68,7 @@ def _valid_file_ids(value: Any) -> bool:
     )
 
 
-def _valid_handled(result: dict[str, Any]) -> bool:
+def valid_handled(result: dict[str, Any]) -> bool:
     return (
         {"handled", "response"}
         <= set(result)
@@ -127,8 +128,8 @@ def _valid_auto_post(result: dict[str, Any]) -> bool:
 
 
 _RESULT_VALIDATORS: dict[str, Callable[[dict[str, Any]], bool]] = {
-    "on_message": _valid_handled,
-    "on_mention": _valid_handled,
+    "on_message": valid_handled,
+    "on_mention": valid_handled,
     "on_context": _valid_context,
     "on_auto_post": _valid_auto_post,
 }
@@ -506,11 +507,7 @@ class PluginManager:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     def _iter_enabled_plugins(self):
-        yield from sorted(
-            (p for p in self.plugins.values() if p._enabled),
-            key=lambda x: x._priority,
-            reverse=True,
-        )
+        yield from (p for p in self.plugins.values() if p._enabled)
 
     def _iter_dispatch_plugins(self):
         for plugin in self._iter_enabled_plugins():
@@ -569,6 +566,28 @@ class PluginManager:
                     if hook_name in {"on_message", "on_mention"}:
                         break
         return results
+
+    def plugin_tools(self) -> list[ToolEntry]:
+        if not self._accepting_hooks:
+            return []
+        return [
+            ToolEntry(plugin.context.name, spec, partial(self._call_tool, plugin, spec))
+            for plugin in self._iter_dispatch_plugins()
+            for spec in plugin._tools
+        ]
+
+    async def _call_tool(
+        self, plugin: PluginBase, spec: ToolSpec, event: Any, arguments: dict[str, Any]
+    ) -> Any:
+        name, task = plugin.context.name, asyncio.current_task()
+        if task is None or not (
+            self._accepting_hooks
+            and plugin._initialized
+            and name not in self._reloading
+        ):
+            return "Error: tool is temporarily unavailable"
+        with self._track_hook_task(task), self._track_plugin_call(name):
+            return await getattr(plugin, spec.name)(event, **arguments)
 
     def get_plugin_states(self) -> dict[str, bool]:
         states = {

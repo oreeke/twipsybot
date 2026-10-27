@@ -5,7 +5,7 @@ description: 维护 TwipsyBot 依赖、版本发布、Docker 镜像与兼容性�
 
 # 维护
 
-版本以 `pyproject.toml` 的 `project.version` 为准。用户可见的行为、配置、命令或兼容性变化须同步更新文档。
+版本以 `pyproject.toml` 的 `project.version` 为准。
 
 ## 依赖
 

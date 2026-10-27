@@ -14,20 +14,28 @@ description: TwipsyBot 的提及、聊天、响应管道、自动发帖与定时
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-	Event[事件] --> Hold[按 actor 串行] --> Cmd{命令?}
+	Event[事件] --> Hold[按 actor 串行] --> Cmd{"^ 命令?"}
 	Cmd -->|是| Done[命令回复]
 	Cmd -->|否| Limit{限流}
 	Limit -->|拒绝| Notice[提示 · 不计轮]
 	Limit -->|通过| Hook{插件 Hook}
 	Hook -->|handled| Send[发送]
-	Hook -->|无| AI[on_context 增强 → 模型] --> Send
+	Hook -->|无| AI[on_context 增强 · 工具 → 模型] --> Send
 	Send --> Record[记录限流状态]
 	Send -.-> Follow[followup 后台再发送]
 ```
 
-- 同一用户（群聊为房间）在同一把锁内串行，`^` 与 `/` 命令先于管道处理；提示、命令与管理回复不计轮数，只有插件与 AI 回复计入。
+- 同一用户（群聊为房间）在同一把锁内串行，`^` 命令先于管道处理；提示与管理回复不计轮数，只有插件与 AI 回复计入。
 - `on_message` / `on_mention` 首个 handled 结果即为回复，`followup` 在后台完成后二次发送。
-- 未被接管时，`on_context` 的结果合并为 `Augment`：`context` 前置，`text` 改写用户原文，`media` 作为多模态输入。
+- 未被接管时，`on_context` 的结果合并为 `Augment`：`context` 前置，`text` 改写用户原文，`media` 作为多模态输入，`tools` 为本次的 `Toolbox`。
+
+## 工具
+
+`ResponsePipeline.toolbox()` 汇总宿主工具（`add_tools()` 注册）与 `PluginManager.plugin_tools()`，按 `access` 过滤成 `Toolbox`，并解析 `/<工具>` 前缀。
+
+- `Toolbox.run()` 校验参数、限时并收集结果；文件与 `followup` 随最终回复发送与补发。插件工具经 `PluginManager` 包装，遵守重载与关闭状态。
+- `external` 工具返回后，或提及、聊天引入他人内容时，`Toolbox.taint()` 使 `effect` 工具不再可用。
+- 调用循环由 `OpenAIAPI.generate_chat()` 驱动，见 [OpenAI](openai.md#工具调用)。
 
 ## 提及
 
@@ -42,9 +50,9 @@ flowchart LR
 
 `ChatHandler` 在 `reply.chat` 开启时处理：
 
-- 会话键：私聊为对方用户 ID，群聊为 `room:{id}`；群聊须 `@` 机器人，且正文带 `用户名:` 前缀以区分发言人。
-- `@` 判定：用户名带 host 时须等于本站，避免 `@bot@other.host` 误触发。
-- 历史：首次从 Misskey 聊天记录懒加载，缓存 1 小时（最多 1000 个会话）；每轮回复后增量追加并去重，请求前按 `reply.memory` 与 `reply.ctx_tokens` 截断。
+- 会话键：私聊为对方用户 ID，群聊为 `room:{id}`；群聊须 `@` 机器人，正文带 `用户名:` 前缀区分发言人。
+- `@` 判定：用户名带 host 时须等于本站。
+- 历史：首次从 Misskey 懒加载，缓存 1 小时（最多 1000 个会话），每轮增量追加并去重，请求前按 `reply.memory` 与 `reply.ctx_tokens` 截断。
 - 群聊中 `^` 命令被忽略，私聊 `^` 仅管理员可用。
 
 ## 回复限制

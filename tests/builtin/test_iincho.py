@@ -157,11 +157,11 @@ async def test_iincho_publishes_formatted_summary() -> None:
     assert "example.com" not in prompt
     assert "@alice" not in prompt
     assert json.loads(prompt.partition("DATA=")[2]) == [
-        "第一条 [链接] [账号]",
+        "第一条 [link] [account]",
         "第二条",
     ]
     context.openai.moderate_texts.assert_awaited_once_with(
-        ["第一条 [链接] [账号]", "第二条"]
+        ["第一条 [link] [account]", "第二条"]
     )
     assert context.openai.generate_text.await_args.kwargs["json_output"] is True
     created = context.misskey.create_note.await_args.kwargs

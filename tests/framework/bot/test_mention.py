@@ -108,48 +108,81 @@ async def test_specified_mention_replies_with_specified_visibility(
     assert misskey_server.calls["notes/create"][0]["visibility"] == "specified"
 
 
-async def test_mention_generates_and_attaches_image(
+async def test_mention_tool_call_attaches_generated_image(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
     t2x_dir: Path,
 ) -> None:
+    openai_server.set_tool_call("t2x_draw", prompt="一只猫")
+    openai_server.set_reply("好的")
     bot = await make_bot(write_config(bot={"admins": ["user-1"]}), plugins_dir=t2x_dir)
     mock_image_backend(bot, "file-1")
 
-    await bot.mention.handle(mention({**MENTION_NOTE, "text": "@testbot /img 一只猫"}))
+    await bot.mention.handle(mention({**MENTION_NOTE, "text": "@testbot 画一只猫"}))
     await settle(bot)
 
     bot.openai.generate_image.assert_awaited_once_with("一只猫", **IMAGE_OPTIONS)
     bot.misskey.drive.upload_bytes.assert_awaited_once_with(
         PNG, name="generated.png", content_type="image/png"
     )
-    assert openai_server.calls == []
     ack, note = misskey_server.calls["notes/create"]
-    assert ack["text"] == "@alice\n正在生成图片，请稍候…"
-    assert note["text"] == "@alice\n图片生成完成"
+    assert ack["text"] == "@alice\n好的"
+    assert note["text"] == "@alice\n"
     assert note["fileIds"] == ["file-1"]
 
 
 @pytest.mark.parametrize(
-    "event",
-    [
-        {**MENTION_NOTE, "text": "@testbot /post 夏夜的风"},
-        {**MENTION_NOTE, "mentions": ["other-id"]},
-    ],
-    ids=("manual-post", "missing-bot-id"),
+    ("author", "tools_offered"), [("user-9", False), ("user-1", True)]
 )
-async def test_mention_ignores_unsupported_events(
+async def test_foreign_parent_note_disables_effect_tools(
+    author: str,
+    tools_offered: bool,
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    bot = await make_bot(write_config(bot={"admins": ["user-1"]}))
+    note = {
+        **MENTION_NOTE,
+        "text": "@testbot 总结一下",
+        "replyId": "parent-1",
+        "reply": {
+            "id": "parent-1",
+            "text": "原帖",
+            "user": {"id": author, "username": "someone"},
+        },
+    }
+
+    await bot.mention.handle(mention(note))
+
+    assert ("tools" in openai_server.calls[0]) is tools_offered
+
+
+async def test_foreign_thread_root_disables_effect_tools(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
-    event: dict[str, Any],
+) -> None:
+    misskey_server.set_response("notes/conversation", lambda payload: thread_chain())
+    bot = await make_bot(write_config(bot={"admins": ["user-1"]}))
+
+    await bot.mention.handle(reply_event())
+
+    assert "tools" not in openai_server.calls[0]
+
+
+async def test_mention_ignores_events_without_bot_id(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
 ) -> None:
     bot = await make_bot(write_config())
 
-    await bot.mention.handle(mention(event))
+    await bot.mention.handle(mention({**MENTION_NOTE, "mentions": ["other-id"]}))
 
     assert openai_server.calls == []
     assert "notes/create" not in misskey_server.calls
@@ -454,17 +487,20 @@ async def test_plugin_reply_can_attach_file(
     assert misskey_server.calls["notes/create"][0]["fileIds"] == ["file-1"]
 
 
-async def test_image_command_reply_to_bot_does_not_mention_sender(
+async def test_tool_reply_to_bot_does_not_mention_sender(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
     t2x_dir: Path,
 ) -> None:
+    openai_server.set_tool_call("t2x_draw", prompt="一只猫")
+    openai_server.set_reply("好的")
     bot = await make_bot(write_config(bot={"admins": ["user-1"]}), plugins_dir=t2x_dir)
     mock_image_backend(bot, "file-1")
     note = {
         "id": "reply-1",
-        "text": "/img 一只猫",
+        "text": "画一只猫",
         "user": {"id": "user-1", "username": "alice"},
         "reply": {
             "id": "origin-1",
@@ -477,9 +513,9 @@ async def test_image_command_reply_to_bot_does_not_mention_sender(
     await settle(bot)
 
     ack, reply = misskey_server.calls["notes/create"]
-    assert ack["text"] == "正在生成图片，请稍候…"
+    assert ack["text"] == "好的"
     assert reply["replyId"] == "reply-1"
-    assert reply["text"] == "图片生成完成"
+    assert "text" not in reply
     assert reply["fileIds"] == ["file-1"]
 
 

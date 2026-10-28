@@ -73,7 +73,7 @@ async def test_plugin_context_uses_stable_plugin_id(
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    plugin = bot.plugin_manager.get_plugin("keyact")
+    plugin = bot.plugin_manager.plugins.get("keyact")
     assert plugin is not None
     assert plugin.context.name == "keyact"
     assert plugin.__class__.__module__ != "plugins.keyact.plugin"
@@ -87,7 +87,7 @@ async def test_context_uses_isolated_service_adapters(
 ) -> None:
     plugins_dir = make_plugin_dir("context")
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    plugin = bot.plugin_manager.get_plugin("context")
+    plugin = bot.plugin_manager.plugins.get("context")
     assert plugin is not None
 
     assert not hasattr(plugin.context.misskey, "access_token")

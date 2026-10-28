@@ -33,6 +33,14 @@ def mock_image_backend(bot: Any, file_id: str) -> None:
     bot.misskey.drive.upload_bytes = AsyncMock(return_value={"id": file_id})
 
 
+def tool_names(call: dict[str, Any]) -> list[str]:
+    return [t["function"]["name"] for t in call.get("tools", [])]
+
+
+def offers_effect_tools(call: dict[str, Any]) -> bool:
+    return "note_publish" in tool_names(call)
+
+
 async def settle(bot: Any) -> None:
     await asyncio.gather(*bot.runtime._background)
 

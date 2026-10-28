@@ -566,9 +566,7 @@ async def test_main_chat_message_uses_matching_misskey_channel(
         await client.close()
 
 
-async def test_streaming_channel_waits_for_misskey_confirmation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_streaming_channel_waits_for_misskey_confirmation() -> None:
     client = StreamingClient("https://example.com", "token")
     send_json = AsyncMock()
     client.socket.ws = cast(

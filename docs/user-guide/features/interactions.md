@@ -20,7 +20,9 @@ description: 配置 TwipsyBot 的提及与聊天回复、工具、上下文、�
 
 | 工具 | 可用者 | 作用 |
 | --- | --- | --- |
-| `note_publish` | 管理员 | 发布帖子，见[自动发帖](posting.md#手动发帖) |
+| `note_publish` | 管理员 | 发布帖子，可定时，见[自动发帖](posting.md#手动发帖) |
+| `time_now` | 所有人 | 查询当前日期与时间 |
+| `note_pending`、`note_cancel` | 管理员 | 列出、取消待发布的帖子，见[定时发布](posting.md#定时发布) |
 | `t2x_draw` | 管理员 | 生成图片，见 [T2X](../plugins/t2x.md) |
 | `web_search` · `web_fetch` | 关注者与管理员 | 联网检索、读取网页，见 [Web](../plugins/web.md) |
 | `bond_card` · `bond_forget` | 所有人 | 查看或删除自己的关系记录，见 [Bond](../plugins/bond.md) |

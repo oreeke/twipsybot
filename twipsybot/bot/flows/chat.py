@@ -224,7 +224,7 @@ class ChatHandler:
         ):
             history.pop()
         history = self.bot.openai.trim_chat_history(history, token_budget)
-        if ctx.room_id and augment.tools and self._has_other_speakers(ctx, history):
+        if ctx.room_id and self._has_other_speakers(ctx, history):
             augment.tools.taint()
         messages: list[dict[str, Any]] = []
         if self.bot.system_prompt:

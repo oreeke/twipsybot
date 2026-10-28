@@ -596,9 +596,6 @@ class PluginManager:
         }
         return dict(sorted(states.items()))
 
-    def get_plugin(self, name: str) -> PluginBase | None:
-        return self.plugins.get(name)
-
     async def confirm_auto_post_published(self, plugin_name: str, content: str) -> None:
         if plugin_name in self._reloading or not (
             (plugin := self.plugins.get(plugin_name)) and plugin._started

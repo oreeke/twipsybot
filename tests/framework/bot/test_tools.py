@@ -113,7 +113,10 @@ async def test_toolbox_filters_tools_by_access(
     guest = await bot.pipeline.toolbox(_event("user-2"))
 
     assert _names(admin) == [
+        "note_cancel",
+        "note_pending",
         "note_publish",
+        "time_now",
         "kit_boom",
         "kit_echo",
         "kit_hang",
@@ -124,6 +127,7 @@ async def test_toolbox_filters_tools_by_access(
         "kit_send",
     ]
     assert _names(follower) == [
+        "time_now",
         "kit_boom",
         "kit_echo",
         "kit_hang",
@@ -133,6 +137,7 @@ async def test_toolbox_filters_tools_by_access(
         "kit_send",
     ]
     assert _names(guest) == [
+        "time_now",
         "kit_boom",
         "kit_echo",
         "kit_hang",
@@ -212,14 +217,6 @@ async def test_explicit_taint_disables_effect_tools(
     assert "kit_send" not in _names(toolbox)
     assert "note_publish" not in _names(toolbox)
     assert "kit_echo" in _names(toolbox)
-
-
-async def test_toolbox_is_none_without_tools(
-    make_bot: MakeBot, write_config: WriteConfig
-) -> None:
-    bot = await make_bot(write_config())
-
-    assert await bot.pipeline.toolbox(_event()) is None
 
 
 async def test_toolbox_runs_tool_and_collects_files_and_followups(

@@ -113,7 +113,7 @@ async def test_all_hooks_receive_stable_events(
     )
     await manager.call_plugin_hook("on_auto_post")
 
-    plugin = manager.get_plugin("events")
+    plugin = manager.plugins.get("events")
     assert plugin is not None
     assert [(item[0].__name__, item[1], item[2]) for item in plugin.received] == [
         ("MessageEvent", "message-1", "room-1"),
@@ -143,7 +143,7 @@ async def test_invalid_hook_results_are_rejected(
         == []
     )
     assert await bot.plugin_manager.call_plugin_hook("on_auto_post") == []
-    plugin = bot.plugin_manager.get_plugin("invalid")
+    plugin = bot.plugin_manager.plugins.get("invalid")
     assert plugin is not None
 
     async def invalid_visibility(event):
@@ -193,7 +193,7 @@ async def test_reused_result_is_not_mutated(
     second = await bot.plugin_manager.call_plugin_hook("on_message", event)
 
     assert first == second
-    plugin = bot.plugin_manager.get_plugin("reuse")
+    plugin = bot.plugin_manager.plugins.get("reuse")
     assert plugin is not None
     assert plugin.result == {"handled": True, "response": "ok"}
 

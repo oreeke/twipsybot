@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import pytest
 from support.events import message
 from support.fakes import FakeMisskeyServer, FakeOpenAIServer
 from support.flows import (
@@ -10,6 +12,7 @@ from support.flows import (
     IMAGE_OPTIONS,
     mock_image_backend,
     settle,
+    tool_names,
 )
 from support.plugins import T2X_SOURCE
 from support.types import MakeBot, MakePluginDir, WriteConfig
@@ -75,7 +78,12 @@ async def test_post_tool_publishes_note_without_counting(
     await bot.chat.handle(message({**CHAT_MESSAGE, "text": "发一条关于夏夜的帖子"}))
 
     first, second = openai_server.calls
-    assert [t["function"]["name"] for t in first["tools"]] == ["note_publish"]
+    assert [t["function"]["name"] for t in first["tools"]] == [
+        "note_cancel",
+        "note_pending",
+        "note_publish",
+        "time_now",
+    ]
     assert second["messages"][-1]["content"] == "Note published."
     note = misskey_server.calls["notes/create"][0]
     assert (note["text"], note["visibility"], note["localOnly"]) == (
@@ -127,6 +135,107 @@ async def test_post_tool_rejects_empty_text(
     assert openai_server.calls[1]["messages"][-1]["content"].startswith("Error")
 
 
+async def test_post_tool_schedules_note_and_cancels_it(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    openai_server.set_tool_call(
+        "note_publish",
+        text="夏夜观星",
+        visibility="home",
+        local_only=True,
+        at="2099-07-01 08:00",
+    )
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
+    bot.runtime.running = True
+    bot.scheduler.start()
+    try:
+        await bot.chat.handle(message({**CHAT_MESSAGE, "text": "7月1日8点发帖"}))
+
+        assert "notes/create" not in misskey_server.calls
+        [job] = bot.scheduler.get_jobs()
+        assert job.next_run_time.strftime("%Y-%m-%d %H:%M") == "2099-07-01 08:00"
+        assert job.id in openai_server.calls[1]["messages"][-1]["content"]
+        event = message(CHAT_MESSAGE)
+        assert job.id in await bot.auto_post.pending(event)
+
+        await job.func(*job.args)
+        note = misskey_server.calls["notes/create"][0]
+        assert (note["text"], note["visibility"], note["localOnly"]) == (
+            "夏夜观星",
+            "home",
+            True,
+        )
+
+        assert (await bot.auto_post.cancel(event, "missing")).startswith("Error")
+        assert await bot.auto_post.cancel(event, job.id) == "Scheduled note cancelled."
+        assert await bot.auto_post.pending(event) == "No scheduled notes."
+    finally:
+        bot.scheduler.shutdown(wait=False)
+
+
+@pytest.mark.parametrize("running", [False, True])
+async def test_scheduled_note_is_skipped_or_failure_is_contained(
+    running: bool,
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
+    bot.runtime.running = running
+    bot.scheduler.start()
+    try:
+        await bot.auto_post.publish(
+            message(CHAT_MESSAGE), "夏夜观星", at="2099-07-01 08:00"
+        )
+        [job] = bot.scheduler.get_jobs()
+        bot.misskey.create_note = AsyncMock(side_effect=RuntimeError("down"))
+
+        await job.func(*job.args)
+
+        assert bot.misskey.create_note.await_count == int(running)
+        assert "notes/create" not in misskey_server.calls
+    finally:
+        bot.scheduler.shutdown(wait=False)
+
+
+@pytest.mark.parametrize("at", ["08:00", "25:99", "2000-01-01 08:00"])
+async def test_post_tool_rejects_invalid_or_past_schedule_time(
+    at: str,
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    openai_server.set_tool_call("note_publish", text="你好", at=at)
+    bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
+
+    await bot.chat.handle(message({**CHAT_MESSAGE, "text": "发帖"}))
+
+    assert "notes/create" not in misskey_server.calls
+    assert openai_server.calls[1]["messages"][-1]["content"].startswith("Error")
+
+
+async def test_time_tool_is_available_to_everyone(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    openai_server.set_tool_call("time_now")
+    bot = await make_bot(write_config())
+
+    await bot.chat.handle(message({**CHAT_MESSAGE, "text": "现在几点"}))
+
+    first, second = openai_server.calls
+    assert tool_names(first) == ["time_now"]
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2} \w{3} \d{2}:\d{2} [+-]\d{4}",
+        second["messages"][-1]["content"],
+    )
+
+
 async def test_post_tool_is_hidden_from_non_admins(
     make_bot: MakeBot,
     write_config: WriteConfig,
@@ -136,7 +245,7 @@ async def test_post_tool_is_hidden_from_non_admins(
 
     await bot.chat.handle(message({**CHAT_MESSAGE, "text": "发一条帖子"}))
 
-    assert "tools" not in openai_server.calls[0]
+    assert tool_names(openai_server.calls[0]) == ["time_now"]
 
 
 async def test_admin_tools_are_hidden_from_non_admins(
@@ -151,7 +260,7 @@ async def test_admin_tools_are_hidden_from_non_admins(
     await bot.chat.handle(message({**CHAT_MESSAGE, "text": "/draw 一只猫"}))
 
     bot.openai.generate_image.assert_not_awaited()
-    assert "tools" not in openai_server.calls[0]
+    assert tool_names(openai_server.calls[0]) == ["time_now"]
     assert "The user requested the tool" not in str(openai_server.calls[0]["messages"])
 
 

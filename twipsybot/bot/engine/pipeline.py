@@ -4,13 +4,14 @@ from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 from pydantic import ValidationError
 
-from ...plugin.base import ToolEntry, tool_specs
+from ...plugin.base import ToolEntry, tool, tool_specs
 from ...plugin.contracts import HandledResult
 from ...plugin.manager import valid_handled
 from ...shared.locks import KeyedAsyncLock, actor_key
@@ -106,10 +107,10 @@ class Toolbox:
 
 @dataclass(frozen=True, slots=True)
 class Augment:
+    tools: Toolbox
     context: str = ""
     text: str | None = None
     media: tuple[dict[str, Any], ...] = ()
-    tools: Toolbox | None = None
 
     def rewrite(self, prompt: str, original: str) -> str:
         if self.text is None or not original:
@@ -137,6 +138,12 @@ Deliver = Callable[[Reply, Source], Awaitable[None]]
 
 def replied(source: Source) -> str:
     return {"admin": "Admin replied", "plugin": "Plugin replied"}.get(source, "Replied")
+
+
+class ClockTools:
+    @tool("Get the current local date, time and timezone of the bot host.")
+    async def now(self, event: Any) -> str:
+        return f"{datetime.now().astimezone():%Y-%m-%d %a %H:%M %z}"
 
 
 class ResponsePipeline:
@@ -169,7 +176,7 @@ class ResponsePipeline:
     ) -> Any:
         return await getattr(owner, name)(event, **arguments)
 
-    async def toolbox(self, event: Any) -> Toolbox | None:
+    async def toolbox(self, event: Any) -> Toolbox:
         candidates = [*self._host_tools, *self._plugins.plugin_tools()]
         levels = {"all"}
         if self._is_admin(event.user):
@@ -183,7 +190,7 @@ class ResponsePipeline:
             for entry in candidates
             if entry.spec.access in levels
         }
-        return Toolbox(event, entries) if entries else None
+        return Toolbox(event, entries)
 
     def hold(
         self, actor_id: str | None, actor_name: str | None
@@ -195,14 +202,14 @@ class ResponsePipeline:
         contexts = [r["context"] for _, r in results if "context" in r]
         text = next((r["text"] for _, r in results if "text" in r), None)
         tools = await self.toolbox(event)
-        if tools and text is None and (command := tools.command(event.text)):
+        if text is None and (command := tools.command(event.text)):
             name, text = command
             contexts.append(f"The user requested the tool {name}; call it directly.")
         return Augment(
+            tools,
             "\n\n".join(contexts),
             text,
             tuple(m for _, r in results for m in r.get("media", ())),
-            tools,
         )
 
     async def respond(
@@ -236,8 +243,7 @@ class ResponsePipeline:
         else:
             augment = await self._augment(event)
             text, source = await generate(augment), "ai"
-            if tools := augment.tools:
-                file_id, followups = tools.file_id, tools.followups
+            file_id, followups = augment.tools.file_id, augment.tools.followups
         if not text:
             return
         await deliver(Reply(text, file_id), source)

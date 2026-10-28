@@ -85,8 +85,8 @@ async def test_auto_post_plugins_share_trigger_time(
     async def capture(event):
         timestamps.append(event.triggered_at)
 
-    first = bot.plugin_manager.get_plugin("first")
-    second = bot.plugin_manager.get_plugin("second")
+    first = bot.plugin_manager.plugins.get("first")
+    second = bot.plugin_manager.plugins.get("second")
     assert first is not None
     assert second is not None
     first.on_auto_post = capture

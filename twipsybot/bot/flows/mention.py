@@ -64,17 +64,17 @@ class MentionHandler:
         return parse_note(related)
 
     def _taint_foreign(
-        self, notes: Iterable[NoteRef], user_id: str | None, tools: Toolbox | None
+        self, notes: Iterable[NoteRef], user_id: str | None, tools: Toolbox
     ) -> None:
         trusted = {self.bot.bot_user_id, user_id}
-        if tools and any(n.body and n.user.id not in trusted for n in notes):
+        if any(n.body and n.user.id not in trusted for n in notes):
             tools.taint()
 
     async def _build_mention_prompt(
         self,
         text: str,
         event: MentionEvent,
-        tools: Toolbox | None,
+        tools: Toolbox,
         *,
         include_parent: bool = True,
     ) -> str:
@@ -123,7 +123,7 @@ class MentionHandler:
         ]
 
     async def _thread_history(
-        self, event: MentionEvent, user_id: str | None, tools: Toolbox | None
+        self, event: MentionEvent, user_id: str | None, tools: Toolbox
     ) -> list[dict[str, str]]:
         limit = self.bot.config.get(ConfigKeys.REPLY_MEMORY)
         budget = self.bot.config.get(ConfigKeys.REPLY_CTX_TOKENS)

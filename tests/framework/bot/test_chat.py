@@ -7,7 +7,13 @@ from unittest.mock import AsyncMock
 import pytest
 from support.events import message
 from support.fakes import DEFAULT_AI_REPLY, FakeMisskeyServer, FakeOpenAIServer
-from support.flows import CHAT_MESSAGE, IMAGE_OPTIONS, mock_image_backend, settle
+from support.flows import (
+    CHAT_MESSAGE,
+    IMAGE_OPTIONS,
+    mock_image_backend,
+    offers_effect_tools,
+    settle,
+)
 from support.plugins import CONTEXT_PLUGIN
 from support.types import MakeBot, MakePluginDir, WriteConfig
 
@@ -208,7 +214,10 @@ async def test_chat_tool_call_attaches_generated_image(
     )
     first, second = openai_server.calls
     assert [t["function"]["name"] for t in first["tools"]] == [
+        "note_cancel",
+        "note_pending",
         "note_publish",
+        "time_now",
         "t2x_draw",
     ]
     assert second["messages"][-1]["role"] == "tool"
@@ -356,7 +365,7 @@ async def test_room_history_from_other_speakers_disables_effect_tools(
 
     await bot.chat.handle(message(raw))
 
-    assert "tools" not in openai_server.calls[0]
+    assert not offers_effect_tools(openai_server.calls[0])
 
 
 async def test_room_chat_tool_call_attaches_generated_image(

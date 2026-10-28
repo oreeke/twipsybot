@@ -24,7 +24,7 @@ from ..flows.notification import NotificationHandler
 from ..flows.post import AutoPostService
 from .connect import StreamingConnector
 from .limits import ResponseLimiter
-from .pipeline import ResponsePipeline
+from .pipeline import ClockTools, ResponsePipeline
 from .reload import SettingsReloader
 from .runtime import BotRuntime
 
@@ -92,6 +92,7 @@ class Neuro:
         self.notification = NotificationHandler(self)
         self.auto_post = AutoPostService(self)
         self.pipeline.add_tools("note", self.auto_post)
+        self.pipeline.add_tools("time", ClockTools())
         self.connect = StreamingConnector(
             config=config,
             misskey=self.misskey,

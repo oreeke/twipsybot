@@ -91,7 +91,7 @@ class TopicsPlugin(PluginBase):
             return False
 
     async def on_auto_post(
-        self, event: AutoPostEvent
+        self, _event: AutoPostEvent
     ) -> AutoPostResult | PromptModificationResult | None:
         try:
             if self.settings.source == "rss":

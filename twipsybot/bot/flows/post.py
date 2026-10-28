@@ -2,7 +2,9 @@ import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Literal
+from uuid import uuid4
 
+from apscheduler.job import Job
 from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
@@ -22,6 +24,7 @@ if TYPE_CHECKING:
 
 
 JOB_ID = "auto_post"
+_NOTE_JOB_PREFIX = "note_"
 
 
 class AutoPostService:
@@ -128,8 +131,8 @@ class AutoPostService:
         logger.debug("Post counter reset")
 
     @tool(
-        "Publish a note to the timeline right now. Write the complete note text "
-        "yourself. Use only when the user explicitly asks you to post.",
+        "Publish a note immediately, or at a given time. Write the complete note "
+        "text yourself. Use only when the user explicitly asks you to post.",
         access="admin",
         effect=True,
     )
@@ -139,18 +142,108 @@ class AutoPostService:
         text: Annotated[str, Field(description="The complete note text to publish")],
         visibility: Annotated[
             Literal["public", "home", "followers"] | None,
-            Field(description="Note visibility; null uses the configured default"),
-        ],
+            Field(
+                description="Note visibility; omit or null unless the user specifies it"
+            ),
+        ] = None,
         local_only: Annotated[
             bool | None,
-            Field(description="Whether to keep the note local; null uses the default"),
-        ],
+            Field(
+                description="true = do not federate; the note stays on this server. "
+                "Omit or null unless the user specifies it"
+            ),
+        ] = None,
+        at: Annotated[
+            str | None,
+            Field(
+                description="Local date-time 'YYYY-MM-DD HH:MM' (24-hour, bot host "
+                "timezone) to publish later; call time_now first to get the current "
+                "time. Omit or null to publish immediately"
+            ),
+        ] = None,
     ) -> str:
         if not (text := text.strip()):
             return "Error: the note text is empty"
+        logger.debug(
+            f"Manual post: visibility={visibility} local_only={local_only} at={at}"
+        )
+        if at is not None:
+            return self._schedule_note(text, visibility, local_only, at)
         await self._send_note(text, visibility, local_only)
         logger.info(f"Manual post succeeded: {format_log_text(text)}")
         return "Note published."
+
+    @tool(
+        "List notes scheduled for later publication, with their ids and times.",
+        access="admin",
+        effect=True,
+    )
+    async def pending(self, event: MessageEvent | MentionEvent) -> str:
+        if not (jobs := self._scheduled_jobs()):
+            return "No scheduled notes."
+        return "\n".join(
+            f"{job.id} | {job.next_run_time:%Y-%m-%d %H:%M %z} | {job.name}"
+            for job in jobs
+        )
+
+    @tool(
+        "Cancel a scheduled note by id; call pending first to find the id.",
+        access="admin",
+        effect=True,
+    )
+    async def cancel(
+        self,
+        event: MessageEvent | MentionEvent,
+        note_id: Annotated[str, Field(description="Scheduled note id from pending")],
+    ) -> str:
+        if note_id not in {job.id for job in self._scheduled_jobs()}:
+            return "Error: no scheduled note with this id"
+        self.bot.scheduler.remove_job(note_id)
+        logger.info(f"Scheduled note cancelled: {note_id}")
+        return "Scheduled note cancelled."
+
+    def _scheduled_jobs(self) -> list[Job]:
+        return sorted(
+            (
+                job
+                for job in self.bot.scheduler.get_jobs()
+                if job.id.startswith(_NOTE_JOB_PREFIX)
+            ),
+            key=lambda job: job.next_run_time,
+        )
+
+    def _schedule_note(
+        self, text: str, visibility: str | None, local_only: bool | None, at: str
+    ) -> str:
+        try:
+            run_at = datetime.fromisoformat(at.strip()).astimezone()
+        except ValueError:
+            return "Error: at must be 'YYYY-MM-DD HH:MM'"
+        if run_at <= datetime.now().astimezone():
+            return "Error: the time has already passed; call time_now to check the time"
+        job = self.bot.scheduler.add_job(
+            self._send_scheduled,
+            "date",
+            run_date=run_at,
+            args=[text, visibility, local_only],
+            id=f"{_NOTE_JOB_PREFIX}{uuid4().hex[:6]}",
+            name=format_log_text(text),
+            misfire_grace_time=self._MISFIRE_GRACE_SECONDS,
+        )
+        logger.info(f"Note scheduled: {job.id} at {run_at}")
+        return f"Scheduled as {job.id} for {run_at:%Y-%m-%d %H:%M %z}."
+
+    async def _send_scheduled(
+        self, text: str, visibility: str | None, local_only: bool | None
+    ) -> None:
+        if not self.bot.runtime.running:
+            return
+        try:
+            await self._send_note(text, visibility, local_only)
+        except Exception as e:
+            logger.error(f"Scheduled post failed: {e}")
+            return
+        logger.info(f"Scheduled post succeeded: {format_log_text(text)}")
 
     async def _allowed(self, limit: int | None) -> bool:
         return self.bot.runtime.running and (

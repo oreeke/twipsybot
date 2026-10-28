@@ -25,7 +25,7 @@ async def test_sync_hook_is_rejected_at_load(
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    assert bot.plugin_manager.get_plugin("sync") is None
+    assert bot.plugin_manager.plugins.get("sync") is None
 
 
 @pytest.mark.parametrize(
@@ -61,7 +61,7 @@ async def test_incompatible_plugin_signature_is_rejected_at_load(
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    assert bot.plugin_manager.get_plugin(name) is None
+    assert bot.plugin_manager.plugins.get(name) is None
 
 
 @pytest.mark.parametrize(
@@ -85,7 +85,7 @@ async def test_incompatible_plugin_api_is_rejected(
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    assert bot.plugin_manager.get_plugin(name) is None
+    assert bot.plugin_manager.plugins.get(name) is None
 
 
 async def test_plugin_module_uses_explicit_export(
@@ -107,7 +107,7 @@ async def test_plugin_module_uses_explicit_export(
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    plugin = bot.plugin_manager.get_plugin("echo")
+    plugin = bot.plugin_manager.plugins.get("echo")
     assert plugin is not None
     assert plugin.__class__.__name__ == "Reply"
 
@@ -128,7 +128,7 @@ async def test_plugin_module_requires_explicit_export(
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    assert bot.plugin_manager.get_plugin("implicit") is None
+    assert bot.plugin_manager.plugins.get("implicit") is None
 
 
 async def test_failed_plugin_import_removes_partial_module(
@@ -147,7 +147,7 @@ async def test_failed_plugin_import_removes_partial_module(
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    assert bot.plugin_manager.get_plugin("broken_import") is None
+    assert bot.plugin_manager.plugins.get("broken_import") is None
     assert {name for name in sys.modules if name.startswith(module_prefix)} == (
         previous_modules
     )
@@ -173,7 +173,7 @@ async def test_plugin_directory_supports_relative_imports(
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    plugin = bot.plugin_manager.get_plugin("multi_file")
+    plugin = bot.plugin_manager.plugins.get("multi_file")
     assert plugin is not None
     assert plugin.value == "ok"  # type: ignore[attr-defined]
 
@@ -194,7 +194,7 @@ async def test_failed_plugin_import_removes_loaded_submodules(
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    assert bot.plugin_manager.get_plugin("broken_sub") is None
+    assert bot.plugin_manager.plugins.get("broken_sub") is None
     assert not [name for name in sys.modules if name.startswith(module_prefix)]
 
 
@@ -221,7 +221,7 @@ async def test_entry_point_plugin_uses_central_config(
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    plugin = bot.plugin_manager.get_plugin("external")
+    plugin = bot.plugin_manager.plugins.get("external")
     assert plugin is not None
     assert plugin.context.name == "external"
 
@@ -240,7 +240,7 @@ async def test_unconfigured_entry_point_is_not_loaded(
 
     bot = await make_bot(write_config(), plugins_dir=tmp_path / "plugins")
 
-    assert bot.plugin_manager.get_plugin("external") is None
+    assert bot.plugin_manager.plugins.get("external") is None
     load.assert_not_called()
 
 
@@ -266,5 +266,5 @@ async def test_local_plugin_shadows_entry_point(
 
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    assert bot.plugin_manager.get_plugin("echo") is not None
+    assert bot.plugin_manager.plugins.get("echo") is not None
     load.assert_not_called()

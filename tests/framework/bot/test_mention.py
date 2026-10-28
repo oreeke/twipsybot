@@ -14,6 +14,7 @@ from support.flows import (
     MENTION_NOTE,
     PNG,
     mock_image_backend,
+    offers_effect_tools,
     reply_event,
     settle,
     thread_chain,
@@ -157,7 +158,7 @@ async def test_foreign_parent_note_disables_effect_tools(
 
     await bot.mention.handle(mention(note))
 
-    assert ("tools" in openai_server.calls[0]) is tools_offered
+    assert offers_effect_tools(openai_server.calls[0]) is tools_offered
 
 
 async def test_foreign_thread_root_disables_effect_tools(
@@ -171,7 +172,7 @@ async def test_foreign_thread_root_disables_effect_tools(
 
     await bot.mention.handle(reply_event())
 
-    assert "tools" not in openai_server.calls[0]
+    assert not offers_effect_tools(openai_server.calls[0])
 
 
 async def test_mention_ignores_events_without_bot_id(

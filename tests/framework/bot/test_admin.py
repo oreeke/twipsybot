@@ -273,7 +273,7 @@ async def test_admin_lists_and_toggles_plugins(
         read_settings(bot.config.settings_path)["plugins"]["demo"]["enabled"] is False
     )
     assert "demo 已启用" in await run("^plugin on demo")
-    assert bot.plugin_manager.get_plugin("demo")._enabled  # type: ignore[union-attr]
+    assert bot.plugin_manager.plugins.get("demo")._enabled  # type: ignore[union-attr]
     assert "未知插件: ghost" in await run("^plugin on ghost")
     assert "用法: ^plugin on|off <插件名>" in await run("^plugin on")
     assert "未知命令: reload" in await run("^reload demo")

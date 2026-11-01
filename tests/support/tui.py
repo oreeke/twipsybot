@@ -9,7 +9,7 @@ from typing import Annotated
 
 from pydantic import Field, SecretStr
 
-from twipsybot.plugin import LineText, PLUGIN_API_VERSION, PluginBase, PluginConfig
+from twipsybot.plugin import LineText, PluginBase, PluginConfig
 
 
 class _Config(PluginConfig):
@@ -21,7 +21,6 @@ class _Config(PluginConfig):
 
 
 class Demo(PluginBase):
-    api_version = PLUGIN_API_VERSION
     config_class = _Config
 
 

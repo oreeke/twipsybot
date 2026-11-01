@@ -33,7 +33,7 @@ flowchart LR
 
 `ResponsePipeline.toolbox()` 汇总宿主工具（`add_tools()` 注册）与 `PluginManager.plugin_tools()`，按 `access` 过滤成 `Toolbox`，并解析 `/<工具>` 前缀。
 
-- `Toolbox.run()` 校验参数、限时并收集结果；文件与 `followup` 随最终回复发送与补发。插件工具经 `PluginManager` 包装，遵守重载与关闭状态。
+- `Toolbox.run()` 校验参数、限时并收集结果；文件、链接与 `followup` 随最终回复发送、追加与补发。插件工具经 `PluginManager` 包装，遵守重载与关闭状态。
 - `external` 工具返回后，或提及、聊天引入他人内容时，`Toolbox.taint()` 使 `effect` 工具不再可用。
 - 调用循环由 `OpenAIAPI.generate_chat()` 驱动，见 [OpenAI](openai.md#工具调用)。
 

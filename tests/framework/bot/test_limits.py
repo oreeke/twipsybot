@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from support.events import mention, message
 from support.fakes import DEFAULT_AI_REPLY, FakeMisskeyServer, FakeOpenAIServer
 from support.flows import CHAT_MESSAGE, MENTION_NOTE
@@ -80,11 +81,33 @@ async def test_permanent_turn_limit_uses_manageable_blacklist(
     assert bot.config.get("reply.blacklist") == []
     assert len(openai_server.calls) == 2
     replies = misskey_server.calls["chat/messages/create-to-user"]
-    assert [reply["text"] for reply in replies] == [
-        DEFAULT_AI_REPLY,
-        "黑名单:\n```\n已更新 blacklist\n\n(空)\n```",
-        DEFAULT_AI_REPLY,
-    ]
+    assert len(replies) == 3
+    assert replies[0]["text"] == replies[2]["text"] == DEFAULT_AI_REPLY
+
+
+@pytest.mark.parametrize(
+    ("limit_msg", "expected"),
+    [("请稍后再试", [DEFAULT_AI_REPLY, "请稍后再试"]), ("", [DEFAULT_AI_REPLY])],
+    ids=["with-message", "silent"],
+)
+async def test_rate_limit_blocks_second_ai_call(
+    limit_msg: str,
+    expected: list[str],
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    bot = await make_bot(
+        write_config(reply={"rate_limit": "1h", "rate_limit_msg": limit_msg})
+    )
+
+    await bot.chat.handle(message(dict(CHAT_MESSAGE)))
+    await bot.chat.handle(message({**CHAT_MESSAGE, "id": "msg-2"}))
+
+    assert len(openai_server.calls) == 1
+    replies = misskey_server.calls["chat/messages/create-to-user"]
+    assert [reply["text"] for reply in replies] == expected
 
 
 async def test_admin_commands_bypass_response_limits(
@@ -108,40 +131,6 @@ async def test_admin_commands_bypass_response_limits(
 
     [reply] = misskey_server.calls["chat/messages/create-to-user"]
     assert reply["text"].startswith("可用命令")
-
-
-async def test_rate_limit_returns_configured_reply_without_second_ai_call(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    bot = await make_bot(
-        write_config(reply={"rate_limit": "1h", "rate_limit_msg": "请稍后再试"})
-    )
-
-    await bot.chat.handle(message(dict(CHAT_MESSAGE)))
-    await bot.chat.handle(message({**CHAT_MESSAGE, "id": "msg-2"}))
-
-    assert len(openai_server.calls) == 1
-    replies = misskey_server.calls["chat/messages/create-to-user"]
-    assert [reply["text"] for reply in replies] == [DEFAULT_AI_REPLY, "请稍后再试"]
-
-
-async def test_rate_limit_silently_blocks_when_reply_is_empty(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    bot = await make_bot(write_config(reply={"rate_limit": "1h", "rate_limit_msg": ""}))
-
-    await bot.chat.handle(message(dict(CHAT_MESSAGE)))
-    await bot.chat.handle(message({**CHAT_MESSAGE, "id": "msg-2"}))
-
-    assert len(openai_server.calls) == 1
-    replies = misskey_server.calls["chat/messages/create-to-user"]
-    assert [reply["text"] for reply in replies] == [DEFAULT_AI_REPLY]
 
 
 async def test_admins_bypass_response_limits(

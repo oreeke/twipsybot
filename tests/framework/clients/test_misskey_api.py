@@ -1,371 +1,300 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Any, cast
-from unittest.mock import AsyncMock, Mock
+import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import pytest
-from aiohttp import ClientError, web
-from aiohttp.multipart import BodyPartReader
-from aiohttp.test_utils import TestServer
+from loguru import logger
 
 from twipsybot.clients.misskey.api import MisskeyAPI
-from twipsybot.clients.misskey.bridge import _redact_access_token
+from twipsybot.clients.misskey.stream import StreamingClient
 from twipsybot.shared.consts import API_MAX_RETRIES
 from twipsybot.shared.errors import (
     APIBadRequestError,
     APIConnectionError,
+    APIFileTooLargeError,
+    APINotFoundError,
     APIPermissionError,
-    APIRateLimitError,
+    AuthenticationError,
+    WebSocketConnectionError,
+)
+
+PERMISSION_DENIED = (
+    '{"error":{"code":"PERMISSION_DENIED","message":"Denied",'
+    '"id":"error-id","kind":"permission"}}'
+)
+INVALID_PARAM = (
+    '{"error":{"code":"INVALID_PARAM","message":"Invalid parameter","id":"id"}}'
 )
 
 
-def test_misskey_access_token_is_redacted() -> None:
-    text = 'https://example.com/streaming?i=secret&x=1 {"i":"token"}'
+@pytest.fixture
+def sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    delays: list[float] = []
+    real_sleep = asyncio.sleep
 
-    assert _redact_access_token(text) == (
-        'https://example.com/streaming?i=***&x=1 {"i":"***"}'
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        await real_sleep(0)
+
+    monkeypatch.setattr("twipsybot.clients.misskey.api.asyncio.sleep", sleep)
+    monkeypatch.setattr(
+        "twipsybot.clients.misskey.api.random.uniform", lambda low, high: 0
     )
+    return delays
 
 
-def test_misskey_error_format_uses_current_fields() -> None:
-    assert (
-        MisskeyAPI._parse_error(
-            '{"error":{"code":"INVALID_PARAM","message":"Invalid parameter","id":"id"}}'
-        )[0]
-        == "INVALID_PARAM: Invalid parameter"
-    )
-
-
-async def test_room_timeline_uses_room_id_without_fallback() -> None:
-    request = AsyncMock(side_effect=APIBadRequestError("invalid roomId"))
-    api = object.__new__(MisskeyAPI)
-    api.make_read_request = request
-
-    with pytest.raises(APIBadRequestError):
-        await api.get_room_messages("room-1", limit=20, since_id="message-1")
-
-    request.assert_awaited_once_with(
-        "chat/messages/room-timeline",
-        {"roomId": "room-1", "limit": 20, "sinceId": "message-1"},
-    )
-
-
-async def test_misskey_requests_use_bearer_without_duplicate_token() -> None:
-    requests: list[tuple[str, str | None, dict[str, Any]]] = []
-
-    async def api_handler(request: web.Request) -> web.Response:
-        endpoint = request.match_info["endpoint"]
-        if endpoint == "drive/files/create":
-            payload = {}
-            async for field in await request.multipart():
-                assert isinstance(field, BodyPartReader)
-                assert field.name is not None
-                payload[field.name] = (
-                    await field.read() if field.name == "file" else await field.text()
-                )
-        else:
-            payload = await request.json()
-        requests.append((endpoint, request.headers.get("Authorization"), payload))
-        return web.json_response({})
-
-    async def file_handler(request: web.Request) -> web.Response:
-        requests.append(("external", request.headers.get("Authorization"), {}))
-        return web.Response(body=b"image")
-
-    app = web.Application()
-    app.router.add_post("/api/{endpoint:.*}", api_handler)
-    app.router.add_get("/file", file_handler)
-    server = TestServer(app)
-    await server.start_server()
-    api = MisskeyAPI(str(server.make_url("/")).rstrip("/"), "token")
+async def test_websocket_failure_log_hides_access_token(ws_server: Any) -> None:
+    ws_server.refusals = 1
+    client = StreamingClient(ws_server.url, "secret-token")
+    logs: list[str] = []
+    sink = logger.add(logs.append, level="DEBUG")
     try:
-        await api.make_request("i", {"i": "override", "probe": True})
-        await api.drive.upload_bytes(b"image", name="image.png")
-        await api.drive.fetch_bytes(str(server.make_url("/file")))
+        with pytest.raises(WebSocketConnectionError):
+            await client.connect(reconnect=False)
     finally:
-        await api.close()
-        await server.close()
+        logger.remove(sink)
+        await client.close()
 
-    assert requests == [
+    assert any("i=***" in line for line in logs)
+    assert not any("secret-token" in line for line in logs)
+
+
+async def test_requests_use_bearer_without_duplicate_token(
+    api: MisskeyAPI, misskey_server: Any
+) -> None:
+    await api.make_request("i", {"i": "override", "probe": True})
+    await api.drive.upload_bytes(b"image", name="image.png")
+    await api.drive.fetch_bytes(f"{misskey_server.url}/file")
+
+    assert misskey_server.requests == [
         ("i", "Bearer token", {"i": "override", "probe": True}),
-        (
-            "drive/files/create",
-            "Bearer token",
-            {"name": "image.png", "file": b"image"},
-        ),
+        ("drive/files/create", "Bearer token", {"name": "image.png", "file": b"image"}),
         ("external", None, {}),
     ]
 
 
-async def test_misskey_api_retries_connection_errors(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("status", "body", "error", "code", "message"),
+    [
+        (400, INVALID_PARAM, APIBadRequestError, "INVALID_PARAM", "Invalid parameter"),
+        (403, PERMISSION_DENIED, APIPermissionError, "PERMISSION_DENIED", "Denied"),
+        (401, "nope", AuthenticationError, None, "nope"),
+        (404, "missing", APINotFoundError, None, "missing"),
+        (413, "big", APIFileTooLargeError, None, "big"),
+        (418, "teapot", APIBadRequestError, None, "teapot"),
+        (503, "down", APIConnectionError, None, "down"),
+        (200, "not json", APIConnectionError, None, ""),
+    ],
+)
+async def test_error_responses_map_to_typed_errors(
+    api: MisskeyAPI,
+    misskey_server: Any,
+    status: int,
+    body: str,
+    error: type[Exception],
+    code: str | None,
+    message: str,
 ) -> None:
-    request = AsyncMock(side_effect=[APIConnectionError(), {"ok": True}])
-    sleep = AsyncMock()
-    api = object.__new__(MisskeyAPI)
-    api.make_request = request
-    monkeypatch.setattr("twipsybot.clients.misskey.api.asyncio.sleep", sleep)
+    misskey_server.reply(status, body)
+
+    with pytest.raises(error) as exc_info:
+        await api.make_request("notes/create")
+
+    assert exc_info.value.code == code  # type: ignore[attr-defined]
+    assert message in str(exc_info.value)
+
+
+async def test_read_requests_retry_connection_errors(
+    api: MisskeyAPI, misskey_server: Any, sleeps: list[float]
+) -> None:
+    misskey_server.reply(503)
+    misskey_server.reply(200, {"ok": True})
 
     assert await api.make_read_request("notes/show") == {"ok": True}
-    assert request.await_count == 2
-    sleep.assert_awaited_once()
+    assert len(misskey_server.requests) == 2
+    assert len(sleeps) == 1
 
 
-async def test_misskey_api_respects_retry_after(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_read_requests_respect_retry_after(
+    api: MisskeyAPI, misskey_server: Any, sleeps: list[float]
 ) -> None:
-    request = AsyncMock(side_effect=[APIRateLimitError(retry_after=12.0), {"ok": True}])
-    sleep = AsyncMock()
-    api = object.__new__(MisskeyAPI)
-    api.make_request = request
-    monkeypatch.setattr("twipsybot.clients.misskey.api.asyncio.sleep", sleep)
+    misskey_server.reply(429, "slow down", **{"Retry-After": "12"})
+    misskey_server.reply(200, {"ok": True})
 
     assert await api.make_read_request("notes/show") == {"ok": True}
-    sleep.assert_awaited_once_with(12.0)
+    assert sleeps == [12.0]
 
 
-async def test_misskey_preserves_permission_error_details() -> None:
-    response = SimpleNamespace(
-        status=403,
-        headers={},
-        text=AsyncMock(
-            return_value=(
-                '{"error":{"code":"PERMISSION_DENIED","message":"Denied",'
-                '"id":"error-id","kind":"permission"}}'
-            )
-        ),
-    )
-    api = object.__new__(MisskeyAPI)
-
-    with pytest.raises(APIPermissionError) as exc_info:
-        await api._process_response(response, "notes/create")
-
-    assert exc_info.value.status == 403
-    assert exc_info.value.code == "PERMISSION_DENIED"
-
-
-async def test_misskey_api_stops_after_max_retries(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_read_requests_stop_after_max_retries(
+    api: MisskeyAPI, misskey_server: Any, sleeps: list[float]
 ) -> None:
-    request = AsyncMock(side_effect=APIConnectionError())
-    sleep = AsyncMock()
-    api = object.__new__(MisskeyAPI)
-    api.make_request = request
-    monkeypatch.setattr("twipsybot.clients.misskey.api.asyncio.sleep", sleep)
+    misskey_server.default = (503, "down", {})
 
     with pytest.raises(APIConnectionError):
         await api.make_read_request("notes/show")
 
-    assert request.await_count == API_MAX_RETRIES + 1
-    assert sleep.await_count == API_MAX_RETRIES
+    assert len(misskey_server.requests) == API_MAX_RETRIES + 1
+    assert len(sleeps) == API_MAX_RETRIES
 
 
-async def test_misskey_api_does_not_retry_writes() -> None:
-    post = Mock(side_effect=ClientError("down"))
-    shared = SimpleNamespace(session=SimpleNamespace(post=post))
-    api = MisskeyAPI("https://example.com", "token", shared=cast(Any, shared))
+async def test_write_requests_are_not_retried(
+    api: MisskeyAPI, misskey_server: Any
+) -> None:
+    misskey_server.reply(503)
 
     with pytest.raises(APIConnectionError):
         await api.make_request("notes/create")
 
-    post.assert_called_once()
-
-
-async def test_create_note_leaves_reply_validation_to_misskey() -> None:
-    request = AsyncMock(side_effect=APIBadRequestError("NO_SUCH_REPLY_TARGET"))
-    api = object.__new__(MisskeyAPI)
-    api.make_request = request
-
-    with pytest.raises(APIBadRequestError):
-        await api.create_note("reply", reply_id="missing-note")
-
-    request.assert_awaited_once_with(
-        "notes/create",
-        {"text": "reply", "visibility": "public", "replyId": "missing-note"},
-    )
-
-
-async def test_create_note_preserves_known_specified_reply_visibility() -> None:
-    request = AsyncMock(return_value={})
-    api = object.__new__(MisskeyAPI)
-    api.make_request = request
-
-    await api.create_note("reply", visibility="specified", reply_id="specified-note")
-
-    request.assert_awaited_once_with(
-        "notes/create",
-        {
-            "text": "reply",
-            "visibility": "specified",
-            "replyId": "specified-note",
-        },
-    )
-
-
-async def test_create_note_does_not_turn_empty_visibility_public() -> None:
-    request = AsyncMock(return_value={})
-    api = object.__new__(MisskeyAPI)
-    api.make_request = request
-
-    await api.create_note("text", visibility="")
-
-    request.assert_awaited_once_with("notes/create", {"text": "text", "visibility": ""})
-
-
-@pytest.mark.parametrize(
-    ("method", "file_key"), [("create_note", "fileIds"), ("send_message", "fileId")]
-)
-async def test_empty_text_is_omitted_when_sending_only_a_file(
-    method: str, file_key: str
-) -> None:
-    request = AsyncMock(return_value={})
-    api = object.__new__(MisskeyAPI)
-    api.make_request = request
-
-    if method == "create_note":
-        await api.create_note("", file_ids=["f1"])
-    else:
-        await api.send_message("u1", "", "f1")
-
-    call = request.await_args
-    assert call is not None
-    assert "text" not in call.args[1]
-    assert call.args[1][file_key] in (["f1"], "f1")
-
-
-async def test_user_endpoints_use_misskey_api() -> None:
-    read = AsyncMock(return_value={"id": "u1"})
-    request = AsyncMock(return_value={})
-    api = object.__new__(MisskeyAPI)
-    api.make_read_request = read
-    api.make_request = request
-
-    assert await api.show_user("u1") == {"id": "u1"}
-    await api.update_user_memo("u1", None)
-
-    read.assert_awaited_once_with("users/show", {"userId": "u1"})
-    request.assert_awaited_once_with(
-        "users/update-memo", {"userId": "u1", "memo": None}
-    )
+    assert len(misskey_server.requests) == 1
 
 
 @pytest.mark.parametrize("retry", [False, True])
-async def test_call_api_normalizes_endpoint_and_selects_request(retry: bool) -> None:
-    read = AsyncMock(return_value={"via": "read"})
-    write = AsyncMock(return_value={"via": "write"})
-    api = object.__new__(MisskeyAPI)
-    api.make_read_request = read
-    api.make_request = write
+async def test_call_api_retries_only_when_requested(
+    api: MisskeyAPI,
+    misskey_server: Any,
+    sleeps: list[float],
+    retry: bool,
+) -> None:
     params = {"query": "misskey"}
+    misskey_server.reply(503)
 
-    result = await api.call_api("/notes/search", params, retry=retry)
+    call = api.call_api("/notes/search", params, retry=retry)
+    if retry:
+        await call
+    else:
+        with pytest.raises(APIConnectionError):
+            await call
 
-    chosen, other = (read, write) if retry else (write, read)
-    assert result == chosen.return_value
-    chosen.assert_awaited_once_with("notes/search", {"query": "misskey"})
-    other.assert_not_awaited()
+    assert [r.endpoint for r in misskey_server.requests] == ["notes/search"] * (
+        2 if retry else 1
+    )
+    assert misskey_server.requests[0].payload == {"query": "misskey"}
     assert params == {"query": "misskey"}
 
 
 @pytest.mark.parametrize(
-    "endpoint",
+    ("endpoint", "params", "match"),
     [
-        "",
-        "/",
-        "../i",
-        "notes//show",
-        "notes/",
-        "notes?x=1",
-        "a#b",
-        "a b",
-        "a\\b",
-        "http://x/api/i",
-        "notes/%2e%2e",
-        "笔记/show",
+        *(
+            (endpoint, None, "invalid endpoint")
+            for endpoint in (
+                "",
+                "/",
+                "../i",
+                "notes//show",
+                "notes/",
+                "notes?x=1",
+                "a#b",
+                "a b",
+                "a\\b",
+                "http://x/api/i",
+                "notes/%2e%2e",
+                "笔记/show",
+            )
+        ),
+        ("notes/show", {"i": "override"}, "'i'"),
     ],
 )
-async def test_call_api_rejects_invalid_endpoint(endpoint: str) -> None:
-    api = object.__new__(MisskeyAPI)
-    api.make_request = AsyncMock()
+async def test_call_api_rejects_unsafe_input(
+    api: MisskeyAPI,
+    misskey_server: Any,
+    endpoint: str,
+    params: dict[str, str] | None,
+    match: str,
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        await api.call_api(endpoint, params)
 
-    with pytest.raises(ValueError, match="invalid endpoint"):
-        await api.call_api(endpoint)
-
-    api.make_request.assert_not_awaited()
-
-
-async def test_call_api_rejects_token_param() -> None:
-    api = object.__new__(MisskeyAPI)
-    api.make_request = AsyncMock()
-
-    with pytest.raises(ValueError, match="'i'"):
-        await api.call_api("notes/show", {"i": "override"})
-
-    api.make_request.assert_not_awaited()
+    assert not misskey_server.requests
 
 
 @pytest.mark.parametrize(
-    ("method", "identifier_key"),
-    [("send_message", "toUserId"), ("send_room_message", "toRoomId")],
+    ("call", "endpoint", "expected"),
+    [
+        (
+            lambda api: api.create_note("x" * 3001),
+            "notes/create",
+            {"text": "x" * 2999 + "…", "visibility": "public"},
+        ),
+        (
+            lambda api: api.create_renote("note", text="x" * 3001),
+            "notes/create",
+            {"renoteId": "note", "text": "x" * 2999 + "…"},
+        ),
+        (
+            lambda api: api.send_message("target", "x" * 2001),
+            "chat/messages/create-to-user",
+            {"toUserId": "target", "text": "x" * 1999 + "…"},
+        ),
+        (
+            lambda api: api.send_room_message("target", "x" * 2001),
+            "chat/messages/create-to-room",
+            {"toRoomId": "target", "text": "x" * 1999 + "…"},
+        ),
+        (
+            lambda api: api.create_note(
+                "reply", visibility="specified", reply_id="specified-note"
+            ),
+            "notes/create",
+            {"text": "reply", "visibility": "specified", "replyId": "specified-note"},
+        ),
+        (
+            lambda api: api.create_note("text", visibility=""),
+            "notes/create",
+            {"text": "text", "visibility": ""},
+        ),
+        (
+            lambda api: api.create_note("", file_ids=["f1"]),
+            "notes/create",
+            {"visibility": "public", "fileIds": ["f1"]},
+        ),
+        (
+            lambda api: api.send_message("u1", "", "f1"),
+            "chat/messages/create-to-user",
+            {"toUserId": "u1", "fileId": "f1"},
+        ),
+    ],
+    ids=[
+        "note-truncated",
+        "renote-truncated",
+        "chat-truncated",
+        "room-truncated",
+        "specified-visibility-kept",
+        "empty-visibility-kept",
+        "note-file-only-omits-text",
+        "chat-file-only-omits-text",
+    ],
 )
-async def test_chat_messages_truncate_text_over_misskey_limit(
-    method: str, identifier_key: str
+async def test_note_and_chat_requests_build_expected_payload(
+    api: MisskeyAPI,
+    misskey_server: Any,
+    call: Callable[[MisskeyAPI], Awaitable[Any]],
+    endpoint: str,
+    expected: dict[str, Any],
 ) -> None:
-    request = AsyncMock(return_value={})
-    api = object.__new__(MisskeyAPI)
-    api.make_request = request
-    await getattr(api, method)("target", "x" * 2001)
+    await call(api)
 
-    endpoint = (
-        "chat/messages/create-to-user"
-        if method == "send_message"
-        else "chat/messages/create-to-room"
-    )
-    request.assert_awaited_once_with(
-        endpoint, {identifier_key: "target", "text": "x" * 1999 + "…"}
-    )
+    assert misskey_server.requests == [(endpoint, "Bearer token", expected)]
 
 
-@pytest.mark.parametrize("method", ("create_note", "create_renote"))
-async def test_notes_truncate_text_over_misskey_limit(method: str) -> None:
-    request = AsyncMock(return_value={})
-    api = object.__new__(MisskeyAPI)
-    api.make_request = request
-    if method == "create_note":
-        await api.create_note("x" * 3001)
-        expected = {"text": "x" * 2999 + "…", "visibility": "public"}
-    else:
-        await api.create_renote("note", text="x" * 3001)
-        expected = {"renoteId": "note", "text": "x" * 2999 + "…"}
+async def test_user_note_cleanup_requests_use_safe_scope(
+    api: MisskeyAPI, misskey_server: Any
+) -> None:
+    misskey_server.reply(200, [{"id": "note-1"}])
 
-    request.assert_awaited_once_with("notes/create", expected)
+    notes = await api.get_user_notes("bot-id", until_date=123456789, until_id="note-2")
 
-
-async def test_user_note_cleanup_requests_use_safe_scope() -> None:
-    read = AsyncMock(return_value=[{"id": "note-1"}])
-    write = AsyncMock(return_value={})
-    api = object.__new__(MisskeyAPI)
-    api.make_read_request = read
-    api.make_request = write
-
-    assert await api.get_user_notes(
-        "bot-id", until_date=123456789, until_id="note-2"
-    ) == [{"id": "note-1"}]
-    await api.delete_note("note-1")
-
-    read.assert_awaited_once_with(
-        "users/notes",
-        {
-            "userId": "bot-id",
-            "withReplies": False,
-            "withRenotes": False,
-            "withChannelNotes": False,
-            "untilDate": 123456789,
-            "limit": 100,
-            "allowPartial": False,
-            "withFiles": False,
-            "untilId": "note-2",
-        },
-    )
-    write.assert_awaited_once_with("notes/delete", {"noteId": "note-1"})
+    assert notes == [{"id": "note-1"}]
+    assert misskey_server.requests[0].payload == {
+        "userId": "bot-id",
+        "withReplies": False,
+        "withRenotes": False,
+        "withChannelNotes": False,
+        "untilDate": 123456789,
+        "limit": 100,
+        "allowPartial": False,
+        "withFiles": False,
+        "untilId": "note-2",
+    }

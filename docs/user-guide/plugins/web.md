@@ -40,8 +40,7 @@ plugins:
 
 - 对话中提到需要查询的内容或给出链接，模型会自行调用；也可用 `/search <问题>`、`/fetch <链接>` 强制。
 - 检索失败或无结果时，模型会如实说明并基于已有知识回答。
-- 检索结果只用于本次请求，不写入聊天历史。
-- 模型引用来源时，会在回复末尾用编号超链接标注，如 `1 2`，点击编号即可打开对应网页；是否标注由模型决定。
+- 检索结果只用于本次请求，不写入聊天历史；来源链接随回复发出。
 
 ## SearXNG
 
@@ -67,7 +66,7 @@ services:
 
 ## DeepSeek
 
-使用 DeepSeek 的 [Search / Fetch 接口](https://api-docs.deepseek.com/zh-cn/guides/search)，搜索与网页抓取均由其服务端完成：
+使用 DeepSeek 的 [Search / Fetch 接口](https://api-docs.deepseek.com/zh-cn/guides/search)：
 
 ```yaml
 plugins:
@@ -77,7 +76,7 @@ plugins:
     api_key: sk-xxx
 ```
 
-- 抓取由 DeepSeek 服务器访问目标网址；`allow_domains` 与 `block_domains` 仍然生效。
+- `allow_domains` 与 `block_domains` 仍然生效。
 
 ## 安全
 

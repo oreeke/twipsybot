@@ -13,8 +13,9 @@ AutoPostVisibility = Literal["public", "home", "followers"]
 class HandledResult(TypedDict):
     handled: Literal[True]
     response: str
-    file_id: NotRequired[str]
+    file_ids: NotRequired[list[str]]
     followup: NotRequired[Callable[[], Awaitable["HandledResult"]]]
+    links: NotRequired[list[str]]
 
 
 class AutoPostItem(TypedDict):

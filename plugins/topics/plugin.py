@@ -61,7 +61,6 @@ class _Config(PluginConfig):
 
 
 class TopicsPlugin(PluginBase):
-    api_version = 4
     config_class = _Config
     settings: _Config
 

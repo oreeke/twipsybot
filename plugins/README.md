@@ -1,6 +1,6 @@
 ## 扩展插件
 
-Plugin API v4，只从 `twipsybot.plugin` 导入公共接口。完整 API 见[扩展插件](https://twipsybot.oreeke.com/dev-guide/plugins)。
+只从 `twipsybot.plugin` 导入公共接口。完整 API 见[扩展插件](https://twipsybot.oreeke.com/dev-guide/plugins)。
 
 ### 最小示例
 
@@ -11,8 +11,6 @@ from twipsybot.plugin import MessageEvent, PluginBase
 
 
 class EchoPlugin(PluginBase):
-    api_version = 4
-
     async def on_message(self, event: MessageEvent):
         return self.handled(f"echo: {event.text}")
 
@@ -27,7 +25,7 @@ plugins:
 ```
 
 - 模块级 `plugin` 导出插件类；插件目录按包加载，可用相对导入拆分多个模块（如 `from .helper import x`）。如需自动安装依赖用 Entry Points。
-- `api_version` 写字面量；覆盖的生命周期与 Hook 须为 `async def`。
+- 覆盖的生命周期与 Hook 须为 `async def`。
 - 自定义配置继承 `PluginConfig` 并挂到 `config_class`，经只读的 `self.settings` 访问；`SecretStr` 字段存于 `data/secrets.yaml`。
 - `@tool` 声明模型可调用的工具，参数由类型标注生成。
 

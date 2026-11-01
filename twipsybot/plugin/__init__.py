@@ -10,7 +10,7 @@ from ..clients.misskey.models import (
 from ..shared.consts import USER_AGENT
 from ..shared.errors import APIResponseError, BlockedURLError
 from ..shared.settings import When
-from .base import PLUGIN_API_VERSION, LineText, PluginBase, PluginConfig, tool
+from .base import LineText, PluginBase, PluginConfig, tool
 from .contracts import (
     AutoPostEvent,
     AutoPostItem,
@@ -28,7 +28,6 @@ from .contracts import (
 )
 
 __all__ = (
-    "PLUGIN_API_VERSION",
     "USER_AGENT",
     "APIResponseError",
     "AutoPostEvent",

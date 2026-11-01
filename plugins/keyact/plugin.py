@@ -60,7 +60,6 @@ class _Config(PluginConfig):
 
 
 class KeyActPlugin(PluginBase):
-    api_version = 4
     config_class = _Config
     settings: _Config
 

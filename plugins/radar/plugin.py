@@ -75,7 +75,6 @@ class _Config(PluginConfig):
 
 
 class RadarPlugin(PluginBase):
-    api_version = 4
     config_class = _Config
     settings: _Config
 

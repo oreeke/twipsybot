@@ -1,6 +1,6 @@
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, get_type_hints
 
@@ -9,7 +9,6 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, create_model
 
 from .contracts import HandledResult, PluginContext
 
-PLUGIN_API_VERSION = 4
 ToolAccess = Literal["all", "followers", "admin"]
 
 
@@ -90,7 +89,6 @@ def tool_specs(owner: object) -> tuple[ToolSpec, ...]:
 
 
 class PluginBase:
-    api_version: ClassVar[int]
     config_class: ClassVar[type[PluginConfig]] = PluginConfig
     settings: PluginConfig
 
@@ -143,14 +141,18 @@ class PluginBase:
     def handled(
         self,
         response: str,
-        file_id: str | None = None,
+        *,
+        file_ids: Sequence[str] | None = None,
         followup: Callable[[], Awaitable[HandledResult]] | None = None,
+        links: Sequence[str] | None = None,
     ) -> HandledResult:
         result: HandledResult = {"handled": True, "response": response}
-        if file_id:
-            result["file_id"] = file_id
+        if file_ids:
+            result["file_ids"] = list(file_ids)
         if followup:
             result["followup"] = followup
+        if links:
+            result["links"] = list(links)
         return result
 
     def _register_resource(self, resource: Any, cleanup_method: str = "close") -> None:

@@ -32,6 +32,9 @@ _RISK_TYPES = {
     "illegal": ("⚖️", "违法活动"),
     "privacy": ("🕵️", "诽谤隐私"),
 }
+_SEVERE_RISKS = frozenset({"sexual", "minors", "violence", "self_harm", "illegal"})
+_SEVERE_COLOR = "e74c3c"
+_WARN_COLOR = "e67e22"
 _OPENAI_RISKS = {
     "harassment": "harassment",
     "hate": "hate",
@@ -141,7 +144,6 @@ class _Config(PluginConfig):
 
 
 class IinchoPlugin(PluginBase):
-    api_version = 4
     config_class = _Config
     settings: _Config
 
@@ -219,8 +221,9 @@ class IinchoPlugin(PluginBase):
     async def _process_window(self) -> None:
         window, self._window = self._window, _Window()
         if len(window.samples) < self.settings.min_notes:
-            self._log_plugin_action(
-                "skipped", f"eligible={window.eligible} sampled={len(window.samples)}"
+            logger.debug(
+                f"Plugin {self.context.name} skipped: "
+                f"eligible={window.eligible} sampled={len(window.samples)}"
             )
             return
         result = await self._generate(window.samples)
@@ -431,19 +434,22 @@ class IinchoPlugin(PluginBase):
         self, result: dict[str, Any], window: _Window, ended_at: datetime
     ) -> str:
         risks = [
-            f"{emoji} {label} {result['risks'][key]}"
+            f"> $[fg.color={_SEVERE_COLOR if key in _SEVERE_RISKS else _WARN_COLOR} "
+            f"{emoji} {label} {result['risks'][key]}]"
             for key, (emoji, label) in _RISK_TYPES.items()
             if result["risks"][key]
         ]
         started_at = window.started_at.astimezone()
         ended_at = ended_at.astimezone()
+        end_format = "%H:%M" if started_at.date() == ended_at.date() else "%m-%d %H:%M"
         model = _MODERATION_MODELS[self.settings.moderation.provider]
         sections = [
-            "💡 Iincho 时间线观察\n",
-            f"🕒 {started_at:%Y-%m-%d %H:%M} 至 {ended_at:%Y-%m-%d %H:%M %z}",
-            f"📚 覆盖 {window.eligible} 篇有效帖子，AI 均匀抽样 {result['sample_count']} 篇。",
-            f"\n🧪 送检模型：\n🤖 {model}",
-            "\n🚨 违规审查：\n" + ("\n".join(risks) if risks else "✅ 未发现明显违规"),
+            "**📢 时间线报告**",
+            f"> {started_at:%Y-%m-%d %H:%M} 至 {ended_at:{end_format}}",
+            f"> 覆盖 {window.eligible} · AI 均匀抽样 {result['sample_count']}",
+            "\n**🔍 违规审查**",
+            "\n".join(risks) if risks else "> ✅ 未发现明显违规",
+            f"\n<small>🤖 {model}</small>",
         ]
         return "\n".join(sections)
 

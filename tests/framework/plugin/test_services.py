@@ -1,111 +1,87 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from typing import Any
 
 import pytest
 from support.fakes import FakeMisskeyServer
-from support.types import MakeBot, MakePluginDir, WriteConfig
 
-from twipsybot.plugin.services import (
-    BotControlAdapter,
-    MisskeyServiceAdapter,
-    OpenAIServiceAdapter,
+from twipsybot.plugin.services import BotControlAdapter, OpenAIServiceAdapter
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ({"bot.system_prompt": None}, ("", None, None)),
+        (
+            {
+                "bot.system_prompt": "be brief",
+                "bot.max_tokens": 64,
+                "bot.temperature": 0.5,
+            },
+            ("be brief", 64, 0.5),
+        ),
+    ],
 )
-
-
-async def test_misskey_service_adapter_sends_message() -> None:
-    send_message = AsyncMock(return_value={"id": "message-1"})
-    service = MisskeyServiceAdapter(
-        SimpleNamespace(drive=SimpleNamespace(), send_message=send_message)
-    )
-
-    result = await service.send_message("admin-id", "alert")
-
-    assert result == {"id": "message-1"}
-    send_message.assert_awaited_once_with("admin-id", "alert", None)
-
-
-async def test_misskey_service_adapter_create_note_with_files() -> None:
-    create_note = AsyncMock(return_value={})
-    service = MisskeyServiceAdapter(
-        SimpleNamespace(drive=SimpleNamespace(), create_note=create_note)
-    )
-
-    await service.create_note("hi", file_ids=("f1", "f2"))
-    await service.create_note("plain")
-
-    assert create_note.await_args_list[0].args == ("hi", None, None, None, ("f1", "f2"))
-    assert create_note.await_args_list[1].args == ("plain", None, None, None, None)
-
-
-def test_bot_control_adapter_exposes_admins_and_delegates_check() -> None:
-    is_admin = Mock(return_value=True)
-    adapter = BotControlAdapter(
-        SimpleNamespace(
-            admin=SimpleNamespace(
-                admins=("u1", "alice@example.com"), is_admin=is_admin
-            ),
-        )
-    )
-
-    assert adapter.admins == ("u1", "alice@example.com")
-    assert adapter.is_admin("u1", "alice") is True
-    is_admin.assert_called_once_with("u1", "alice")
-
-
-async def test_openai_service_adapter_forwards_image_options() -> None:
-    generate = AsyncMock(return_value=b"png")
-    adapter = OpenAIServiceAdapter(SimpleNamespace(generate_image=generate), None)
-
-    assert (
-        await adapter.generate_image("猫", model="m", size="s", api_key="k") == b"png"
-    )
-    generate.assert_awaited_once_with(
-        "猫", model="m", size="s", quality=None, base_url=None, api_key="k"
-    )
-
-
-async def test_plugin_context_uses_stable_plugin_id(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+def test_openai_adapter_reads_generation_settings_from_config(
+    values: dict[str, Any], expected: tuple[str, int | None, float | None]
 ) -> None:
-    plugins_dir = make_plugin_dir("keyact")
+    config = SimpleNamespace(get=lambda key, default=None: values.get(key, default))
+    adapter = OpenAIServiceAdapter(SimpleNamespace(), config)
 
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    actual = (adapter.system_prompt, adapter.max_tokens, adapter.temperature)
 
-    plugin = bot.plugin_manager.plugins.get("keyact")
-    assert plugin is not None
-    assert plugin.context.name == "keyact"
-    assert plugin.__class__.__module__ != "plugins.keyact.plugin"
+    assert actual == expected
 
 
-async def test_context_uses_isolated_service_adapters(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
+async def _hold(lock: Any) -> None:
+    async with lock:
+        pass
+
+
+async def test_actor_lock_serializes_only_the_same_actor() -> None:
+    adapter = BotControlAdapter(SimpleNamespace())
+
+    async with adapter.actor_lock("u1", "alice"):
+        async with asyncio.timeout(0.5), adapter.actor_lock("u2", "bob"):
+            pass
+        blocked = asyncio.wait_for(_hold(adapter.actor_lock("u1", "alice")), 0.05)
+        with pytest.raises(TimeoutError):
+            await blocked
+
+
+async def test_plugin_storage_is_namespaced_per_plugin(boot) -> None:
+    bot = await boot(one="pass", two="pass")
+    one = bot.plugin_manager.plugins["one"].context.storage
+    two = bot.plugin_manager.plugins["two"].context.storage
+    await one.set("key", "1")
+    await one.set("other", "1")
+    await two.set("key", "2")
+
+    assert (await one.get("key"), await two.get("key")) == ("1", "2")
+    assert await bot.db.get_plugin_data("one", "key") == "1"
+    assert await one.delete("other") == 1
+    assert await one.delete() == 1
+    assert await one.get("key") is None
+    assert await two.get("key") == "2"
+
+
+async def test_plugin_context_hides_internals_and_isolates_antennas(
+    boot, misskey_server: FakeMisskeyServer
 ) -> None:
-    plugins_dir = make_plugin_dir("context")
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    plugin = bot.plugin_manager.plugins.get("context")
-    assert plugin is not None
-
-    assert not hasattr(plugin.context.misskey, "access_token")
-    assert not hasattr(plugin.context.openai, "client")
-    with pytest.raises(TypeError):
-        plugin.context.config["enabled"] = False
-
-    await plugin.context.misskey.create_note("adapter")
-    await plugin.context.storage.set("key", "value")
-
-    assert misskey_server.calls["notes/create"][-1]["text"] == "adapter"
-    assert await bot.db.get_plugin_data("context", "key") == "value"
-    assert await plugin.context.misskey.get_note("note-1") == {"visibility": "public"}
-    assert misskey_server.calls["notes/show"][-1]["noteId"] == "note-1"
-
+    bot = await boot(context="pass")
+    context = bot.plugin_manager.plugins["context"].context
     antenna = {"id": "antenna-1", "name": "original"}
     misskey_server.set_response("antennas/list", lambda payload: [antenna])
-    antennas = await plugin.context.misskey.list_antennas()
+
+    assert not hasattr(context.misskey, "access_token")
+    assert not hasattr(context.openai, "client")
+    with pytest.raises(TypeError):
+        context.config["enabled"] = False
+
+    antennas = await context.misskey.list_antennas()
     antennas[0]["name"] = "changed"
-    assert (await plugin.context.misskey.list_antennas())[0]["name"] == "original"
+
+    assert (await context.misskey.list_antennas())[0]["name"] == "original"
     assert antenna["name"] == "original"

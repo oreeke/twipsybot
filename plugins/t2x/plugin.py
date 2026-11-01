@@ -47,7 +47,6 @@ def _detect_image_type(data: bytes) -> tuple[str, str]:
 
 
 class T2XPlugin(PluginBase):
-    api_version = 4
     config_class = _Config
     settings: _Config
 
@@ -76,7 +75,7 @@ class T2XPlugin(PluginBase):
         except Exception:
             logger.exception("Image generation failed")
             return self.handled(_FAILED)
-        return self.handled("", file_id)
+        return self.handled("", file_ids=[file_id])
 
     async def _generate_image(self, prompt: str) -> str:
         config = self.settings.image

@@ -1,43 +1,28 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
 import pytest
-from support.tui import config_root, until
-from textual.widgets import Button, Input, Switch, TextArea
+from textual.widgets import Button
 
-from twipsybot.shared.config import Config
+import twipsybot.tui.app as app_module
 from twipsybot.shared.settings import read_settings, write_settings
 from twipsybot.shared.status import write_status
-from twipsybot.tui import ConfigApp
 
 
-async def test_cfg_validates_and_saves_minimal_diff(tmp_path: Path) -> None:
-    config = Config(config_root(tmp_path))
-    app = ConfigApp(config)
-    async with app.run_test() as pilot:
-        await until(pilot, lambda: bool(app._saved))
-
-        def widget(key: str) -> Any:
-            return app.query_one(f"#{app._ids[key]}")
-
-        assert isinstance(widget("reply.memory"), Input)
-        assert isinstance(widget("plugins.demo.enabled"), Switch)
-        assert isinstance(widget("plugins.demo.tags"), TextArea)
-        widget("reply.memory").value = "500"
-        await until(pilot, lambda: bool(app._errors["reply"]))
-        assert app._errors["reply"] == {
-            "reply.memory": "input should be less than or equal to 100"
-        }
-        assert app.action_save() is False
+async def test_save_is_blocked_by_invalid_field_and_writes_minimal_diff(
+    config, open_app
+) -> None:
+    async with open_app(config) as ui:
+        await ui.edit("reply.memory", "500")
+        assert ui.error("reply.memory") == "input should be less than or equal to 100"
+        assert "1 invalid" in ui.status
+        await ui.save()
         assert not config.settings_path.exists()
 
-        widget("reply.memory").value = "20"
-        widget("plugins.demo.enabled").value = True
-        widget("plugins.demo.tags").load_text("a\n\nb\n")
+        await ui.edit("reply.memory", "20")
+        await ui.edit("plugins.demo.enabled", True)
+        await ui.edit("plugins.demo.tags", "a\n\nb\n")
         write_settings(config.settings_path, {"autopost": {"local_only": True}})
-        assert app.action_save() is True
+        await ui.save()
 
     assert read_settings(config.settings_path) == {
         "autopost": {"local_only": True},
@@ -46,47 +31,41 @@ async def test_cfg_validates_and_saves_minimal_diff(tmp_path: Path) -> None:
     }
 
 
-async def test_cfg_loads_existing_values_and_resets_to_defaults(tmp_path: Path) -> None:
-    config = Config(config_root(tmp_path))
+async def test_values_reset_to_defaults_are_removed_from_settings(
+    config, open_app
+) -> None:
     write_settings(
         config.settings_path,
         {"bot": {"model": "custom"}, "plugins": {"demo": {"limit": 5}}},
     )
-    app = ConfigApp(config)
-    async with app.run_test() as pilot:
-        await until(pilot, lambda: bool(app._saved))
-        model = app.query_one(f"#{app._ids['bot.model']}", Input)
-        limit = app.query_one(f"#{app._ids['plugins.demo.limit']}", Input)
-        assert (model.value, limit.value) == ("custom", "5")
+    async with open_app(config) as ui:
+        assert (ui.field("bot.model").value, ui.field("plugins.demo.limit").value) == (
+            "custom",
+            "5",
+        )
 
-        model.value = "gpt-6-luna"
-        limit.value = ""
-        status = app.query_one("#status")
-        await until(pilot, lambda: "2 unsaved" in str(status.render()))
-        assert app.action_save() is True
+        await ui.edit("bot.model", "gpt-6-luna")
+        await ui.edit("plugins.demo.limit", "")
+        assert "2 unsaved" in ui.status
+        await ui.save()
 
     assert read_settings(config.settings_path) == {}
 
 
-async def test_cfg_connect_writes_secrets_and_locks_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_connect_secrets_are_saved_and_env_values_are_locked(
+    config, open_app, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("MISSKEY_INSTANCE_URL", raising=False)
     monkeypatch.delenv("MISSKEY_ACCESS_TOKEN", raising=False)
     monkeypatch.setenv("AI_API_KEY", "from-env")
-    config = Config(config_root(tmp_path))
-    app = ConfigApp(config)
-    async with app.run_test() as pilot:
-        await until(pilot, lambda: bool(app._saved))
-        key = app.query_one(f"#{app._ids['ai_api_key']}", Input)
-        assert key.disabled
-        assert key.value == "from-env"
+    async with open_app(config) as ui:
+        assert ui.field("ai_api_key").disabled
+        assert ui.field("ai_api_key").value == "from-env"
 
-        app.query_one(f"#{app._ids['misskey_url']}", Input).value = "https://m.example"
-        app.query_one(f"#{app._ids['misskey_token']}", Input).value = "tok"
-        env = app.query_one("#env")
-        await until(pilot, lambda: "m.example" in str(env.render()))
-        assert app.action_save() is True
+        await ui.edit("misskey_url", "https://m.example")
+        await ui.edit("misskey_token", "tok")
+        assert "m.example" in ui.text("#env")
+        await ui.save()
 
     assert read_settings(config.secrets_path) == {
         "misskey_url": "https://m.example",
@@ -95,27 +74,37 @@ async def test_cfg_connect_writes_secrets_and_locks_env(
     assert not config.settings_path.exists()
 
 
-async def test_cfg_shows_bot_and_stream_status(tmp_path: Path) -> None:
-    config = Config(config_root(tmp_path))
+@pytest.mark.parametrize(
+    ("state", "lights"),
+    [
+        (None, ["$error", "$error"]),
+        (("running", "reconnecting"), ["$success", "$warning"]),
+        (("waiting", "disconnected"), ["$warning", "$error"]),
+    ],
+)
+async def test_connect_lights_show_bot_and_stream_status(
+    state: tuple[str, str] | None, lights: list[str], config, open_app
+) -> None:
+    if state:
+        config.status_path.parent.mkdir(parents=True)
+        write_status(config.status_path, *state)
+
+    async with open_app(config) as ui:
+        assert ui.lights == lights
+
+
+async def test_connect_lights_follow_status_changes(
+    monkeypatch: pytest.MonkeyPatch, config, open_app
+) -> None:
+    monkeypatch.setattr(app_module, "_STATUS_POLL_SECONDS", 0.02)
     config.status_path.parent.mkdir(parents=True)
-    app = ConfigApp(config)
-    async with app.run_test() as pilot:
-        await until(pilot, lambda: bool(app._saved))
-        assert app._connect_text().count("[$error]●[/]") == 2
-        write_status(config.status_path, "running", "reconnecting")
-        app._poll_status()
-        text = app._connect_text()
-        assert "[$success]●[/] bot" in text
-        assert "[$warning]●[/] stream" in text
-        write_status(config.status_path, "waiting", "disconnected")
-        app._poll_status()
-        text = app._connect_text()
-        assert "[$warning]●[/] bot" in text
-        assert "[$error]●[/] stream" in text
+    async with open_app(config) as ui:
+        write_status(config.status_path, "running", "connected")
+
+        await ui.until(lambda: ui.lights == ["$success", "$success"])
 
 
-async def test_cfg_saves_plugin_secrets_to_secrets_file(tmp_path: Path) -> None:
-    config = Config(config_root(tmp_path))
+async def test_plugin_secrets_are_saved_to_secrets_file(config, open_app) -> None:
     write_settings(
         config.settings_path, {"plugins": {"demo": {"token": "stale", "limit": 5}}}
     )
@@ -123,16 +112,12 @@ async def test_cfg_saves_plugin_secrets_to_secrets_file(tmp_path: Path) -> None:
         config.secrets_path,
         {"misskey_url": "https://m.example", "plugins": {"other": {"token": "keep"}}},
     )
-    app = ConfigApp(config)
-    async with app.run_test() as pilot:
-        await until(pilot, lambda: bool(app._saved))
-        token = app.query_one(f"#{app._ids['plugins.demo.token']}", Input)
-        assert token.value == ""
+    async with open_app(config) as ui:
+        assert ui.field("plugins.demo.token").value == ""
 
-        token.value = "s3cret"
-        app.query_one(f"#{app._ids['plugins.demo.greeting']}", Input).value = "yo"
-        await until(pilot, lambda: app._is_dirty("plugins.demo.token"))
-        assert app.action_save() is True
+        await ui.edit("plugins.demo.token", "s3cret")
+        await ui.edit("plugins.demo.greeting", "yo")
+        await ui.save()
 
     assert read_settings(config.settings_path) == {
         "plugins": {"demo": {"limit": 5, "greeting": "yo"}}
@@ -143,27 +128,20 @@ async def test_cfg_saves_plugin_secrets_to_secrets_file(tmp_path: Path) -> None:
     }
 
 
-async def test_cfg_line_fields_keep_comments(tmp_path: Path) -> None:
-    config = Config(config_root(tmp_path))
+async def test_line_fields_keep_comments_across_sessions(config, open_app) -> None:
     text = "# news\nhttps://a.example/rss\n\nhttps://b.example/rss#top"
-    app = ConfigApp(config)
-    async with app.run_test() as pilot:
-        await until(pilot, lambda: bool(app._saved))
-        feeds = app.query_one(f"#{app._ids['plugins.demo.feeds']}", TextArea)
-        feeds.load_text(text)
-        await until(pilot, lambda: app._is_dirty("plugins.demo.feeds"))
-        assert app.action_save() is True
+    async with open_app(config) as ui:
+        await ui.edit("plugins.demo.feeds", text)
+        await ui.save()
 
     assert read_settings(config.settings_path)["plugins"]["demo"]["feeds"] == text
-    app = ConfigApp(config)
-    async with app.run_test() as pilot:
-        await until(pilot, lambda: bool(app._saved))
-        feeds = app.query_one(f"#{app._ids['plugins.demo.feeds']}", TextArea)
-        assert feeds.text == text
+    async with open_app(config) as ui:
+        assert ui.field("plugins.demo.feeds").text == text
 
 
-async def test_cfg_drops_unknown_settings_on_save(tmp_path: Path) -> None:
-    config = Config(config_root(tmp_path))
+async def test_unknown_settings_are_reported_and_dropped_on_save(
+    config, open_app
+) -> None:
     write_settings(
         config.settings_path,
         {
@@ -171,16 +149,11 @@ async def test_cfg_drops_unknown_settings_on_save(tmp_path: Path) -> None:
             "plugins": {"demo": {"limit": 5, "old": 1}},
         },
     )
-    app = ConfigApp(config)
-    async with app.run_test() as pilot:
-        await until(pilot, lambda: bool(app._saved))
-        assert app._unknown == {
-            "autopost": ["autopost.rotation"],
-            "plugins.demo": ["plugins.demo.old"],
-        }
-        assert not any(app._errors.values())
-        assert app.action_save() is True
-        assert app._unknown == {}
+    async with open_app(config) as ui:
+        assert "2 unknown" in ui.status
+        assert "invalid" not in ui.status
+        await ui.save()
+        assert "unknown" not in ui.status
 
     assert read_settings(config.settings_path) == {
         "autopost": {"prompt": "p"},
@@ -188,8 +161,7 @@ async def test_cfg_drops_unknown_settings_on_save(tmp_path: Path) -> None:
     }
 
 
-async def test_cfg_drops_unknown_connect_keys_on_save(tmp_path: Path) -> None:
-    config = Config(config_root(tmp_path))
+async def test_unknown_connect_keys_are_dropped_on_save(config, open_app) -> None:
     write_settings(
         config.secrets_path,
         {
@@ -198,14 +170,11 @@ async def test_cfg_drops_unknown_connect_keys_on_save(tmp_path: Path) -> None:
             "plugins": {"other": {"token": "keep"}},
         },
     )
-    app = ConfigApp(config)
-    async with app.run_test() as pilot:
-        await until(pilot, lambda: bool(app._saved))
-        assert app._unknown == {"connect": ["openai_api_key"]}
-        app.query_one(f"#{app._ids['ai_api_key']}", Input).value = "new"
-        await until(pilot, lambda: app._is_dirty("ai_api_key"))
-        assert app.action_save() is True
-        assert app._unknown == {}
+    async with open_app(config) as ui:
+        assert "1 unknown" in ui.status
+        await ui.edit("ai_api_key", "new")
+        await ui.save()
+        assert "unknown" not in ui.status
 
     assert read_settings(config.secrets_path) == {
         "misskey_url": "https://m.example",
@@ -214,44 +183,37 @@ async def test_cfg_drops_unknown_connect_keys_on_save(tmp_path: Path) -> None:
     }
 
 
-async def test_cfg_resets_invalid_choice_on_save(tmp_path: Path) -> None:
-    config = Config(config_root(tmp_path))
+async def test_invalid_stored_choice_resets_to_default_on_save(
+    config, open_app
+) -> None:
     write_settings(config.settings_path, {"autopost": {"mode": "both", "prompt": "p"}})
-    app = ConfigApp(config)
-    async with app.run_test() as pilot:
-        await until(pilot, lambda: bool(app._saved))
-        assert app._get("autopost.mode") == "off"
-        assert app._is_dirty("autopost.mode")
-        assert app.action_save() is True
+    async with open_app(config) as ui:
+        assert ui.field("autopost.mode").value == "off"
+        assert "1 unsaved" in ui.status
+        await ui.save()
 
     assert read_settings(config.settings_path) == {"autopost": {"prompt": "p"}}
 
 
-async def test_cfg_times_field_and_mode_visibility(tmp_path: Path) -> None:
-    config = Config(config_root(tmp_path))
-    app = ConfigApp(config)
-    async with app.run_test() as pilot:
-        await until(pilot, lambda: bool(app._saved))
-        field = app._widget_of("autopost.times")
-        row = app.query_one(f"#r{app._ids['autopost.times']}")
-        assert app._get("autopost.mode") == "off"
-        assert row.display is False
+async def test_schedule_mode_reveals_times_and_requires_one(config, open_app) -> None:
+    async with open_app(config) as ui:
+        times = ui.field("autopost.times")
+        assert ui.row("autopost.times").display is False
 
-        app._set("autopost.mode", "schedule")
-        await until(pilot, lambda: row.display is True)
-        await until(pilot, lambda: bool(app._errors["autopost"]))
-        assert app.action_save() is False
+        await ui.edit("autopost.mode", "schedule")
+        assert ui.row("autopost.times").display is True
+        assert "invalid" in ui.status
+        await ui.save()
+        assert not config.settings_path.exists()
 
-        field.query_one(".add", Button).press()
-        field.query_one(".add", Button).press()
-        field.query_one(".add", Button).press()
-        await until(
-            pilot, lambda: app._get("autopost.times") == ["09:00", "10:00", "11:00"]
-        )
-        field.query(".del").first(Button).press()
-        await until(pilot, lambda: app._get("autopost.times") == ["10:00", "11:00"])
-        await until(pilot, lambda: not app._errors["autopost"])
-        assert app.action_save() is True
+        for _ in range(3):
+            times.query_one(".add", Button).press()
+        await ui.until(lambda: times.value == ["09:00", "10:00", "11:00"])
+
+        await ui.until(lambda: len(times.query(".del")) == 3)
+        times.query(".del").first(Button).press()
+        await ui.until(lambda: len(times.query(".del")) == 2)
+        await ui.save()
 
     assert read_settings(config.settings_path)["autopost"] == {
         "mode": "schedule",

@@ -10,10 +10,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 from pydantic import ValidationError
+from yarl import URL
 
 from ...plugin.base import ToolEntry, tool, tool_specs
 from ...plugin.contracts import HandledResult
-from ...plugin.manager import valid_handled
+from ...plugin.manager import merge_file_ids, valid_handled
 from ...shared.locks import KeyedAsyncLock, actor_key
 from .limits import ResponseLimiter
 
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 
 _TOOL_TIMEOUT_SECONDS = 60.0
 _MAX_TOOL_CHARS = 8000
+_MAX_LINKS = 10
 _TOOL_COMMAND = re.compile(
     r"^(?P<head>(?:@\S+\s+)*)/(?P<name>\w+)(?:\s+(?P<rest>.*))?$", re.DOTALL
 )
@@ -31,7 +33,7 @@ _TOOL_COMMAND = re.compile(
 @dataclass(frozen=True, slots=True)
 class Reply:
     text: str
-    file_id: str | None = None
+    file_ids: tuple[str, ...] = ()
 
 
 class Toolbox:
@@ -39,7 +41,8 @@ class Toolbox:
         self._event = event
         self._entries = entries
         self._tainted = False
-        self.file_id: str | None = None
+        self.file_ids: list[str] = []
+        self.links: list[str] = []
         self.followups: list[Callable[[], Awaitable[HandledResult]]] = []
 
     @property
@@ -92,7 +95,8 @@ class Toolbox:
 
     def _finish(self, entry: ToolEntry, result: Any) -> str:
         if isinstance(result, dict) and valid_handled(result):
-            self.file_id = self.file_id or result.get("file_id")
+            self.file_ids = merge_file_ids(self.file_ids, result.get("file_ids", []))
+            self.links = list(dict.fromkeys([*self.links, *result.get("links", [])]))
             if followup := result.get("followup"):
                 self.followups.append(followup)
             result = result["response"]
@@ -103,6 +107,15 @@ class Toolbox:
             )
             return "Error: tool returned an invalid result"
         return result[:_MAX_TOOL_CHARS]
+
+
+def _with_links(text: str, urls: list[str]) -> str:
+    links = []
+    for url in urls:
+        if url in text or not (host := (parsed := URL(url)).host):
+            continue
+        links.append(f"?[{host}]({str(parsed).replace(')', '%29')})")
+    return f"{text}\n\n{' '.join(links[:_MAX_LINKS])}" if links else text
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,21 +245,23 @@ class ResponsePipeline:
                     await self._limits.record_response(user_id, count_turn=False)
                 return
         source: Source
-        file_id: str | None = None
+        file_ids: list[str]
         followups: list[Callable[[], Awaitable[Any]]] = []
         if results := await self._plugins.call_plugin_hook(hook, event):
             name, result = results[0]
             logger.debug(f"{hook} handled by plugin: {name}")
             text, source = result["response"], "plugin"
-            file_id = result.get("file_id")
+            file_ids = result.get("file_ids", [])
             followups = [f] if (f := result.get("followup")) else []
         else:
             augment = await self._augment(event)
             text, source = await generate(augment), "ai"
-            file_id, followups = augment.tools.file_id, augment.tools.followups
+            if text:
+                text = _with_links(text, augment.tools.links)
+            file_ids, followups = augment.tools.file_ids, augment.tools.followups
         if not text:
             return
-        await deliver(Reply(text, file_id), source)
+        await deliver(Reply(text, tuple(file_ids)), source)
         for followup in followups:
             self._runtime.spawn(self._deliver_followup(followup, deliver, source))
         if user_id:
@@ -258,6 +273,8 @@ class ResponsePipeline:
     ) -> None:
         try:
             result = await followup()
-            await deliver(Reply(result["response"], result.get("file_id")), source)
+            await deliver(
+                Reply(result["response"], tuple(result.get("file_ids", ()))), source
+            )
         except Exception:
             logger.exception("Plugin followup failed")

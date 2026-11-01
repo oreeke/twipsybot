@@ -10,19 +10,19 @@ from support.fakes import FakeMisskeyServer
 from support.types import MakeBot, MakePluginDir, WriteConfig
 
 import twipsybot.bot.engine.pipeline as pipeline_module
+from twipsybot import Neuro
+from twipsybot.bot.engine.pipeline import Toolbox
 from twipsybot.plugin import tool
 
-_SOURCE = """
+TOOL_PLUGIN = """
 import asyncio
 from typing import Annotated
 
 from pydantic import Field
-from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase, tool
+from twipsybot.plugin import PluginBase, tool
 
 
 class ToolPlugin(PluginBase):
-    api_version = PLUGIN_API_VERSION
-
     @tool("Repeat text")
     async def echo(
         self,
@@ -31,9 +31,14 @@ class ToolPlugin(PluginBase):
         times: int = 1,
     ):
         async def later():
-            return self.handled("later", "file-2")
+            return self.handled("later", file_ids=["file-2"])
 
-        return self.handled(text * times, "file-1", later)
+        return self.handled(
+            text * times,
+            file_ids=["file-1", f"x-{text}"],
+            followup=later,
+            links=[f"https://{text}.test/x(1)"],
+        )
 
     @tool("Admin only", access="admin")
     async def secret(self, event):
@@ -68,88 +73,64 @@ plugin = ToolPlugin
 """
 
 
-def _event(user_id: str = "user-1") -> Any:
+def event(user_id: str = "user-1") -> Any:
     return message(
         {"id": "m1", "text": "hi", "user": {"id": user_id, "username": "alice"}}
     )
 
 
-async def _bot(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> Any:
-    plugins_dir = make_plugin_dir("kit", _SOURCE)
-    return await make_bot(
-        write_config(bot={"admins": ["user-1"]}), plugins_dir=plugins_dir
-    )
-
-
-async def _toolbox(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    user_id: str = "user-1",
-) -> Any:
-    bot = await _bot(make_bot, make_plugin_dir, write_config)
-    return await bot.pipeline.toolbox(_event(user_id))
-
-
-def _names(toolbox: Any) -> list[str]:
+def names(toolbox: Toolbox) -> list[str]:
     return [s["name"] for s in toolbox.specs]
 
 
+@pytest.fixture
+async def kit_bot(
+    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+) -> Neuro:
+    return await make_bot(
+        write_config(bot={"admins": ["user-1"]}),
+        plugins_dir=make_plugin_dir("kit", TOOL_PLUGIN),
+    )
+
+
+@pytest.fixture
+async def toolbox(kit_bot: Neuro) -> Toolbox:
+    return await kit_bot.pipeline.toolbox(event())
+
+
 async def test_toolbox_filters_tools_by_access(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
+    kit_bot: Neuro, misskey_server: FakeMisskeyServer
 ) -> None:
     misskey_server.set_response(
         "users/show", lambda payload: {"isFollowed": payload["userId"] == "user-3"}
     )
-    bot = await _bot(make_bot, make_plugin_dir, write_config)
+    common = ["time_now", "kit_boom", "kit_echo", "kit_hang", "kit_junk"]
 
-    admin = await bot.pipeline.toolbox(_event("user-1"))
-    follower = await bot.pipeline.toolbox(_event("user-3"))
-    guest = await bot.pipeline.toolbox(_event("user-2"))
+    admin = await kit_bot.pipeline.toolbox(event("user-1"))
+    follower = await kit_bot.pipeline.toolbox(event("user-3"))
+    guest = await kit_bot.pipeline.toolbox(event("user-2"))
 
-    assert _names(admin) == [
+    assert names(admin) == [
         "note_cancel",
         "note_pending",
         "note_publish",
-        "time_now",
-        "kit_boom",
-        "kit_echo",
-        "kit_hang",
-        "kit_junk",
+        *common,
         "kit_members",
         "kit_page",
         "kit_secret",
         "kit_send",
     ]
-    assert _names(follower) == [
-        "time_now",
-        "kit_boom",
-        "kit_echo",
-        "kit_hang",
-        "kit_junk",
-        "kit_members",
-        "kit_page",
-        "kit_send",
-    ]
-    assert _names(guest) == [
-        "time_now",
-        "kit_boom",
-        "kit_echo",
-        "kit_hang",
-        "kit_junk",
-        "kit_page",
-        "kit_send",
-    ]
+    assert names(follower) == [*common, "kit_members", "kit_page", "kit_send"]
+    assert names(guest) == [*common, "kit_page", "kit_send"]
     assert {c["userId"] for c in misskey_server.calls["users/show"]} == {
         "user-2",
         "user-3",
     }
-    echo = next(s for s in admin.specs if s["name"] == "kit_echo")
+
+
+async def test_toolbox_exposes_tool_schema_from_signature(toolbox: Toolbox) -> None:
+    echo = next(s for s in toolbox.specs if s["name"] == "kit_echo")
+
     assert echo["description"] == "Repeat text"
     assert echo["parameters"] == {
         "type": "object",
@@ -162,77 +143,88 @@ async def test_toolbox_filters_tools_by_access(
     }
 
 
-async def test_follower_lookup_is_cached_and_fails_closed(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
+async def test_follower_lookup_is_cached(
+    kit_bot: Neuro, misskey_server: FakeMisskeyServer
 ) -> None:
-    misskey_server.set_response("users/show", lambda payload: {"isFollowed": True})
-    bot = await _bot(make_bot, make_plugin_dir, write_config)
-
     for _ in range(2):
-        assert "kit_members" in _names(await bot.pipeline.toolbox(_event("user-3")))
+        assert "kit_members" in names(await kit_bot.pipeline.toolbox(event("user-3")))
+
     assert misskey_server.calls["users/show"] == [{"userId": "user-3"}]
 
-    bot.admin._followers.clear()
-    bot.misskey.show_user = AsyncMock(side_effect=RuntimeError("down"))
 
-    assert "kit_members" not in _names(await bot.pipeline.toolbox(_event("user-3")))
+async def test_follower_lookup_failure_hides_follower_tools(kit_bot: Neuro) -> None:
+    kit_bot.misskey.show_user = AsyncMock(side_effect=RuntimeError("down"))
+
+    assert "kit_members" not in names(await kit_bot.pipeline.toolbox(event("user-3")))
 
 
 async def test_reading_external_content_disables_effect_tools(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+    toolbox: Toolbox,
 ) -> None:
-    toolbox = await _toolbox(make_bot, make_plugin_dir, write_config)
-    assert "kit_send" in _names(toolbox)
+    assert "kit_send" in names(toolbox)
 
     assert await toolbox.run("kit_page", "{}") == "page"
 
-    assert "kit_send" not in _names(toolbox)
-    assert "kit_page" in _names(toolbox)
+    assert "kit_send" not in names(toolbox)
+    assert "kit_page" in names(toolbox)
     assert "untrusted" in await toolbox.run("kit_send", "{}")
 
 
 async def test_effect_tool_chosen_before_content_arrives_still_runs(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+    toolbox: Toolbox,
 ) -> None:
-    toolbox = await _toolbox(make_bot, make_plugin_dir, write_config)
-
     sent, page = await asyncio.gather(
         toolbox.run("kit_send", "{}"), toolbox.run("kit_page", "{}")
     )
 
     assert (sent, page) == ("sent", "page")
-    assert "kit_send" not in _names(toolbox)
+    assert "kit_send" not in names(toolbox)
 
 
-async def test_explicit_taint_disables_effect_tools(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    toolbox = await _toolbox(make_bot, make_plugin_dir, write_config)
-
+async def test_explicit_taint_disables_effect_tools(toolbox: Toolbox) -> None:
     toolbox.taint()
 
-    assert "kit_send" not in _names(toolbox)
-    assert "note_publish" not in _names(toolbox)
-    assert "kit_echo" in _names(toolbox)
+    assert "kit_send" not in names(toolbox)
+    assert "note_publish" not in names(toolbox)
+    assert "kit_echo" in names(toolbox)
 
 
-async def test_toolbox_runs_tool_and_collects_files_and_followups(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    toolbox = await _toolbox(make_bot, make_plugin_dir, write_config)
-
+async def test_toolbox_collects_unique_files_and_followups(toolbox: Toolbox) -> None:
     assert await toolbox.run("kit_echo", '{"text": "ab", "times": 2}') == "abab"
+    await toolbox.run("kit_echo", '{"text": "a"}')
+    await toolbox.run("kit_echo", '{"text": "a"}')
 
-    assert toolbox.file_id == "file-1"
-    [followup] = toolbox.followups
+    assert toolbox.file_ids == ["file-1", "x-ab", "x-a"]
+    assert toolbox.links == ["https://ab.test/x(1)", "https://a.test/x(1)"]
+    followup = toolbox.followups[0]
     assert await followup() == {
         "handled": True,
         "response": "later",
-        "file_id": "file-2",
+        "file_ids": ["file-2"],
     }
+
+
+async def test_respond_appends_tool_links_missing_from_reply(kit_bot: Neuro) -> None:
+    sent: list[str] = []
+
+    async def generate(augment: Any) -> str:
+        await augment.tools.run("kit_echo", '{"text": "a"}')
+        await augment.tools.run("kit_echo", '{"text": "b"}')
+        return "see https://a.test/x(1)"
+
+    async def deliver(reply: Any, source: str) -> None:
+        sent.append(reply.text)
+
+    await kit_bot.pipeline.respond(
+        user_id=None,
+        handle=None,
+        hook="on_message",
+        event=event(),
+        generate=generate,
+        deliver=deliver,
+    )
+
+    assert sent == ["see https://a.test/x(1)\n\n?[b.test](https://b.test/x(1%29)"]
 
 
 @pytest.mark.parametrize(
@@ -251,37 +243,23 @@ async def test_toolbox_runs_tool_and_collects_files_and_followups(
     ],
 )
 async def test_toolbox_reports_failures_to_the_model(
-    name: str,
-    arguments: str,
-    expected: str,
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
+    name: str, arguments: str, expected: str, toolbox: Toolbox
 ) -> None:
-    toolbox = await _toolbox(make_bot, make_plugin_dir, write_config)
-
     assert (await toolbox.run(name, arguments)).startswith(expected)
 
 
 async def test_toolbox_times_out_slow_tools(
-    monkeypatch: pytest.MonkeyPatch,
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch, toolbox: Toolbox
 ) -> None:
     monkeypatch.setattr(pipeline_module, "_TOOL_TIMEOUT_SECONDS", 0.01)
-    toolbox = await _toolbox(make_bot, make_plugin_dir, write_config)
 
     assert await toolbox.run("kit_hang", "{}") == "Error: tool timed out"
 
 
-async def test_toolbox_refuses_calls_while_plugin_reloads(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+async def test_toolbox_refuses_calls_while_plugins_are_not_running(
+    kit_bot: Neuro, toolbox: Toolbox
 ) -> None:
-    plugins_dir = make_plugin_dir("kit", _SOURCE)
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    toolbox = await bot.pipeline.toolbox(_event())
-    bot.plugin_manager._reloading.add("kit")
+    await kit_bot.plugin_manager.shutdown_plugins()
 
     assert (
         await toolbox.run("kit_echo", '{"text": "x"}')
@@ -301,14 +279,8 @@ async def test_toolbox_refuses_calls_while_plugin_reloads(
     ],
 )
 async def test_toolbox_parses_slash_command(
-    text: str,
-    expected: tuple[str, str] | None,
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
+    text: str, expected: tuple[str, str] | None, toolbox: Toolbox
 ) -> None:
-    toolbox = await _toolbox(make_bot, make_plugin_dir, write_config)
-
     assert toolbox.command(text) == expected
 
 

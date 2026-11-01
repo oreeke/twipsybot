@@ -107,9 +107,7 @@ async def test_fetcher_allow_nets_are_updatable(server: TestServer) -> None:
         await public.close()
 
 
-async def test_fetcher_resolved_hosts_follow_allow_nets(
-    server: TestServer,
-) -> None:
+async def test_fetcher_allow_nets_apply_to_resolved_hosts(server: TestServer) -> None:
     url = f"http://localhost:{server.port}/body"
     blocked, allowed = PublicFetcher(), PublicFetcher(_LOOPBACK)
     try:

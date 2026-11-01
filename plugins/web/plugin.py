@@ -14,6 +14,7 @@ from yarl import URL
 from twipsybot.plugin import (
     USER_AGENT,
     APIResponseError,
+    HandledResult,
     LineText,
     MentionEvent,
     MessageEvent,
@@ -39,8 +40,7 @@ _SNIPPET_CHARS = 800
 _CLOSING_TAG = "</web_results>"
 _PROMPT = (
     "The following web content was retrieved online. Use it as reference.\n"
-    "To cite a source, copy its `cite:` marker exactly as written, including the "
-    "leading ?, right after the statement it supports."
+    "Source links are appended to your reply automatically; do not list them."
 )
 _EMPTY_PROMPT = (
     "The web search returned no results. Say so briefly, then answer from "
@@ -178,7 +178,6 @@ def _extract(body: bytes, *, html: bool) -> tuple[str, str]:
 
 
 class WebPlugin(PluginBase):
-    api_version = 4
     config_class = _Config
     settings: _Config
 
@@ -204,7 +203,8 @@ class WebPlugin(PluginBase):
 
     @tool(
         "Search the web for real-time information, news, or uncertain facts. "
-        "Returns search results with source links.",
+        "Returns search results; their source links are appended to the reply "
+        "automatically.",
         access="followers",
         external=True,
     )
@@ -217,7 +217,7 @@ class WebPlugin(PluginBase):
                 description="Concise search keywords in a language suited to the search"
             ),
         ],
-    ) -> str:
+    ) -> str | HandledResult:
         sources = await self._collect(query.strip())
         if sources:
             return self._render(sources)
@@ -233,7 +233,7 @@ class WebPlugin(PluginBase):
         self,
         event: MessageEvent | MentionEvent,
         url: Annotated[str, Field(description="http(s) page URL")],
-    ) -> str:
+    ) -> str | HandledResult:
         if page := await self._page(url.strip()):
             return self._render([page])
         return "Cannot read this page: the URL is unreachable, blocked, or not a text page."
@@ -319,19 +319,20 @@ class WebPlugin(PluginBase):
         title, text = await asyncio.to_thread(_extract, body, html=html)
         return _Source(title or host or url, url, text[: self.settings.max_chars])
 
-    def _render(self, sources: list[_Source]) -> str:
+    def _render(self, sources: list[_Source]) -> HandledResult:
         budget = self.settings.max_chars
         blocks: list[str] = []
         for index, source in enumerate(sources, 1):
             body = source.body[: budget // (len(sources) - index + 1)]
             budget -= len(body)
-            blocks.append(
-                f"[{index}] {source.title}\ncite: ?[*]({source.url})\n{body}".rstrip()
-            )
+            blocks.append(f"[{index}] {source.title}\n{source.url}\n{body}".rstrip())
         date = datetime.now().astimezone().date().isoformat()
         content = "\n\n".join(blocks).replace(_CLOSING_TAG, "")
         prompt = self.settings.prompt.strip() or _PROMPT
-        return f'<web_results date="{date}">\n{prompt}\n\n{content}\n{_CLOSING_TAG}'
+        return self.handled(
+            f'<web_results date="{date}">\n{prompt}\n\n{content}\n{_CLOSING_TAG}',
+            links=[source.url for source in sources],
+        )
 
 
 plugin = WebPlugin

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -13,9 +15,18 @@ from support.flows import (
     mock_image_backend,
     offers_effect_tools,
     settle,
+    tool_names,
 )
 from support.plugins import CONTEXT_PLUGIN
 from support.types import MakeBot, MakePluginDir, WriteConfig
+
+type MakeHookPlugin = Callable[[str, str], Path]
+
+ROOM = {"toRoomId": "room-1", "toRoom": {"id": "room-1", "name": "测试房间"}}
+
+
+def contents(call: dict[str, Any]) -> list[str]:
+    return [m["content"] for m in call["messages"]]
 
 
 async def test_chat_message_plugin_takeover(
@@ -30,13 +41,62 @@ async def test_chat_message_plugin_takeover(
     await bot.chat.handle(message(dict(CHAT_MESSAGE)))
 
     assert openai_server.calls == []
+    [reply] = misskey_server.calls["chat/messages/create-to-user"]
+    assert reply["toUserId"] == "user-2"
+    assert reply["text"] == "echo: plugin took over"
+
+
+@pytest.mark.parametrize(
+    ("result", "sent"),
+    [
+        ("self.handled('pic', file_ids=['f1'])", [("pic", "f1")]),
+        ("self.handled('pics', file_ids=['f1', 'f2'])", [("pics", "f1"), (None, "f2")]),
+    ],
+    ids=["one-file", "extra-files-as-separate-messages"],
+)
+async def test_plugin_chat_reply_attaches_files(
+    result: str,
+    sent: list[tuple[str | None, str]],
+    make_bot: MakeBot,
+    make_hook_plugin: MakeHookPlugin,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    bot = await make_bot(
+        write_config(), plugins_dir=make_hook_plugin("on_message", result)
+    )
+
+    await bot.chat.handle(message(dict(CHAT_MESSAGE)))
+
     replies = misskey_server.calls["chat/messages/create-to-user"]
-    assert len(replies) == 1
-    assert replies[0]["toUserId"] == "user-2"
-    assert replies[0]["text"] == "echo: plugin took over"
+    assert [(r.get("text"), r.get("fileId")) for r in replies] == sent
 
 
-async def test_chat_context_hook_augments_prompt_but_not_history(
+async def test_plugin_followup_failure_does_not_break_reply(
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    plugins_dir = make_plugin_dir(
+        "later",
+        body=(
+            "async def on_message(self, event):\n"
+            "    async def later():\n"
+            "        raise RuntimeError('boom')\n\n"
+            "    return self.handled('working', followup=later)\n"
+        ),
+    )
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    await bot.chat.handle(message(dict(CHAT_MESSAGE)))
+    await settle(bot)
+
+    [reply] = misskey_server.calls["chat/messages/create-to-user"]
+    assert reply["text"] == "working"
+
+
+async def test_context_hook_augments_prompt_but_not_history(
     make_bot: MakeBot,
     make_plugin_dir: MakePluginDir,
     write_config: WriteConfig,
@@ -48,9 +108,11 @@ async def test_chat_context_hook_augments_prompt_but_not_history(
     )
 
     await bot.chat.handle(message({**CHAT_MESSAGE, "text": "/web 你好"}))
+    await bot.chat.handle(message({**CHAT_MESSAGE, "id": "msg-2", "text": "再来"}))
 
-    assert openai_server.calls[0]["messages"][-1]["content"] == "CTX\n\n你好"
-    assert bot.chat._histories["user-2"][0] == {"role": "user", "content": "/web 你好"}
+    first, second = openai_server.calls
+    assert first["messages"][-1]["content"] == "CTX\n\n你好"
+    assert contents(second)[1] == "/web 你好"
 
 
 async def test_image_only_chat_is_handled_by_mllm_plugin(
@@ -66,38 +128,24 @@ async def test_image_only_chat_is_handled_by_mllm_plugin(
         "class MLLMPlugin(BaseMLLMPlugin):\n"
         "    pass\n\n"
         "plugin = MLLMPlugin\n",
-        config=(
-            "enabled: true\n"
-            "use_thumbnail: false\n"
-            "default_prompt: |-\n"
-            "  请描述图片内容。\n"
-        ),
+        config="enabled: true\nuse_thumbnail: false\ndefault_prompt: 请描述图片内容。\n",
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     bot.misskey.drive.fetch_bytes = AsyncMock(return_value=b"image")
-    raw = {
-        **CHAT_MESSAGE,
-        "text": "",
-        "fileId": "file-1",
-        "file": {
-            "id": "file-1",
-            "type": "image/png",
-            "url": "https://example.com/image.png",
-        },
-    }
+    image = {"id": "file-1", "type": "image/png", "url": "https://example.com/i.png"}
+    raw = {**CHAT_MESSAGE, "text": "", "fileId": "file-1", "file": image}
 
     await bot.chat.handle(message(raw))
 
     bot.misskey.drive.fetch_bytes.assert_awaited_once()
     user_content = openai_server.calls[0]["messages"][-1]["content"]
     assert user_content[0] == {"type": "text", "text": "请描述图片内容。"}
-    assert user_content[1]["type"] == "image_url"
     assert user_content[1]["image_url"]["url"].startswith("data:image/png;base64,")
     reply = misskey_server.calls["chat/messages/create-to-user"][0]
     assert reply["text"] == DEFAULT_AI_REPLY
 
 
-async def test_chat_uses_history_and_replies_to_user(
+async def test_chat_uses_timeline_history_and_replies_to_user(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
@@ -122,31 +170,31 @@ async def test_chat_uses_history_and_replies_to_user(
 
     await bot.chat.handle(message(dict(CHAT_MESSAGE)))
 
-    assert [message["content"] for message in openai_server.calls[0]["messages"]] == [
+    assert contents(openai_server.calls[0]) == [
         "你是测试机器人",
         "上次问题",
         "上次回答",
         "你好，机器人",
     ]
-    reply = misskey_server.calls["chat/messages/create-to-user"][0]
+    [reply] = misskey_server.calls["chat/messages/create-to-user"]
     assert reply == {"toUserId": "user-2", "text": DEFAULT_AI_REPLY}
 
 
-async def test_chat_history_uses_same_message_limit_after_cache_warms(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
+async def test_chat_history_keeps_latest_messages_within_memory_limit(
+    make_bot: MakeBot, write_config: WriteConfig, openai_server: FakeOpenAIServer
 ) -> None:
     bot = await make_bot(write_config(reply={"memory": 2}))
-    bot.chat._histories["user-2"] = [
-        {"role": "user", "content": "旧问题"},
-        {"role": "assistant", "content": "旧回答"},
-    ]
 
-    bot.chat.append_turn("user-2", "新问题", "新回答", 2)
+    for index, text in enumerate(["一", "二", "三"]):
+        await bot.chat.handle(
+            message({**CHAT_MESSAGE, "id": f"m{index}", "text": text})
+        )
 
-    assert bot.chat._histories["user-2"] == [
-        {"role": "user", "content": "新问题"},
-        {"role": "assistant", "content": "新回答"},
+    assert contents(openai_server.calls[2]) == [
+        "你是测试机器人",
+        "二",
+        DEFAULT_AI_REPLY,
+        "三",
     ]
 
 
@@ -156,26 +204,19 @@ async def test_chat_trims_oldest_history_to_token_budget(
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
 ) -> None:
+    user = {"id": "user-2", "username": "bob"}
     misskey_server.set_response(
         "chat/messages/user-timeline",
         lambda payload: [
-            {
-                "id": "hist-2",
-                "text": "最近消息 <|endoftext|>",
-                "fromUser": {"id": payload["userId"], "username": "bob"},
-            },
-            {
-                "id": "hist-1",
-                "text": "很久以前的消息" * 20,
-                "fromUser": {"id": payload["userId"], "username": "bob"},
-            },
+            {"id": "hist-2", "text": "最近消息 <|endoftext|>", "fromUser": user},
+            {"id": "hist-1", "text": "很久以前的消息" * 20, "fromUser": user},
         ],
     )
     bot = await make_bot(write_config(reply={"ctx_tokens": 20}))
 
     await bot.chat.handle(message(dict(CHAT_MESSAGE)))
 
-    assert [message["content"] for message in openai_server.calls[0]["messages"]] == [
+    assert contents(openai_server.calls[0]) == [
         "你是测试机器人",
         "最近消息 <|endoftext|>",
         "你好，机器人",
@@ -191,90 +232,74 @@ async def test_chat_with_disabled_history_skips_misskey_timeline(
 
     await bot.chat.handle(message(dict(CHAT_MESSAGE)))
 
-    assert misskey_server.calls.get("chat/messages/user-timeline", []) == []
+    assert "chat/messages/user-timeline" not in misskey_server.calls
 
 
+@pytest.mark.parametrize(
+    ("room", "ack", "text"),
+    [(False, "好的", None), (True, "@bob\n好的", "@bob\n")],
+    ids=["user", "room"],
+)
 async def test_chat_tool_call_attaches_generated_image(
+    room: bool,
+    ack: str,
+    text: str | None,
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
     t2x_dir: Path,
 ) -> None:
-    openai_server.set_tool_call("t2x_draw", prompt="sunrise over mountains")
-    openai_server.set_reply("好的，正在画")
+    openai_server.set_tool_call("t2x_draw", prompt="一只猫")
+    openai_server.set_reply("好的")
     bot = await make_bot(write_config(bot={"admins": ["user-2"]}), plugins_dir=t2x_dir)
-    mock_image_backend(bot, "file-2")
+    mock_image_backend(bot, "file-1")
+    raw = (
+        {**CHAT_MESSAGE, **ROOM, "text": "@testbot 画一只猫"}
+        if room
+        else {**CHAT_MESSAGE, "text": "画一只猫"}
+    )
 
-    await bot.chat.handle(message({**CHAT_MESSAGE, "text": "画一幅山间日出"}))
+    await bot.chat.handle(message(raw))
     await settle(bot)
 
-    bot.openai.generate_image.assert_awaited_once_with(
-        "sunrise over mountains", **IMAGE_OPTIONS
-    )
+    bot.openai.generate_image.assert_awaited_once_with("一只猫", **IMAGE_OPTIONS)
     first, second = openai_server.calls
-    assert [t["function"]["name"] for t in first["tools"]] == [
-        "note_cancel",
-        "note_pending",
-        "note_publish",
-        "time_now",
-        "t2x_draw",
-    ]
+    assert tool_names(first)[-1] == "t2x_draw"
     assert second["messages"][-1]["role"] == "tool"
-    ack, reply = misskey_server.calls["chat/messages/create-to-user"]
-    assert ack["text"] == "好的，正在画"
-    assert "text" not in reply
-    assert reply["fileId"] == "file-2"
+    endpoint = "create-to-room" if room else "create-to-user"
+    sent_ack, reply = misskey_server.calls[f"chat/messages/{endpoint}"]
+    assert sent_ack["text"] == ack
+    assert reply.get("text") == text
+    assert reply["fileId"] == "file-1"
 
 
-async def test_plugin_followup_failure_is_logged_without_breaking_reply(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "later",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, MessageEvent, PluginBase\n\n\n"
-        "class LaterPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n\n"
-        "    async def on_message(self, event: MessageEvent):\n"
-        "        async def later():\n"
-        "            raise RuntimeError('boom')\n\n"
-        "        return self.handled('working', followup=later)\n\n"
-        "plugin = LaterPlugin\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-
-    await bot.chat.handle(message(dict(CHAT_MESSAGE)))
-    await settle(bot)
-
-    [reply] = misskey_server.calls["chat/messages/create-to-user"]
-    assert reply["text"] == "working"
-    assert not bot.runtime._background
-
-
-async def test_room_chat_requires_mention_and_replies_to_room(
+@pytest.mark.parametrize("text", ["你好", "@testbot2 你好"])
+async def test_room_chat_ignores_messages_without_exact_mention(
+    text: str,
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
 ) -> None:
     bot = await make_bot(write_config())
-    room_message = {
-        **CHAT_MESSAGE,
-        "toRoomId": "room-1",
-        "toRoom": {"id": "room-1", "name": "测试房间"},
-    }
 
-    await bot.chat.handle(message(room_message))
+    await bot.chat.handle(message({**CHAT_MESSAGE, **ROOM, "text": text}))
+
     assert openai_server.calls == []
+    assert "chat/messages/create-to-room" not in misskey_server.calls
 
-    await bot.chat.handle(
-        message({**room_message, "id": "msg-2", "text": "@testbot 你好"})
-    )
 
-    reply = misskey_server.calls["chat/messages/create-to-room"][0]
+async def test_room_chat_replies_to_room_when_mentioned(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    bot = await make_bot(write_config())
+
+    await bot.chat.handle(message({**CHAT_MESSAGE, **ROOM, "text": "@testbot 你好"}))
+
+    [reply] = misskey_server.calls["chat/messages/create-to-room"]
     assert reply["toRoomId"] == "room-1"
     assert reply["text"] == f"@bob\n{DEFAULT_AI_REPLY}"
 
@@ -287,10 +312,10 @@ async def test_room_chat_serializes_shared_history(
     bot = await make_bot(write_config(reply={"rate_limit": -1, "max_turns": -1}))
     first_started = asyncio.Event()
     release_first = asyncio.Event()
-    calls: list[list[dict[str, str]]] = []
+    calls: list[list[str]] = []
 
     async def generate_chat(messages: list[dict[str, str]], **_: object) -> str:
-        calls.append([dict(message) for message in messages])
+        calls.append([m["content"] for m in messages])
         if len(calls) == 1:
             first_started.set()
             await release_first.wait()
@@ -298,28 +323,20 @@ async def test_room_chat_serializes_shared_history(
         return "第二条回复"
 
     monkeypatch.setattr(bot.openai, "generate_chat", generate_chat)
-    room = {"toRoomId": "room-1", "toRoom": {"id": "room-1", "name": "测试房间"}}
     first = asyncio.create_task(
-        bot.chat.handle(
-            message(
-                {
-                    **CHAT_MESSAGE,
-                    **room,
-                    "text": "@testbot 第一条",
-                }
-            )
-        )
+        bot.chat.handle(message({**CHAT_MESSAGE, **ROOM, "text": "@testbot 第一条"}))
     )
     await first_started.wait()
+    alice = {"id": "user-3", "username": "alice"}
     second = asyncio.create_task(
         bot.chat.handle(
             message(
                 {
                     **CHAT_MESSAGE,
-                    **room,
+                    **ROOM,
                     "id": "msg-2",
                     "text": "@testbot 第二条",
-                    "user": {"id": "user-3", "username": "alice"},
+                    "user": alice,
                 }
             )
         )
@@ -331,7 +348,7 @@ async def test_room_chat_serializes_shared_history(
     release_first.set()
     await asyncio.gather(first, second)
 
-    assert [message["content"] for message in calls[1]] == [
+    assert calls[1] == [
         "你是测试机器人",
         "bob: @testbot 第一条",
         "第一条回复",
@@ -356,84 +373,7 @@ async def test_room_history_from_other_speakers_disables_effect_tools(
         ],
     )
     bot = await make_bot(write_config(bot={"admins": ["user-2"]}))
-    raw = {
-        **CHAT_MESSAGE,
-        "text": "@testbot 你好",
-        "toRoomId": "room-1",
-        "toRoom": {"id": "room-1", "name": "测试房间"},
-    }
 
-    await bot.chat.handle(message(raw))
+    await bot.chat.handle(message({**CHAT_MESSAGE, **ROOM, "text": "@testbot 你好"}))
 
     assert not offers_effect_tools(openai_server.calls[0])
-
-
-async def test_room_chat_tool_call_attaches_generated_image(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-    t2x_dir: Path,
-) -> None:
-    openai_server.set_tool_call("t2x_draw", prompt="一只猫")
-    openai_server.set_reply("好的")
-    bot = await make_bot(write_config(bot={"admins": ["user-2"]}), plugins_dir=t2x_dir)
-    mock_image_backend(bot, "file-3")
-    raw = {
-        **CHAT_MESSAGE,
-        "text": "@testbot 画一只猫",
-        "toRoomId": "room-1",
-        "toRoom": {"id": "room-1", "name": "测试房间"},
-    }
-
-    await bot.chat.handle(message(raw))
-    await settle(bot)
-
-    ack, reply = misskey_server.calls["chat/messages/create-to-room"]
-    assert ack["text"] == "@bob\n好的"
-    assert reply["toRoomId"] == "room-1"
-    assert reply["text"] == "@bob\n"
-    assert reply["fileId"] == "file-3"
-
-
-async def test_room_chat_does_not_match_longer_username(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    bot = await make_bot(write_config())
-    room_message = {
-        **CHAT_MESSAGE,
-        "toRoomId": "room-1",
-        "toRoom": {"id": "room-1", "name": "测试房间"},
-        "text": "@testbot2 你好",
-    }
-
-    await bot.chat.handle(message(room_message))
-
-    assert openai_server.calls == []
-    assert "chat/messages/create-to-room" not in misskey_server.calls
-
-
-async def test_plugin_chat_reply_can_attach_file(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "echo",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n\n"
-        "class EchoPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n\n"
-        "    async def on_message(self, event):\n"
-        "        return self.handled('pic', 'f1')\n\n"
-        "plugin = EchoPlugin\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-
-    await bot.chat.handle(message(dict(CHAT_MESSAGE)))
-
-    [sent] = misskey_server.calls["chat/messages/create-to-user"]
-    assert (sent["text"], sent["fileId"]) == ("pic", "f1")

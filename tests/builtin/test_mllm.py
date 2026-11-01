@@ -14,13 +14,21 @@ _USER = UserRef(id="user-1", username="alice", host=None)
 _IMAGE_PART = {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U="}
 
 
-def _file(file_id: str, mime: str | None = "image/png") -> FileRef:
+def _file(
+    file_id: str,
+    mime: str | None = "image/png",
+    *,
+    url: str | None = None,
+    thumbnail_url: str | None = None,
+    name: str | None = None,
+) -> FileRef:
     return FileRef(
         id=file_id,
         mime_type=mime,
-        url=f"https://example.com/{file_id}",
-        thumbnail_url=None,
+        url=url or f"https://example.com/{file_id}",
+        thumbnail_url=thumbnail_url,
         raw={},
+        name=name,
     )
 
 
@@ -45,27 +53,29 @@ def _plugin(config: dict[str, Any] | None = None) -> tuple[MLLMPlugin, AsyncMock
     return plugin, fetch
 
 
-async def test_mllm_returns_image_part_without_prompt_by_default() -> None:
-    plugin, _ = _plugin()
+@pytest.mark.parametrize(
+    ("config", "text", "expected"),
+    [
+        ({}, "", {"media": [_IMAGE_PART]}),
+        (
+            {"default_prompt": " describe "},
+            "",
+            {"media": [_IMAGE_PART], "context": "describe"},
+        ),
+        ({"default_prompt": " describe "}, "what", {"media": [_IMAGE_PART]}),
+    ],
+    ids=["no-prompt", "empty-text", "text-present"],
+)
+async def test_mllm_default_prompt_only_applies_to_empty_text(
+    config: dict[str, Any], text: str, expected: dict[str, Any]
+) -> None:
+    plugin, _ = _plugin(config)
 
-    result = await plugin.on_context(_message("", _file("file-1")))
-
-    assert result == {"media": [_IMAGE_PART]}
-
-
-async def test_mllm_default_prompt_only_applies_to_empty_text() -> None:
-    plugin, _ = _plugin({"default_prompt": " describe "})
-
-    empty = await plugin.on_context(_message("", _file("file-1")))
-    text = await plugin.on_context(_message("what", _file("file-1")))
-
-    assert empty == {"media": [_IMAGE_PART], "context": "describe"}
-    assert text == {"media": [_IMAGE_PART]}
+    assert await plugin.on_context(_message(text, _file("file-1"))) == expected
 
 
 @pytest.mark.parametrize(
-    "mime",
-    [None, "", "application/pdf", "application/octet-stream", "text/plain"],
+    "mime", [None, "", "application/pdf", "application/octet-stream", "text/plain"]
 )
 async def test_mllm_only_accepts_image_audio_and_video(mime: str | None) -> None:
     plugin, fetch = _plugin()
@@ -77,12 +87,11 @@ async def test_mllm_only_accepts_image_audio_and_video(mime: str | None) -> None
 
 async def test_mllm_builds_parts_by_mime() -> None:
     plugin, fetch = _plugin({"use_thumbnail": True})
-    video = FileRef(
-        id="video",
-        mime_type="video/mp4",
+    video = _file(
+        "video",
+        "video/mp4",
         url="https://example.com/files/raw.bin",
         thumbnail_url="https://example.com/thumb.webp",
-        raw={},
         name="clip.mp4",
     )
 
@@ -111,48 +120,50 @@ async def test_mllm_builds_parts_by_mime() -> None:
     assert fetch.await_args_list[0].args[0] == "https://example.com/files/raw.bin"
 
 
-async def test_mllm_skips_attachment_without_official_metadata() -> None:
-    plugin, fetch = _plugin()
-
-    assert await plugin._to_part(_file("file-1", None)) is None
-    fetch.assert_not_awaited()
-
-
-def test_mllm_selects_thumbnail_or_original_with_matching_mime() -> None:
+@pytest.mark.parametrize(
+    ("config", "url", "thumbnail_url", "fetched", "mime"),
+    [
+        ({}, "o.png", "t.webp", "o.png", "image/png"),
+        ({"use_thumbnail": True}, "o.png", "t.webp", "t.webp", "image/webp"),
+        ({"use_thumbnail": True}, "o.png", "o.png", "o.png", "image/png"),
+        ({"use_thumbnail": True}, "o.png", None, "o.png", "image/png"),
+        ({"use_thumbnail": True}, None, "t.webp", "t.webp", "image/webp"),
+    ],
+    ids=["original", "thumbnail", "same-url", "thumbnail-missing", "original-missing"],
+)
+async def test_mllm_selects_image_source_by_preference(
+    config: dict[str, Any],
+    url: str | None,
+    thumbnail_url: str | None,
+    fetched: str,
+    mime: str,
+) -> None:
+    plugin, fetch = _plugin(config)
     file = FileRef(
         id="file-1",
         mime_type="image/png",
-        url="https://example.com/original.png",
-        thumbnail_url="https://example.com/thumbnail.webp",
+        url=url and f"https://example.com/{url}",
+        thumbnail_url=thumbnail_url and f"https://example.com/{thumbnail_url}",
         raw={},
     )
-    same = FileRef(
-        id="file-2",
-        mime_type="image/png",
-        url="https://example.com/same.png",
-        thumbnail_url="https://example.com/same.png",
-        raw={},
-    )
-    original, _ = _plugin()
-    thumbnail, _ = _plugin({"use_thumbnail": True})
 
-    assert original._select_source(file, "image/png") == (file.url, "image/png")
-    assert thumbnail._select_source(file, "image/png") == (
-        file.thumbnail_url,
-        "image/webp",
-    )
-    assert thumbnail._select_source(same, "image/png") == (same.url, "image/png")
+    result = await plugin.on_context(_message("", file))
+
+    assert result is not None
+    [part] = result.get("media", [])
+    assert part["image_url"].startswith(f"data:{mime};")
+    fetch.assert_awaited_once()
+    assert fetch.await_args_list[0].args[0] == f"https://example.com/{fetched}"
 
 
-def test_mllm_source_falls_back_when_preferred_url_is_missing() -> None:
-    plugin, _ = _plugin({"use_thumbnail": True})
-    no_urls = FileRef(
+async def test_mllm_skips_image_without_any_url() -> None:
+    plugin, fetch = _plugin({"use_thumbnail": True})
+    file = FileRef(
         id="file-1", mime_type="image/png", url=None, thumbnail_url=None, raw={}
     )
-    only_url = _file("file-2")
 
-    assert plugin._select_source(only_url, "image/png") == (only_url.url, "image/png")
-    assert plugin._select_source(no_urls, "image/png") == (None, "image/png")
+    assert await plugin.on_context(_message("", file)) is None
+    fetch.assert_not_awaited()
 
 
 async def test_mllm_skips_failed_download() -> None:
@@ -189,19 +200,15 @@ async def test_mllm_collects_quote_and_reply_files_within_budget() -> None:
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ("6 MB", 6_000_000),
-        ("6 MiB", 6 * 1024 * 1024),
-    ],
+    ("value", "expected"), [("6 MB", 6_000_000), ("6 MiB", 6 * 1024 * 1024)]
 )
-def test_mllm_size_parsing(value: Any, expected: int) -> None:
+def test_mllm_parses_size_units(value: str, expected: int) -> None:
     plugin, _ = _plugin({"max_bytes": value})
 
     assert plugin.settings.max_bytes == expected
 
 
-@pytest.mark.parametrize("value", (1024.9, -1, "invalid", True))
+@pytest.mark.parametrize("value", [1024.9, -1, "invalid", True])
 def test_mllm_rejects_invalid_size(value: Any) -> None:
     context = plugin_context({"enabled": True, "max_bytes": value})
 

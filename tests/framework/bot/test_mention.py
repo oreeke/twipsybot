@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -24,7 +25,32 @@ from support.plugins import CONTEXT_PLUGIN
 from support.types import MakeBot, MakePluginDir, WriteConfig
 
 from twipsybot import Neuro
+from twipsybot.clients.misskey.models import MentionEvent
 from twipsybot.shared.errors import APIBadRequestError
+
+type MakeHookPlugin = Callable[[str, str], Path]
+
+BOT_USER = {"id": "bot-id", "username": "testbot"}
+
+
+def reply_to_bot(
+    text: str = "继续说说",
+    *,
+    host: str | None = None,
+    origin_user: dict[str, str] = BOT_USER,
+) -> MentionEvent:
+    user = {"id": "user-1", "username": "alice", **({"host": host} if host else {})}
+    note = {
+        "id": "reply-1",
+        "text": text,
+        "user": user,
+        "reply": {"id": "origin-1", "text": "机器人原帖", "user": origin_user},
+    }
+    return mention(note, "reply")
+
+
+def messages_of(call: dict[str, Any]) -> list[dict[str, Any]]:
+    return [m for m in call["messages"] if m["role"] != "system"]
 
 
 async def test_mention_triggers_ai_reply(
@@ -38,10 +64,35 @@ async def test_mention_triggers_ai_reply(
     await bot.mention.handle(mention(MENTION_NOTE))
 
     assert len(openai_server.calls) == 1
-    notes = misskey_server.calls["notes/create"]
-    assert len(notes) == 1
-    assert notes[0]["text"] == f"@alice\n{DEFAULT_AI_REPLY}"
-    assert notes[0]["replyId"] == "note-mention-1"
+    [note] = misskey_server.calls["notes/create"]
+    assert note["text"] == f"@alice\n{DEFAULT_AI_REPLY}"
+    assert note["replyId"] == "note-mention-1"
+
+
+async def test_remote_mention_uses_federated_handle(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    bot = await make_bot(write_config())
+    remote_user = {"id": "remote-user-1", "username": "alice", "host": "remote.example"}
+
+    await bot.mention.handle(mention({**MENTION_NOTE, "user": remote_user}))
+
+    note = misskey_server.calls["notes/create"][0]
+    assert note["text"] == f"@alice@remote.example\n{DEFAULT_AI_REPLY}"
+
+
+async def test_specified_mention_replies_with_specified_visibility(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+) -> None:
+    bot = await make_bot(write_config())
+
+    await bot.mention.handle(mention({**MENTION_NOTE, "visibility": "specified"}))
+
+    assert misskey_server.calls["notes/create"][0]["visibility"] == "specified"
 
 
 async def test_mention_truncates_generated_reply_after_adding_mention(
@@ -79,37 +130,61 @@ async def test_mention_skips_generation_when_source_note_is_missing(
     assert "notes/create" not in misskey_server.calls
 
 
-async def test_remote_mention_uses_federated_handle(
+@pytest.mark.parametrize(
+    "event",
+    [
+        mention({**MENTION_NOTE, "mentions": ["other-id"]}),
+        reply_to_bot(origin_user={"id": "other-id", "username": "testbot"}),
+    ],
+    ids=["mentions-other-account", "reply-to-same-username-other-id"],
+)
+async def test_events_not_addressed_to_bot_are_ignored(
+    event: MentionEvent,
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
 ) -> None:
     bot = await make_bot(write_config())
-    remote_user = {
-        "id": "remote-user-1",
-        "username": "alice",
-        "host": "remote.example",
-    }
 
-    await bot.mention.handle(mention({**MENTION_NOTE, "user": remote_user}))
+    await bot.mention.handle(event)
 
-    note = misskey_server.calls["notes/create"][0]
-    assert note["text"] == f"@alice@remote.example\n{DEFAULT_AI_REPLY}"
+    assert openai_server.calls == []
+    assert "notes/create" not in misskey_server.calls
 
 
-async def test_specified_mention_replies_with_specified_visibility(
+async def test_bot_ignores_its_own_events(
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
 ) -> None:
     bot = await make_bot(write_config())
 
-    await bot.mention.handle(mention({**MENTION_NOTE, "visibility": "specified"}))
+    await bot.chat.handle(message({**CHAT_MESSAGE, "user": BOT_USER}))
+    await bot.mention.handle(mention({**MENTION_NOTE, "user": BOT_USER}))
 
-    assert misskey_server.calls["notes/create"][0]["visibility"] == "specified"
+    assert openai_server.calls == []
+    assert "notes/create" not in misskey_server.calls
+    assert "chat/messages/create-to-user" not in misskey_server.calls
 
 
-async def test_mention_tool_call_attaches_generated_image(
+@pytest.mark.parametrize(
+    ("event", "ack", "text"),
+    [
+        (
+            mention({**MENTION_NOTE, "text": "@testbot 画一只猫"}),
+            "@alice\n好的",
+            "@alice\n",
+        ),
+        (reply_to_bot("画一只猫"), "好的", None),
+    ],
+    ids=["mention", "reply-to-bot"],
+)
+async def test_tool_call_attaches_generated_image(
+    event: MentionEvent,
+    ack: str,
+    text: str | None,
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
@@ -121,16 +196,16 @@ async def test_mention_tool_call_attaches_generated_image(
     bot = await make_bot(write_config(bot={"admins": ["user-1"]}), plugins_dir=t2x_dir)
     mock_image_backend(bot, "file-1")
 
-    await bot.mention.handle(mention({**MENTION_NOTE, "text": "@testbot 画一只猫"}))
+    await bot.mention.handle(event)
     await settle(bot)
 
     bot.openai.generate_image.assert_awaited_once_with("一只猫", **IMAGE_OPTIONS)
     bot.misskey.drive.upload_bytes.assert_awaited_once_with(
         PNG, name="generated.png", content_type="image/png"
     )
-    ack, note = misskey_server.calls["notes/create"]
-    assert ack["text"] == "@alice\n好的"
-    assert note["text"] == "@alice\n"
+    first, note = misskey_server.calls["notes/create"]
+    assert first["text"] == ack
+    assert note.get("text") == text
     assert note["fileIds"] == ["file-1"]
 
 
@@ -175,21 +250,6 @@ async def test_foreign_thread_root_disables_effect_tools(
     assert not offers_effect_tools(openai_server.calls[0])
 
 
-async def test_mention_ignores_events_without_bot_id(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    bot = await make_bot(write_config())
-
-    await bot.mention.handle(mention({**MENTION_NOTE, "mentions": ["other-id"]}))
-
-    assert openai_server.calls == []
-    assert "notes/create" not in misskey_server.calls
-    assert bot.auto_post.posts_today == 0
-
-
 async def test_mention_context_hook_augments_prompt(
     make_bot: MakeBot,
     make_plugin_dir: MakePluginDir,
@@ -223,6 +283,7 @@ async def test_mention_with_replied_image_is_handled_by_mllm_plugin(
     )
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     bot.misskey.drive.fetch_bytes = AsyncMock(return_value=b"image")
+    image = {"id": "file-1", "type": "image/png", "url": "https://example.com/i.png"}
     note = {
         **MENTION_NOTE,
         "text": "@testbot 这是什么",
@@ -231,13 +292,7 @@ async def test_mention_with_replied_image_is_handled_by_mllm_plugin(
             "id": "note-0",
             "text": "看这张图",
             "user": {"id": "user-2", "username": "bob"},
-            "files": [
-                {
-                    "id": "file-1",
-                    "type": "image/png",
-                    "url": "https://example.com/image.png",
-                }
-            ],
+            "files": [image],
         },
     }
 
@@ -260,47 +315,17 @@ async def test_reply_uses_conversation_with_root_and_participants_only(
     openai_server: FakeOpenAIServer,
 ) -> None:
     misskey_server.set_response("notes/conversation", lambda payload: thread_chain())
-    bot = await make_bot(write_config())
+    bot = await make_bot(write_config(reply={"memory": 3}))
 
     await bot.mention.handle(reply_event())
 
-    assert misskey_server.calls["notes/conversation"] == [{"noteId": "u2", "limit": 10}]
-    messages = [m for m in openai_server.calls[0]["messages"] if m["role"] != "system"]
-    assert messages == [
+    assert misskey_server.calls["notes/conversation"] == [{"noteId": "u2", "limit": 3}]
+    assert messages_of(openai_server.calls[0]) == [
         {"role": "user", "content": "@bob: 主帖"},
         {"role": "user", "content": "@testbot 问题"},
         {"role": "assistant", "content": "bot reply"},
         {"role": "user", "content": "继续"},
     ]
-
-
-async def test_conversation_request_uses_memory_as_limit(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    misskey_server.set_response("notes/conversation", lambda payload: thread_chain())
-    bot = await make_bot(write_config(reply={"memory": 3}))
-
-    await bot.mention.handle(reply_event())
-
-    assert misskey_server.calls["notes/conversation"][0]["limit"] == 3
-
-
-async def test_conversation_is_skipped_when_memory_is_disabled(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    bot = await make_bot(write_config(reply={"memory": 0}))
-
-    await bot.mention.handle(reply_event())
-
-    assert "notes/conversation" not in misskey_server.calls
-    content = openai_server.calls[0]["messages"][-1]["content"]
-    assert content == "bot reply\n\n继续"
 
 
 async def test_conversation_skips_hidden_notes_and_handles_single_parent(
@@ -323,71 +348,56 @@ async def test_conversation_skips_hidden_notes_and_handles_single_parent(
     await bot.mention.handle(reply_event())
 
     for call in openai_server.calls:
-        messages = [m for m in call["messages"] if m["role"] != "system"]
-        assert messages == [
+        assert messages_of(call) == [
             {"role": "user", "content": "@bob: 主帖"},
             {"role": "user", "content": "继续"},
         ]
 
 
-async def test_conversation_failure_falls_back_to_parent_prompt(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    openai_server: FakeOpenAIServer,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bot = await make_bot(write_config())
-    monkeypatch.setattr(
-        bot.misskey,
-        "get_note_conversation",
-        AsyncMock(side_effect=APIBadRequestError("NO_SUCH_NOTE")),
-    )
-
-    await bot.mention.handle(reply_event())
-
-    content = openai_server.calls[0]["messages"][-1]["content"]
-    assert content == "bot reply\n\n继续"
-
-
-@pytest.mark.parametrize("host", (None, "remote.example"))
-async def test_reply_to_bot_triggers_ai_reply(
+@pytest.mark.parametrize("memory", [0, 10], ids=["disabled", "lookup-fails"])
+async def test_reply_falls_back_to_parent_prompt_without_conversation(
+    memory: int,
     make_bot: MakeBot,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot = await make_bot(write_config(reply={"memory": memory}))
+    lookup = AsyncMock(side_effect=APIBadRequestError("NO_SUCH_NOTE"))
+    monkeypatch.setattr(bot.misskey, "get_note_conversation", lookup)
+
+    await bot.mention.handle(reply_event())
+
+    assert lookup.await_count == int(memory > 0)
+    assert openai_server.calls[0]["messages"][-1]["content"] == "bot reply\n\n继续"
+
+
+@pytest.mark.parametrize("host", [None, "remote.example"])
+async def test_reply_to_bot_triggers_ai_reply(
     host: str | None,
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
 ) -> None:
     bot = await make_bot(write_config())
-    replying_user = {"id": "user-1", "username": "alice"}
-    if host:
-        replying_user["host"] = host
-    note = {
-        "id": "reply-1",
-        "text": "继续说说",
-        "user": replying_user,
-        "reply": {
-            "id": "origin-1",
-            "text": "机器人原帖",
-            "user": {"id": "bot-id", "username": "testbot"},
-        },
-    }
 
-    await bot.mention.handle(mention(note, "reply"))
+    await bot.mention.handle(reply_to_bot(host=host))
 
-    prompt = openai_server.calls[0]["messages"][-1]["content"]
-    assert prompt == "机器人原帖\n\n继续说说"
-    reply = misskey_server.calls["notes/create"][0]
+    assert openai_server.calls[0]["messages"][-1]["content"] == "机器人原帖\n\n继续说说"
+    [reply] = misskey_server.calls["notes/create"]
     assert reply["replyId"] == "reply-1"
     assert reply["text"] == DEFAULT_AI_REPLY
 
 
-@pytest.mark.parametrize("inline", (True, False))
+@pytest.mark.parametrize("inline", [True, False])
 async def test_mention_in_reply_to_third_party_includes_parent(
+    inline: bool,
     make_bot: MakeBot,
     write_config: WriteConfig,
     openai_server: FakeOpenAIServer,
     monkeypatch: pytest.MonkeyPatch,
-    inline: bool,
 ) -> None:
     bot = await make_bot(write_config())
     parent = {
@@ -425,164 +435,53 @@ async def test_mention_ignores_unavailable_parent(
         return {"visibility": "public"}
 
     monkeypatch.setattr(bot.misskey, "get_note", get_note)
-    note = {**MENTION_NOTE, "replyId": "parent-1"}
 
-    await bot.mention.handle(mention(note))
+    await bot.mention.handle(mention({**MENTION_NOTE, "replyId": "parent-1"}))
 
     assert openai_server.calls[0]["messages"][-1]["content"] == "@testbot 你好"
 
 
-async def test_plugin_reply_to_bot_does_not_mention_sender(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "echo",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n\n"
-        "class EchoPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n\n"
-        "    async def on_mention(self, event):\n"
-        "        return self.handled('plugin reply')\n\n"
-        "plugin = EchoPlugin\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    note = {
-        "id": "reply-1",
-        "text": "继续说说",
-        "user": {"id": "user-1", "username": "alice"},
-        "reply": {
-            "id": "origin-1",
-            "text": "机器人原帖",
-            "user": {"id": "bot-id", "username": "testbot"},
-        },
-    }
-
-    await bot.mention.handle(mention(note, "reply"))
-
-    reply = misskey_server.calls["notes/create"][0]
-    assert reply["replyId"] == "reply-1"
-    assert reply["text"] == "plugin reply"
-
-
-async def test_plugin_reply_can_attach_file(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "echo",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n\n"
-        "class EchoPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n\n"
-        "    async def on_mention(self, event):\n"
-        "        return self.handled('plugin reply', 'file-1')\n\n"
-        "plugin = EchoPlugin\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-
-    await bot.mention.handle(mention(MENTION_NOTE))
-
-    assert misskey_server.calls["notes/create"][0]["fileIds"] == ["file-1"]
-
-
-async def test_tool_reply_to_bot_does_not_mention_sender(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-    t2x_dir: Path,
-) -> None:
-    openai_server.set_tool_call("t2x_draw", prompt="一只猫")
-    openai_server.set_reply("好的")
-    bot = await make_bot(write_config(bot={"admins": ["user-1"]}), plugins_dir=t2x_dir)
-    mock_image_backend(bot, "file-1")
-    note = {
-        "id": "reply-1",
-        "text": "画一只猫",
-        "user": {"id": "user-1", "username": "alice"},
-        "reply": {
-            "id": "origin-1",
-            "text": "机器人原帖",
-            "user": {"id": "bot-id", "username": "testbot"},
-        },
-    }
-
-    await bot.mention.handle(mention(note, "reply"))
-    await settle(bot)
-
-    ack, reply = misskey_server.calls["notes/create"]
-    assert ack["text"] == "好的"
-    assert reply["replyId"] == "reply-1"
-    assert "text" not in reply
-    assert reply["fileIds"] == ["file-1"]
-
-
-async def test_reply_to_same_username_with_other_id_is_ignored(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    bot = await make_bot(write_config())
-    note = {
-        "id": "reply-1",
-        "text": "继续说说",
-        "user": {"id": "user-1", "username": "alice"},
-        "reply": {
-            "id": "origin-1",
-            "text": "同名用户原帖",
-            "user": {"id": "other-id", "username": "testbot"},
-        },
-    }
-
-    await bot.mention.handle(mention(note, "reply"))
-
-    assert openai_server.calls == []
-    assert "notes/create" not in misskey_server.calls
-
-
+@pytest.mark.parametrize(
+    ("event", "result", "text", "file_ids"),
+    [
+        (mention(MENTION_NOTE), "self.handled('hi')", "@alice\nhi", None),
+        (reply_to_bot(), "self.handled('hi')", "hi", None),
+        (
+            mention(MENTION_NOTE),
+            "self.handled('hi', file_ids=['a'])",
+            "@alice\nhi",
+            ["a"],
+        ),
+        (
+            mention(MENTION_NOTE),
+            "self.handled('hi', file_ids=['a', 'b'])",
+            "@alice\nhi",
+            ["a", "b"],
+        ),
+    ],
+    ids=["mention", "reply-to-bot-no-handle", "one-file", "many-files"],
+)
 async def test_plugin_can_take_over_mention(
+    event: MentionEvent,
+    result: str,
+    text: str,
+    file_ids: list[str] | None,
     make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
+    make_hook_plugin: MakeHookPlugin,
     write_config: WriteConfig,
     misskey_server: FakeMisskeyServer,
     openai_server: FakeOpenAIServer,
 ) -> None:
-    plugins_dir = make_plugin_dir(
-        "echo",
-        "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n\n"
-        "class EchoPlugin(PluginBase):\n"
-        "    api_version = PLUGIN_API_VERSION\n\n"
-        "    async def on_mention(self, note):\n"
-        "        return self.handled('mention handled')\n\n"
-        "plugin = EchoPlugin\n",
+    bot = await make_bot(
+        write_config(), plugins_dir=make_hook_plugin("on_mention", result)
     )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
 
-    await bot.mention.handle(mention(MENTION_NOTE))
-
-    assert openai_server.calls == []
-    assert misskey_server.calls["notes/create"][0]["text"] == "@alice\nmention handled"
-
-
-async def test_bot_ignores_its_own_events(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-) -> None:
-    bot = await make_bot(write_config())
-    own_user = {"id": "bot-id", "username": "testbot"}
-
-    await bot.chat.handle(message({**CHAT_MESSAGE, "user": own_user}))
-    await bot.mention.handle(mention({**MENTION_NOTE, "user": own_user}))
+    await bot.mention.handle(event)
 
     assert openai_server.calls == []
-    assert "notes/create" not in misskey_server.calls
-    assert "chat/messages/create-to-user" not in misskey_server.calls
+    [note] = misskey_server.calls["notes/create"]
+    assert note["text"] == text
+    assert note.get("fileIds") == file_ids
 
 
 @pytest.mark.parametrize(

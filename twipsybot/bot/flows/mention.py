@@ -175,7 +175,7 @@ class MentionHandler:
                     text=text,
                     visibility=mention.reply_visibility,
                     reply_id=event.id,
-                    file_ids=[reply.file_id] if reply.file_id else None,
+                    file_ids=list(reply.file_ids) or None,
                 )
                 logger.info(f"{replied(source)} to @{display}: {format_log_text(text)}")
 

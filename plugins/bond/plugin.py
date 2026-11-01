@@ -177,7 +177,6 @@ def _profile_lines(profile: _Profile, today: date) -> list[str]:
 
 
 class BondPlugin(PluginBase):
-    api_version = 4
     config_class = _Config
     settings: _Config
 

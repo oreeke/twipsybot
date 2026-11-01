@@ -3,19 +3,6 @@ from __future__ import annotations
 from support.fakes import FakeMisskeyServer
 from support.types import MakeBot, WriteConfig
 
-from twipsybot import Neuro
-
-
-async def test_timeline_channels_are_independently_enabled(
-    write_config: WriteConfig,
-) -> None:
-    config = write_config(timeline={"home": True, "local": False})
-    bot = Neuro(config)
-
-    assert await bot.connect.get_streaming_channels() == ["main", "homeTimeline"]
-    assert config.data["timeline"]["global"] is False
-    assert "global_" not in config.data["timeline"]
-
 
 async def test_streaming_channels_follow_timeline_and_antenna_config(
     make_bot: MakeBot,

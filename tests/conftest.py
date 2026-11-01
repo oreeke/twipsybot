@@ -103,10 +103,9 @@ def make_plugin_dir(tmp_path: Path) -> MakePluginDir:
         set_plugin_config(tmp_path, name, yaml.safe_load(config) or {})
         if source is None:
             source = (
-                "from twipsybot.plugin import PLUGIN_API_VERSION, PluginBase\n\n"
+                "from twipsybot.plugin import PluginBase\n\n"
                 "class Plugin(PluginBase):\n"
-                "    api_version = PLUGIN_API_VERSION\n"
-                f"{indent(body, '    ')}\n"
+                f"{indent(body or 'pass', '    ')}\n"
                 "plugin = Plugin\n"
             )
         if "\nplugin = " not in source:

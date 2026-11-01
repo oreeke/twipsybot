@@ -36,7 +36,6 @@ class _Config(PluginConfig):
 
 
 class MLLMPlugin(PluginBase):
-    api_version = 4
     config_class = _Config
     settings: _Config
 

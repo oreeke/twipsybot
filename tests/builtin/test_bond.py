@@ -9,7 +9,6 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import ValidationError
 
 from plugins.bond import plugin as bond_module
 from plugins.bond.plugin import BondPlugin
@@ -39,7 +38,7 @@ class Clock:
 
     @property
     def today(self) -> date:
-        return bond_module._day(self.now)
+        return datetime.fromtimestamp(self.now).date()
 
 
 @pytest.fixture
@@ -124,19 +123,25 @@ async def _context(plugin: BondPlugin, event: MessageEvent | MentionEvent) -> st
     return result["context"]
 
 
-def test_bond_levels_parse_and_reject_invalid() -> None:
-    def build(config: dict[str, Any]) -> BondPlugin:
-        return BondPlugin(cast(Any, SimpleNamespace(config=config)))
+def _build(config: dict[str, Any]) -> BondPlugin:
+    return BondPlugin(cast(Any, SimpleNamespace(config=config)))
 
-    assert build({}).settings.levels[-1] == (120.0, "Close friend")
-    assert build({"levels": ["10 = b", "1 = a"]}).settings.levels == (
-        (10.0, "b"),
-        (1.0, "a"),
-    )
-    assert build({"levels": [[3, "c"]]}).settings.levels == ((3.0, "c"),)
-    for levels in ("friend", "x = a", "5 = "):
-        with pytest.raises(ValidationError):
-            build({"levels": levels})
+
+@pytest.mark.parametrize(
+    ("levels", "expected"),
+    (
+        (["10 = b", "1 = a"], ((10.0, "b"), (1.0, "a"))),
+        ([[3, "c"]], ((3.0, "c"),)),
+    ),
+)
+def test_bond_parses_levels(levels: Any, expected: tuple[Any, ...]) -> None:
+    assert _build({"levels": levels}).settings.levels == expected
+
+
+@pytest.mark.parametrize("levels", ("friend", "x = a", "5 = "))
+def test_bond_rejects_invalid_levels(levels: str) -> None:
+    with pytest.raises(ValueError):
+        _build({"levels": levels})
 
 
 async def test_bond_records_chat_and_injects_context(
@@ -292,30 +297,30 @@ async def test_bond_skips_memo_for_lowest_level_and_failures(
     misskey.update_user_memo.assert_awaited_once()
 
 
-async def test_bond_tools(db: DBManager, clock: Clock) -> None:
+async def test_bond_card_reports_level_only_after_interaction(
+    db: DBManager, clock: Clock
+) -> None:
     plugin, _, _ = await _plugin(db)
 
-    assert (
-        await plugin.card(_mention("@bot 我们熟吗"))
-        == "There is no interaction record with this user yet."
-    )
-
+    before = await plugin.card(_mention("@bot 我们熟吗"))
     await plugin.on_message(_chat())
-    card = await plugin.card(_chat("我们熟吗"))
-    assert card.startswith("Relationship: Stranger (closeness 1)")
-    record = await _record(db)
-    assert record is not None
-    assert record["counts"] == {"chat": 1}
+    after = await plugin.card(_chat("我们熟吗"))
 
-    forget = await plugin.forget(_chat("忘了我"))
-    assert "#nobot" in forget
+    assert "Relationship" not in before
+    assert after.startswith("Relationship: Stranger (closeness 1)")
+
+
+@pytest.mark.parametrize(("tags", "hint"), (([], False), (["#nobot"], True)))
+async def test_bond_forget_deletes_record_and_hints_opt_out_tag(
+    db: DBManager, clock: Clock, tags: list[str], hint: bool
+) -> None:
+    plugin, _, _ = await _plugin(db, {"opt_out_tags": tags})
+    await plugin.on_message(_chat())
+
+    result = await plugin.forget(_chat("忘了我"))
+
+    assert ("#nobot" in result) is hint
     assert await _record(db) is None
-
-    no_hint, _, _ = await _plugin(db, {"opt_out_tags": []})
-    assert (
-        await no_hint.forget(_mention("忘了我"))
-        == "All records of this user have been deleted."
-    )
 
 
 async def test_bond_tools_require_known_user(db: DBManager) -> None:

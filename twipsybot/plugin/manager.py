@@ -4,7 +4,7 @@ import importlib.util
 import inspect
 import sys
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -17,7 +17,7 @@ from typing import Any, Literal, get_args
 from loguru import logger
 
 from ..shared.config import Config
-from .base import PLUGIN_API_VERSION, PluginBase, ToolEntry, ToolSpec
+from .base import PluginBase, ToolEntry, ToolSpec
 from .contracts import AutoPostEvent, AutoPostVisibility, PluginContext
 from .services import (
     BotControlAdapter,
@@ -68,15 +68,27 @@ def _valid_file_ids(value: Any) -> bool:
     )
 
 
+def _valid_links(value: Any) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(url, str) and url.startswith(("http://", "https://"))
+        for url in value
+    )
+
+
+def merge_file_ids(*groups: Sequence[str]) -> list[str]:
+    return list(dict.fromkeys(i for group in groups for i in group))[:_MAX_FILE_IDS]
+
+
 def valid_handled(result: dict[str, Any]) -> bool:
     return (
         {"handled", "response"}
         <= set(result)
-        <= {"handled", "response", "file_id", "followup"}
+        <= {"handled", "response", "file_ids", "followup", "links"}
         and result["handled"] is True
         and isinstance(result["response"], str)
-        and ("file_id" not in result or _non_empty_text(result["file_id"]))
+        and _valid_file_ids(result.get("file_ids", []))
         and ("followup" not in result or callable(result["followup"]))
+        and _valid_links(result.get("links", []))
     )
 
 
@@ -280,13 +292,6 @@ class PluginManager:
         if not _is_plugin_class(plugin_class):
             logger.warning(
                 f"Invalid plugin export in {plugin_name}: expected PluginBase subclass"
-            )
-            return None
-        api_version = getattr(plugin_class, "api_version", None)
-        if type(api_version) is not int or api_version != PLUGIN_API_VERSION:
-            logger.error(
-                f"Incompatible plugin API: plugin={plugin_name} "
-                f"requires={api_version} supported={PLUGIN_API_VERSION}"
             )
             return None
         if invalid := self._find_sync_plugin_method(plugin_class):

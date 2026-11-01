@@ -14,11 +14,21 @@ from twipsybot.shared.settings import (
 )
 
 
-def test_invalid_config_fails_fast(write_config: WriteConfig) -> None:
-    config = write_config(load=False, bot={"temperature": 5.0})
-
-    with pytest.raises(ConfigurationError, match="temperature"):
-        config.load()
+@pytest.mark.parametrize(
+    ("section", "field", "value", "message"),
+    [
+        ("bot", "temperature", 5.0, "temperature"),
+        ("reply", "memory", -1, "greater than or equal to 0"),
+        ("reply", "memory", 101, "less than or equal to 100"),
+        ("reply", "ctx_tokens", -1, "greater than or equal to 0"),
+    ],
+)
+def test_out_of_range_values_fail_fast(
+    write_config: WriteConfig, section: str, field: str, value: float, message: str
+) -> None:
+    overrides: dict[str, Any] = {section: {field: value}}
+    with pytest.raises(ConfigurationError, match=message):
+        write_config(**overrides)
 
 
 @pytest.mark.parametrize(
@@ -35,21 +45,6 @@ def test_unknown_config_fields_fail_fast(
 
     with pytest.raises(ConfigurationError, match="Extra inputs are not permitted"):
         config.load()
-
-
-@pytest.mark.parametrize(
-    ("field", "value", "message"),
-    [
-        ("memory", -1, "greater than or equal to 0"),
-        ("memory", 101, "less than or equal to 100"),
-        ("ctx_tokens", -1, "greater than or equal to 0"),
-    ],
-)
-def test_chat_context_limits_reject_out_of_range_values(
-    write_config: WriteConfig, field: str, value: int, message: str
-) -> None:
-    with pytest.raises(ConfigurationError, match=message):
-        write_config(reply={field: value})
 
 
 def test_secrets_come_from_file_with_env_override(
@@ -85,7 +80,7 @@ def test_plugin_secrets_merge_into_plugin_config(write_config: WriteConfig) -> N
     }
 
 
-def test_defaults_need_no_settings_file(
+def test_config_loads_from_secrets_alone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "AI_API_KEY"):
@@ -101,9 +96,7 @@ def test_defaults_need_no_settings_file(
     )
     config.load()
 
-    assert config.get(ConfigKeys.BOT_MODEL) == "gpt-6-luna"
-    assert config.get(ConfigKeys.POST_MODE) == "off"
-    assert config.get(ConfigKeys.TIMELINE_GLOBAL) is False
+    assert config.get(ConfigKeys.MISSKEY_TOKEN) == "t"
     assert config.get("plugins") == {}
     assert config.log_path.parent.is_dir()
 

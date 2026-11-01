@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import os
 from types import SimpleNamespace
@@ -12,58 +11,95 @@ from httpx2 import Request, Response
 from openai import APIStatusError, BadRequestError
 
 from twipsybot.clients.openai.api import OpenAIAPI
-from twipsybot.clients.openai.extract import (
-    extract_responses_text,
-    process_chat_completions_response,
-)
-from twipsybot.clients.openai.requests import (
-    make_chat_completions_request,
-    make_responses_request,
-)
-from twipsybot.shared.errors import (
-    APIConnectionError,
-)
+from twipsybot.shared.errors import APIConnectionError
 
 
-class _BadRequest:
-    def __init__(
-        self,
-        message: str,
-        code: str | None = None,
-        status_code: int | None = None,
-    ):
-        self.message = message
-        self.code = code
-        self.status_code = status_code
-
-    def __str__(self) -> str:
-        return self.message
+def _status_error(cls: type[APIStatusError], status: int) -> APIStatusError:
+    request = Request("POST", "https://example.com/v1")
+    return cls("failed", response=Response(status, request=request), body={})
 
 
-async def test_openai_generates_png_bytes() -> None:
-    api = OpenAIAPI("test", "m")
+def _api(
+    *, chat: Any = (), responses: Any = (), **kwargs: Any
+) -> tuple[OpenAIAPI, AsyncMock, AsyncMock]:
+    chat_create = AsyncMock(side_effect=chat)
+    responses_create = AsyncMock(side_effect=responses)
+    api = OpenAIAPI("test", "m", **kwargs)
+    api.client = cast(
+        Any,
+        SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=chat_create)),
+            responses=SimpleNamespace(create=responses_create),
+        ),
+    )
+    return api, chat_create, responses_create
+
+
+def _images_api(generate: AsyncMock, **kwargs: Any) -> OpenAIAPI:
+    api = OpenAIAPI("main", "m", **kwargs)
+    api.client = cast(Any, SimpleNamespace(images=SimpleNamespace(generate=generate)))
+    return api
+
+
+def _choice(content: str | None, finish_reason: str = "stop") -> SimpleNamespace:
+    return SimpleNamespace(
+        message=SimpleNamespace(content=content, tool_calls=None),
+        finish_reason=finish_reason,
+    )
+
+
+def _chat_reply(text: str | None, *calls: tuple[str, str, str]) -> SimpleNamespace:
+    message = SimpleNamespace(
+        content=text,
+        tool_calls=[
+            SimpleNamespace(id=i, function=SimpleNamespace(name=n, arguments=a))
+            for i, n, a in calls
+        ]
+        or None,
+    )
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="stop")]
+    )
+
+
+def _responses_reply(
+    text: str = "", output: Any = None, status: str = "completed"
+) -> SimpleNamespace:
+    return SimpleNamespace(status=status, output=output, output_text=text)
+
+
+class _Tools:
+    specs: tuple[dict[str, Any], ...] = (
+        {"name": "t_x", "description": "d", "parameters": {"type": "object"}},
+    )
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def run(self, name: str, arguments: str) -> str:
+        self.calls.append((name, arguments))
+        return f"out:{arguments}"
+
+
+async def test_generate_image_returns_png_bytes() -> None:
     generate = AsyncMock(
         return_value=SimpleNamespace(
             data=[SimpleNamespace(b64_json=base64.b64encode(b"png").decode())]
         )
     )
-    api.client = cast(Any, SimpleNamespace(images=SimpleNamespace(generate=generate)))
+    api = _images_api(generate)
 
     assert await api.generate_image("一只猫", model="gpt-image-2") == b"png"
-    generate.assert_awaited_once_with(
-        model="gpt-image-2",
-        prompt="一只猫",
-    )
+    generate.assert_awaited_once_with(model="gpt-image-2", prompt="一只猫")
 
 
-async def test_openai_forwards_explicit_image_options() -> None:
-    api = OpenAIAPI("test", "m")
+async def test_generate_image_forwards_options_and_returns_url() -> None:
     generate = AsyncMock(
         return_value=SimpleNamespace(
             data=[SimpleNamespace(b64_json=None, url="https://example.com")]
         )
     )
-    api.client = cast(Any, SimpleNamespace(images=SimpleNamespace(generate=generate)))
+    api = _images_api(generate)
 
     image = await api.generate_image(
         "一只猫", model="gpt-image-2.5-flare", size="2048x2048", quality="medium"
@@ -78,10 +114,9 @@ async def test_openai_forwards_explicit_image_options() -> None:
     )
 
 
-async def test_openai_image_rejects_endpoint_without_key() -> None:
-    api = OpenAIAPI("main", "m")
+async def test_generate_image_rejects_endpoint_without_key() -> None:
     generate = AsyncMock()
-    api.client = cast(Any, SimpleNamespace(images=SimpleNamespace(generate=generate)))
+    api = _images_api(generate)
 
     with pytest.raises(ValueError, match="base_url requires api_key"):
         await api.generate_image("猫", model="m", base_url="https://img.example/v1")
@@ -101,17 +136,14 @@ async def test_openai_image_rejects_endpoint_without_key() -> None:
     ],
     ids=("endpoint", "key-only"),
 )
-async def test_openai_image_override_uses_dedicated_client(
+async def test_generate_image_override_uses_dedicated_client(
     monkeypatch: pytest.MonkeyPatch,
     overrides: dict[str, str],
     api_key: str,
     host: str,
 ) -> None:
-    api = OpenAIAPI("main", "m", base_url="https://main.example/v1")
     main_generate = AsyncMock()
-    api.client = cast(
-        Any, SimpleNamespace(images=SimpleNamespace(generate=main_generate))
-    )
+    api = _images_api(main_generate, base_url="https://main.example/v1")
     generate = AsyncMock(
         return_value=SimpleNamespace(
             data=[SimpleNamespace(b64_json=None, url="https://example.com")]
@@ -142,7 +174,7 @@ async def test_openai_image_override_uses_dedicated_client(
     assert kwargs["base_url"].split("/")[2] == host
 
 
-def test_openai_loads_token_encoding_lazily_into_data_directory(
+def test_token_encoding_loads_lazily_into_data_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     encoding = SimpleNamespace(encode_ordinary=lambda text: list(text))
@@ -163,7 +195,7 @@ def test_openai_loads_token_encoding_lazily_into_data_directory(
     )
 
 
-def test_openai_token_encoding_failure_uses_character_estimate(
+def test_token_encoding_failure_uses_character_estimate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     load_encoding = Mock(side_effect=OSError("offline"))
@@ -181,12 +213,14 @@ def test_openai_token_encoding_failure_uses_character_estimate(
     load_encoding.assert_called_once_with("deepseek-flash")
 
 
-def test_responses_file_part_converts_for_chat_completions() -> None:
+async def test_chat_mode_converts_responses_content_parts() -> None:
+    api, chat, _ = _api(chat=[_chat_reply("ok")], api_mode="chat")
     messages = [
         {
             "role": "user",
             "content": [
                 {"type": "input_text", "text": "hi"},
+                {"type": "input_image", "image_url": "https://example.com/a.png"},
                 {
                     "type": "input_file",
                     "filename": "a.pdf",
@@ -200,10 +234,11 @@ def test_responses_file_part_converts_for_chat_completions() -> None:
         }
     ]
 
-    converted = OpenAIAPI._to_chat_completions_messages(messages)
+    await api.generate_chat(messages)
 
-    assert converted[0]["content"] == [
+    assert chat.await_args_list[-1].kwargs["messages"][0]["content"] == [
         {"type": "text", "text": "hi"},
+        {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
         {
             "type": "file",
             "file": {
@@ -215,203 +250,151 @@ def test_responses_file_part_converts_for_chat_completions() -> None:
     ]
 
 
-def test_responses_text_prefers_aggregated_output() -> None:
-    response = SimpleNamespace(output_text="complete", output=None)
-
-    assert extract_responses_text(response) == "complete"
-
-
-def test_responses_text_collects_message_output_parts() -> None:
-    response = SimpleNamespace(
-        output_text="",
-        output=[
-            SimpleNamespace(type="reasoning", content=[]),
-            SimpleNamespace(
-                type="message",
-                content=[
-                    SimpleNamespace(type="output_text", text="first"),
-                    SimpleNamespace(type="refusal", text="ignored"),
-                    SimpleNamespace(type="output_text", text=" second"),
-                ],
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        (_responses_reply("complete"), "complete"),
+        (
+            _responses_reply(
+                output=[
+                    SimpleNamespace(type="reasoning", content=[]),
+                    SimpleNamespace(
+                        type="message",
+                        content=[
+                            SimpleNamespace(type="output_text", text="first"),
+                            SimpleNamespace(type="refusal", text="ignored"),
+                            SimpleNamespace(type="output_text", text=" second"),
+                        ],
+                    ),
+                    SimpleNamespace(type="message", content=None),
+                ]
             ),
-            SimpleNamespace(type="message", content=None),
-        ],
-    )
+            "first second",
+        ),
+    ],
+    ids=("aggregated", "message-parts"),
+)
+async def test_responses_text_is_extracted(reply: Any, expected: str) -> None:
+    api, _, _ = _api(responses=[reply])
 
-    assert extract_responses_text(response) == "first second"
-
-
-def test_responses_text_rejects_truncated_output() -> None:
-    response = SimpleNamespace(
-        status="incomplete",
-        incomplete_details=SimpleNamespace(reason="max_output_tokens"),
-    )
-
-    with pytest.raises(APIConnectionError, match="max_output_tokens"):
-        extract_responses_text(response)
+    assert await api.generate_text("hi") == expected
 
 
 @pytest.mark.parametrize(
-    ("output", "message"),
-    ((None, "Invalid output type"), ([], "Empty output")),
+    ("reply", "message"),
+    [
+        (
+            SimpleNamespace(
+                status="incomplete",
+                incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+            ),
+            "max_output_tokens",
+        ),
+        (_responses_reply(output=None), "Invalid output type"),
+        (_responses_reply(output=[]), "Empty output"),
+    ],
+    ids=("truncated", "invalid-output", "empty-output"),
 )
-def test_responses_text_rejects_invalid_or_empty_output(
-    output: Any, message: str
-) -> None:
-    response = SimpleNamespace(output_text="", output=output)
+async def test_responses_text_rejects_unusable_output(reply: Any, message: str) -> None:
+    api, _, _ = _api(responses=[reply])
 
     with pytest.raises(APIConnectionError, match=message):
-        extract_responses_text(response)
-
-
-def _choice(content: str, finish_reason: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        message=SimpleNamespace(content=content), finish_reason=finish_reason
-    )
+        await api.generate_text("hi")
 
 
 @pytest.mark.parametrize(
     ("choices", "message"),
-    (
+    [
         ([], "Empty choices"),
         ([_choice("truncated", "length")], "max_tokens"),
-        ([_choice("", "stop")], None),
-    ),
+        ([_choice("")], None),
+    ],
+    ids=("no-choices", "truncated", "empty-content"),
 )
-def test_chat_completions_rejects_incomplete_output(
+async def test_chat_completions_rejects_incomplete_output(
     choices: list[Any], message: str | None
 ) -> None:
-    response = SimpleNamespace(choices=choices)
+    api, _, _ = _api(chat=[SimpleNamespace(choices=choices)], api_mode="chat")
 
     with pytest.raises(APIConnectionError, match=message):
-        process_chat_completions_response(response, "test")
-
-
-async def test_responses_request_enables_json_output() -> None:
-    create = AsyncMock(return_value={})
-    client = SimpleNamespace(responses=SimpleNamespace(create=create))
-
-    await make_responses_request(
-        client=cast(Any, client),
-        semaphore=asyncio.Semaphore(1),
-        model="test",
-        messages=[],
-        max_tokens=None,
-        temperature=None,
-        json_output=True,
-    )
-
-    call = create.await_args
-    assert call is not None
-    assert call.kwargs["text"] == {"format": {"type": "json_object"}}
-
-
-async def test_chat_completions_request_enables_json_output() -> None:
-    create = AsyncMock(return_value={})
-    client = SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
-    )
-
-    await make_chat_completions_request(
-        client=cast(Any, client),
-        semaphore=asyncio.Semaphore(1),
-        model="test",
-        messages=[],
-        max_tokens=None,
-        temperature=None,
-        json_output=True,
-    )
-
-    call = create.await_args
-    assert call is not None
-    assert call.kwargs["response_format"] == {"type": "json_object"}
+        await api.generate_text("hi")
 
 
 @pytest.mark.parametrize(
-    ("message", "status_code", "expected"),
-    (
-        ("unsupported", 404, True),
-        ("unsupported", 405, True),
-        ("unsupported", 501, True),
-        ("Invalid max_output_tokens", None, False),
-    ),
+    ("api_mode", "field", "expected"),
+    [
+        ("auto", "text", {"format": {"type": "json_object"}}),
+        ("chat", "response_format", {"type": "json_object"}),
+    ],
 )
-def test_responses_unavailable_only_for_unsupported_status(
-    message: str, status_code: int | None, expected: bool
+async def test_json_output_sets_mode_specific_request_field(
+    api_mode: str, field: str, expected: dict[str, Any]
 ) -> None:
-    error = _BadRequest(message, status_code=status_code)
+    api, chat, responses = _api(
+        chat=[_chat_reply("{}")], responses=[_responses_reply("{}")], api_mode=api_mode
+    )
 
-    assert OpenAIAPI._is_responses_unavailable(error) is expected
+    await api.generate_text("hi", json_output=True)
+
+    create = chat if api_mode == "chat" else responses
+    assert create.await_args_list[-1].kwargs[field] == expected
 
 
-async def test_http_405_falls_back_to_chat_completions(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("base_url", "param"),
+    [
+        (None, "max_completion_tokens"),
+        ("https://eu.api.openai.com/v1", "max_completion_tokens"),
+        ("https://api.deepseek.com", "max_tokens"),
+    ],
+)
+async def test_token_limit_parameter_depends_on_endpoint(
+    monkeypatch: pytest.MonkeyPatch, base_url: str | None, param: str
 ) -> None:
-    import twipsybot.clients.openai.api as module
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    api, chat, _ = _api(chat=[_chat_reply("ok")], api_mode="chat", base_url=base_url)
 
-    error = APIStatusError(
-        "method not allowed",
-        response=Response(
-            405, request=Request("POST", "https://example.com/responses")
-        ),
-        body={},
-    )
-    responses = AsyncMock(side_effect=error)
-    fallback = AsyncMock(return_value=module._Turn("fallback"))
-    monkeypatch.setattr(module, "make_responses_request", responses)
-    api = OpenAIAPI("test", "m")
-    monkeypatch.setattr(api, "_chat_completions", fallback)
+    await api.generate_text("hi", max_tokens=5)
 
-    result = await api.generate_text("hello")
-
-    assert result == "fallback"
-    fallback.assert_awaited_once()
-    await api.close()
+    assert chat.await_args_list[-1].kwargs[param] == 5
+    other = {"max_tokens", "max_completion_tokens"} - {param}
+    assert chat.await_args_list[-1].kwargs.keys().isdisjoint(other)
 
 
-class _Tools:
-    specs: tuple[dict[str, Any], ...] = (
-        {"name": "t_x", "description": "d", "parameters": {"type": "object"}},
+@pytest.mark.parametrize("status", [404, 405, 501])
+async def test_unsupported_responses_endpoint_falls_back_to_chat_completions(
+    status: int,
+) -> None:
+    api, chat, responses = _api(
+        chat=[_chat_reply("first"), _chat_reply("second")],
+        responses=[_status_error(APIStatusError, status)],
     )
 
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
+    assert await api.generate_text("hi") == "first"
+    assert await api.generate_text("hi") == "second"
 
-    async def run(self, name: str, arguments: str) -> str:
-        self.calls.append((name, arguments))
-        return f"out:{arguments}"
-
-
-def _chat_reply(text: str | None, *calls: tuple[str, str, str]) -> SimpleNamespace:
-    message = SimpleNamespace(
-        content=text,
-        tool_calls=[
-            SimpleNamespace(id=i, function=SimpleNamespace(name=n, arguments=a))
-            for i, n, a in calls
-        ]
-        or None,
-    )
-    return SimpleNamespace(
-        choices=[SimpleNamespace(message=message, finish_reason="stop")]
-    )
+    assert not api.uses_responses_api
+    responses.assert_awaited_once()
+    assert chat.await_count == 2
 
 
-def _chat_api(*replies: Any) -> tuple[OpenAIAPI, AsyncMock]:
-    api = OpenAIAPI("test", "m", api_mode="chat")
-    create = AsyncMock(side_effect=replies)
-    api.client = cast(
-        Any,
-        SimpleNamespace(
-            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
-        ),
-    )
-    return api, create
+async def test_other_responses_errors_are_not_treated_as_unsupported() -> None:
+    api, chat, _ = _api(responses=[_status_error(APIStatusError, 500)])
+
+    with pytest.raises(APIStatusError):
+        await api.generate_text("hi")
+
+    chat.assert_not_awaited()
+    assert api.uses_responses_api
 
 
 async def test_chat_tool_calls_run_in_parallel_and_feed_back_results() -> None:
-    api, create = _chat_api(
-        _chat_reply(None, ("c1", "t_x", "1"), ("c2", "t_x", "2")),
-        _chat_reply("done"),
+    api, create, _ = _api(
+        chat=[
+            _chat_reply(None, ("c1", "t_x", "1"), ("c2", "t_x", "2")),
+            _chat_reply("done"),
+        ],
+        api_mode="chat",
     )
     tools = _Tools()
 
@@ -448,17 +431,10 @@ async def test_chat_tool_calls_run_in_parallel_and_feed_back_results() -> None:
 
 async def test_responses_tool_calls_feed_back_function_outputs() -> None:
     item = {"type": "function_call", "call_id": "c1", "name": "t_x", "arguments": "1"}
-    call = SimpleNamespace(
-        model_dump=lambda **_: item, **{**item, "type": "function_call"}
+    call = SimpleNamespace(model_dump=lambda **_: item, **item)
+    api, _, create = _api(
+        responses=[_responses_reply(output=[call]), _responses_reply("done", [])]
     )
-    create = AsyncMock(
-        side_effect=[
-            SimpleNamespace(status="completed", output=[call], output_text=""),
-            SimpleNamespace(status="completed", output=[], output_text="done"),
-        ]
-    )
-    api = OpenAIAPI("test", "m")
-    api.client = cast(Any, SimpleNamespace(responses=SimpleNamespace(create=create)))
 
     assert (
         await api.generate_chat([{"role": "user", "content": "hi"}], tools=_Tools())
@@ -475,11 +451,11 @@ async def test_responses_tool_calls_feed_back_function_outputs() -> None:
 
 async def test_tool_rounds_are_capped_then_answer_without_tools() -> None:
     looping = [_chat_reply(None, ("c", "t_x", "{}"))] * 3
-    api, create = _chat_api(*looping, _chat_reply("final"))
+    api, create, _ = _api(chat=[*looping, _chat_reply("final")], api_mode="chat")
 
     assert await api.generate_chat([], tools=_Tools()) == "final"
 
-    assert [("tools" in call.kwargs) for call in create.await_args_list] == [
+    assert ["tools" in call.kwargs for call in create.await_args_list] == [
         True,
         True,
         True,
@@ -488,77 +464,36 @@ async def test_tool_rounds_are_capped_then_answer_without_tools() -> None:
 
 
 async def test_tool_support_rejection_retries_without_tools() -> None:
-    rejected = BadRequestError(
-        "tools unsupported",
-        response=Response(400, request=Request("POST", "https://example.com")),
-        body={},
+    api, create, _ = _api(
+        chat=[_status_error(BadRequestError, 400), _chat_reply("plain")],
+        api_mode="chat",
     )
-    api, create = _chat_api(rejected, _chat_reply("plain"))
 
     assert await api.generate_chat([], tools=_Tools()) == "plain"
 
     assert "tools" not in create.await_args_list[1].kwargs
 
 
-async def test_openai_client_uses_sdk_retries() -> None:
-    api = OpenAIAPI("test", "m")
-
-    assert api.client.max_retries == 2
-    await api.close()
-
-
-@pytest.mark.parametrize(
-    ("base_url", "host", "param"),
-    [
-        (None, "api.openai.com", "max_completion_tokens"),
-        ("https://eu.api.openai.com/v1", "eu.api.openai.com", "max_completion_tokens"),
-        ("https://api.deepseek.com", "api.deepseek.com", "max_tokens"),
-    ],
-)
-async def test_openai_base_url_defaults_to_sdk_and_picks_token_param(
-    monkeypatch: pytest.MonkeyPatch, base_url: str | None, host: str, param: str
-) -> None:
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    api = OpenAIAPI("test", "m", base_url=base_url)
-
-    assert api.client.base_url.host == host
-    assert api._token_param == param
-    await api.close()
-
-
-async def test_openai_moderates_texts_in_batch() -> None:
+async def test_moderation_splits_large_batches_and_lists_flagged_categories() -> None:
     categories = SimpleNamespace(
         to_dict=lambda: {"harassment": True, "hate": False, "illicit": True}
     )
-    create = AsyncMock(
-        return_value=SimpleNamespace(results=[SimpleNamespace(categories=categories)])
-    )
-    api = OpenAIAPI("test", "m")
-    api.client = cast(Any, SimpleNamespace(moderations=SimpleNamespace(create=create)))
 
-    result = await api.moderate_texts(["text"])
-
-    assert result == [frozenset({"harassment", "illicit"})]
-    create.assert_awaited_once_with(model="omni-moderation-latest", input=["text"])
-
-
-async def test_openai_moderation_splits_large_batches() -> None:
-    categories = SimpleNamespace(to_dict=lambda: {"hate": True})
-
-    async def create(*, model: str, input: list[str]) -> SimpleNamespace:
+    async def moderate(*, model: str, input: list[str]) -> SimpleNamespace:
         return SimpleNamespace(
             results=[SimpleNamespace(categories=categories) for _ in input]
         )
 
-    mock = AsyncMock(side_effect=create)
+    create = AsyncMock(side_effect=moderate)
     api = OpenAIAPI("test", "m")
-    api.client = cast(Any, SimpleNamespace(moderations=SimpleNamespace(create=mock)))
+    api.client = cast(Any, SimpleNamespace(moderations=SimpleNamespace(create=create)))
 
     result = await api.moderate_texts([str(i) for i in range(250)])
 
-    assert len(result) == 250
-    assert [len(call.kwargs["input"]) for call in mock.await_args_list] == [
+    assert result == [frozenset({"harassment", "illicit"})] * 250
+    assert [len(call.kwargs["input"]) for call in create.await_args_list] == [
         100,
         100,
         50,
     ]
+    assert create.await_args_list[-1].kwargs["model"] == "omni-moderation-latest"

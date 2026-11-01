@@ -149,10 +149,15 @@ class ChatHandler:
         text = self._format_chat_reply_text(
             room_id=ctx.room_id, handle=ctx.handle, text=reply.text
         )
-        if ctx.room_id:
-            await self.bot.misskey.send_room_message(ctx.room_id, text, reply.file_id)
-        else:
-            await self.bot.misskey.send_message(ctx.user_id, text, reply.file_id)
+        send = (
+            partial(self.bot.misskey.send_room_message, ctx.room_id)
+            if ctx.room_id
+            else partial(self.bot.misskey.send_message, ctx.user_id)
+        )
+        first, *rest = reply.file_ids or (None,)
+        await send(text, first)
+        for file_id in rest:
+            await send("", file_id)
         logger.info(f"{replied(source)} to @{ctx.username}: {format_log_text(text)}")
         if source in ("plugin", "ai") and ctx.text:
             self.append_turn(ctx.conversation_id, ctx.user_content, reply.text, limit)

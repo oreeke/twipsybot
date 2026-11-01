@@ -38,10 +38,4 @@ docker run --rm twipsybot:dev --help
 
 ## 兼容性
 
-不兼容地修改插件公共事件、结果、上下文或服务契约时：
-
-1. 提升 `twipsybot.plugin.PLUGIN_API_VERSION`。
-2. 更新插件加载校验与开发文档。
-3. 迁移全部内置插件。
-
 数据库结构变更需提供版本化迁移，并测试从旧版本升级。

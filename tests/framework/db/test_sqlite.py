@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
+from contextlib import closing
+
 from support.types import MakeBot, WriteConfig
 
 from twipsybot.shared.keys import ConfigKeys
@@ -22,9 +25,11 @@ async def test_database_persists_updates_and_cleans_expired_state(
         turns=2,
         blocked_until_ts=None,
     )
-    await bot.db._execute_write(
-        "UPDATE response_limit_state SET updated_at = '2000-01-01 00:00:00'"
-    )
+    with closing(sqlite3.connect(bot.db.db_path)) as conn:
+        conn.execute(
+            "UPDATE response_limit_state SET updated_at = '2000-01-01 00:00:00'"
+        )
+        conn.commit()
     assert await bot.db.cleanup_response_limit_state() == 0
     assert await bot.db.get_response_limit_state("old-user") is not None
     assert await bot.db.cleanup_response_limit_state(max_age_days=30) == 1

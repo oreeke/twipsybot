@@ -18,7 +18,6 @@ class ExampleConfig(PluginConfig):
 
 
 class ExamplePlugin(PluginBase):
-    api_version = 4
     config_class = ExampleConfig
     settings: ExampleConfig
 
@@ -38,7 +37,7 @@ plugins:
     response: "pong"
 ```
 
-- `api_version` 写字面量；生命周期、Hook 与工具须为 `async`。
+- 生命周期、Hook 与工具须为 `async`。
 - 插件按目录名排序，其后是 Entry Point，依次调用。
 
 ## 配置
@@ -106,7 +105,7 @@ example = "twipsybot_example:plugin"
 | `FileRef` | `id mime_type url thumbnail_url name raw` |
 
 - `on_message` / `on_mention` 返回 `HandledResult` 即终止后续插件与 AI；其余 Hook 不截断。
-- `self.handled(response, file_id=None, followup=None)`：`followup` 为无参 `async` 函数，回复发出后在后台调用，其返回的 `HandledResult` 同样补发（只取 `response`、`file_id`）。不受 Hook 超时约束，异常只记录日志。
+- `self.handled(response, *, file_ids=None, followup=None, links=None)`：`file_ids` 至多 16 个。`followup` 为无参 `async` 函数，回复发出后在后台调用，其返回的 `HandledResult` 同样补发（只取 `response`、`file_ids`）。不受 Hook 超时约束，异常只记录日志。
 - 返回值须严格符合公共 TypedDict，多余字段使结果失效。
 - 消息、提及与时间线事件的 `id` 非空；`NotificationEvent.id`、`UserRef.id`、`cw`、`host`、文件 URL 可能为空。
 - `MentionEvent.reply` / `renote` 仅一层，不可用时为 `None`，仍可用 `reply_id` / `renote_id` 判断关系；`attachments` 按本帖、被引用帖、被回复帖合并并去重。
@@ -153,8 +152,6 @@ from twipsybot.plugin import MentionEvent, MessageEvent, PluginBase, tool
 
 
 class ExamplePlugin(PluginBase):
-    api_version = 4
-
     @tool("查询城市天气", access="followers", external=True)
     async def weather(
         self,
@@ -169,7 +166,7 @@ plugin = ExamplePlugin
 
 - 签名为 `async def (self, event, ...)`；其余参数生成 JSON Schema，不接受未声明字段。
 - 工具名为 `<插件 ID>_<方法名>`；消息以 `/<方法名>` 或 `/<工具名>` 开头时强制调用。
-- 返回 `str`，或 `self.handled(...)`：`response` 交给模型，`file_id` 附加到最终回复，`followup` 在回复后补发。
+- 返回 `str`，或 `self.handled(...)`：`response` 交给模型，文件附加到最终回复，`links` 附在回复末尾，`followup` 在回复后补发。
 - 结果截断至 8000 字符，单次调用 60 秒；参数错误、异常与超时以错误文本返回模型。
 - 参数全部必填才满足 Responses 的 strict 模式，带默认值的按非 strict 处理。
 

@@ -17,6 +17,20 @@ from twipsybot.shared.errors import (
 from twipsybot.shared.settings import write_settings
 from twipsybot.shared.status import read_status
 
+ENV_KEYS = ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "AI_API_KEY")
+
+
+@pytest.fixture
+def blank_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture
+def filled_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ENV_KEYS:
+        monkeypatch.setenv(key, "x")
+
 
 def test_cli_propagates_run_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["twipsybot", "run"])
@@ -37,10 +51,8 @@ async def test_heartbeat_reports_bot_and_stream_state(tmp_path: Path) -> None:
 
 
 async def test_startup_waits_for_settings_then_retries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blank_env: None
 ) -> None:
-    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "AI_API_KEY"):
-        monkeypatch.delenv(env, raising=False)
     bot = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
     monkeypatch.setattr(app_main, "Neuro", lambda _: bot)
     monkeypatch.setattr(app_main, "_RETRY_POLL_SECONDS", 0.01)
@@ -65,10 +77,8 @@ async def test_startup_waits_for_settings_then_retries(
 
 
 async def test_startup_retries_after_connection_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filled_env: None
 ) -> None:
-    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "AI_API_KEY"):
-        monkeypatch.setenv(env, "x")
     bot = SimpleNamespace(
         start=AsyncMock(side_effect=[APIConnectionError(), None]), stop=AsyncMock()
     )
@@ -87,10 +97,8 @@ async def test_startup_retries_after_connection_error(
 
 
 async def test_startup_waits_on_token_permission_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filled_env: None
 ) -> None:
-    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "AI_API_KEY"):
-        monkeypatch.setenv(env, "x")
     bot = SimpleNamespace(
         start=AsyncMock(side_effect=APIPermissionError()), stop=AsyncMock()
     )
@@ -108,11 +116,7 @@ async def test_startup_waits_on_token_permission_error(
         assert await started is False
 
 
-async def test_startup_wait_stops_on_shutdown(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    for env in ("MISSKEY_INSTANCE_URL", "MISSKEY_ACCESS_TOKEN", "AI_API_KEY"):
-        monkeypatch.delenv(env, raising=False)
+async def test_startup_wait_stops_on_shutdown(tmp_path: Path, blank_env: None) -> None:
     runner = app_main.BotRunner()
     started = asyncio.create_task(runner._start(app_main.Config(tmp_path)))
     await asyncio.sleep(0.05)

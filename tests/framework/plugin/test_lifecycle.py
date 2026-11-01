@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -8,6 +9,10 @@ from support.events import message
 from support.factories import set_plugin_config
 from support.types import MakeBot, MakePluginDir, WriteConfig
 
+import twipsybot.plugin.manager as manager_module
+from twipsybot.plugin.manager import PluginManager
+
+_MESSAGE = message({"id": "message-1", "user": {"username": "alice"}})
 _RELOAD_BODY = (
     "from twipsybot.plugin import PluginConfig\n"
     "class Settings(PluginConfig):\n"
@@ -16,6 +21,7 @@ _RELOAD_BODY = (
     "def __init__(self, context):\n"
     "    super().__init__(context)\n"
     "    self.events = ['init']\n"
+    "    self.gate = None\n"
     "async def initialize(self):\n"
     "    self.events.append('initialize')\n"
     "    return True\n"
@@ -26,236 +32,182 @@ _RELOAD_BODY = (
     "async def cleanup(self):\n"
     "    self.events.append('cleanup')\n"
     "async def on_message(self, event):\n"
+    "    if gate := self.gate:\n"
+    "        self.gate = None\n"
+    "        self.events.append('hook')\n"
+    "        await gate.wait()\n"
+    "        self.events.append('hook-done')\n"
     "    return self.handled(self.settings.reply)\n"
 )
-_MESSAGE = message({"id": "_MESSAGE-1", "user": {"username": "alice"}})
+_BLOCKING_BODY = (
+    "entered = cancelled = False\n"
+    "async def _block(self):\n"
+    "    import asyncio\n"
+    "    if self.cancelled:\n"
+    "        return\n"
+    "    self.entered = True\n"
+    "    try:\n"
+    "        await asyncio.Event().wait()\n"
+    "    except asyncio.CancelledError:\n"
+    "        self.cancelled = True\n"
+    "        raise\n"
+    "async def on_message(self, event):\n"
+    "    await self._block()\n"
+    "async def cleanup(self):\n"
+    "    await self._block()\n"
+    "async def on_auto_post_published(self, content):\n"
+    "    await self._block()\n"
+)
 
 
-async def test_lifecycle_order(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "lifecycle",
-        body="def __init__(self, context):\n"
-        "    super().__init__(context)\n"
-        "    self.events = ['init']\n"
-        "async def initialize(self):\n"
-        "    self.events.append('initialize')\n"
-        "    return True\n"
-        "async def on_startup(self):\n"
-        "    self.events.append('startup')\n"
-        "async def on_message(self, event):\n"
-        "    self.events.append('hook')\n"
-        "async def on_shutdown(self):\n"
-        "    self.events.append('shutdown')\n"
-        "async def cleanup(self):\n"
-        "    self.events.append('cleanup')\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    plugin = bot.plugin_manager.plugins.get("lifecycle")
-    assert plugin is not None
+async def _until(condition: Callable[[], bool]) -> None:
+    async with asyncio.timeout(1):
+        while not condition():
+            await asyncio.sleep(0)
 
-    await bot.plugin_manager.call_plugin_hook("on_message", _MESSAGE)
-    await bot.plugin_manager.shutdown_plugins()
-    await bot.plugin_manager.cleanup_plugins()
+
+async def _until_dispatch_stops(manager: PluginManager) -> None:
+    async with asyncio.timeout(1):
+        while await manager.call_plugin_hook("on_message", _MESSAGE):
+            await asyncio.sleep(0)
+
+
+async def test_lifecycle_order(boot) -> None:
+    bot = await boot(lifecycle=_RELOAD_BODY)
+    manager = bot.plugin_manager
+    plugin = manager.plugins["lifecycle"]
+    plugin.gate = asyncio.Event()
+    plugin.gate.set()
+
+    await manager.call_plugin_hook("on_message", _MESSAGE)
+    await manager.shutdown_plugins()
+    await manager.cleanup_plugins()
 
     assert plugin.events == [
         "init",
         "initialize",
         "startup",
         "hook",
+        "hook-done",
         "shutdown",
         "cleanup",
     ]
 
 
-async def test_initialize_timeout_runs_cleanup(
-    monkeypatch: pytest.MonkeyPatch,
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
+@pytest.mark.parametrize(
+    "body",
+    [
+        (
+            "async def initialize(self):\n"
+            "    import asyncio\n"
+            "    await asyncio.sleep(1)\n"
+            "    return True"
+        ),
+        "async def initialize(self):\n    return False",
+        "async def initialize(self):\n    return 'yes'",
+        "async def on_startup(self):\n    raise RuntimeError('boom')",
+    ],
+    ids=[
+        "initialize-timeout",
+        "initialize-false",
+        "initialize-non-bool",
+        "startup-error",
+    ],
+)
+async def test_failed_initialization_or_startup_disables_plugin_and_cleans_up(
+    body: str, monkeypatch: pytest.MonkeyPatch, boot
 ) -> None:
-    import twipsybot.plugin.manager as manager_module
-
-    monkeypatch.setattr(manager_module, "_PLUGIN_LIFECYCLE_TIMEOUT_SECONDS", 0.01)
-    plugins_dir = make_plugin_dir(
-        "slow",
-        body="async def initialize(self):\n"
-        "    import asyncio\n"
-        "    await asyncio.sleep(1)\n"
-        "    return True\n"
-        "async def cleanup(self):\n"
-        "    self.cleaned = True\n",
+    monkeypatch.setattr(manager_module, "_PLUGIN_LIFECYCLE_TIMEOUT_SECONDS", 0.05)
+    bot = await boot(
+        failing=f"{body}\nasync def cleanup(self):\n    self.cleaned = True\n"
     )
 
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    plugin = bot.plugin_manager.plugins.get("slow")
-
-    assert plugin is not None
-    assert bot.plugin_manager.get_plugin_states() == {"slow": False}
-
-
-async def test_failed_plugin_initialization_runs_cleanup(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "failing",
-        body="async def initialize(self):\n"
-        "    return False\n"
-        "async def cleanup(self):\n"
-        "    await self.context.storage.set('cleaned', 'yes')\n",
-    )
-
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-
-    plugin = bot.plugin_manager.plugins.get("failing")
-    assert plugin is not None
     assert bot.plugin_manager.get_plugin_states() == {"failing": False}
+    assert bot.plugin_manager.plugins["failing"].cleaned is True
 
 
-async def test_non_bool_initialize_and_startup_failure_cleanup(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "nonbool",
-        body="async def initialize(self):\n"
-        "    return 'yes'\n"
-        "async def cleanup(self):\n"
-        "    self.cleaned = True\n",
+async def test_shutdown_stops_hook_dispatch_and_reload(boot) -> None:
+    bot = await boot(
+        shutdown="async def on_message(self, event):\n"
+        "    raise AssertionError('must not run')\n"
     )
-    make_plugin_dir(
-        "startup",
-        body="async def on_startup(self):\n"
-        "    raise RuntimeError('boom')\n"
-        "async def cleanup(self):\n"
-        "    self.cleaned = True\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    nonbool = bot.plugin_manager.plugins.get("nonbool")
-    startup = bot.plugin_manager.plugins.get("startup")
-    assert nonbool is not None
-    assert startup is not None
+    manager = bot.plugin_manager
 
-    assert bot.plugin_manager.get_plugin_states() == {
-        "nonbool": False,
-        "startup": False,
-    }
-    assert nonbool.cleaned is True
-    assert startup.cleaned is True
+    await manager.shutdown_plugins()
+
+    assert await manager.call_plugin_hook("on_message", _MESSAGE) == []
+    assert await manager.reload_plugin("shutdown") == "unavailable"
 
 
-async def test_shutdown_stops_hook_dispatch(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "shutdown",
-        body="async def on_message(self, event):\n"
-        "    raise AssertionError('must not run')\n",
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+async def test_shutdown_waits_for_active_hook_and_rejects_new_hooks(boot) -> None:
+    bot = await boot(shutdown=_RELOAD_BODY)
+    manager = bot.plugin_manager
+    plugin = manager.plugins["shutdown"]
+    release = plugin.gate = asyncio.Event()
+    active_hook = asyncio.create_task(manager.call_plugin_hook("on_message", _MESSAGE))
+    await _until(lambda: "hook" in plugin.events)
 
-    await bot.plugin_manager.shutdown_plugins()
+    shutdown = asyncio.create_task(manager.shutdown_plugins())
+    await _until_dispatch_stops(manager)
 
-    assert await bot.plugin_manager.call_plugin_hook("on_message", _MESSAGE) == []
-
-
-async def test_shutdown_waits_for_active_hook_and_rejects_new_hooks(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    plugins_dir = make_plugin_dir("shutdown")
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    plugin = bot.plugin_manager.plugins.get("shutdown")
-    assert plugin is not None
-    hook_started = asyncio.Event()
-    release_hook = asyncio.Event()
-    events: list[str] = []
-
-    async def on_message(_: Any) -> None:
-        events.append("hook-started")
-        hook_started.set()
-        await release_hook.wait()
-        events.append("hook-finished")
-
-    async def on_shutdown() -> None:
-        events.append("shutdown")
-
-    monkeypatch.setattr(plugin, "on_message", on_message, raising=False)
-    monkeypatch.setattr(plugin, "on_shutdown", on_shutdown, raising=False)
-    active_hook = asyncio.create_task(
-        bot.plugin_manager.call_plugin_hook("on_message", _MESSAGE)
-    )
-    await hook_started.wait()
-    shutdown = asyncio.create_task(bot.plugin_manager.shutdown_plugins())
-    async with asyncio.timeout(1):
-        while bot.plugin_manager._accepting_hooks:
-            await asyncio.sleep(0)
-
-    assert await bot.plugin_manager.call_plugin_hook("on_message", _MESSAGE) == []
     assert not shutdown.done()
-    assert events == ["hook-started"]
+    assert plugin.events[-1] == "hook"
 
-    release_hook.set()
+    release.set()
     await asyncio.gather(active_hook, shutdown)
 
-    assert events == ["hook-started", "hook-finished", "shutdown"]
+    assert plugin.events[-3:] == ["hook", "hook-done", "shutdown"]
 
 
 async def test_shutdown_cancels_hook_after_grace_period(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, boot
 ) -> None:
-    import twipsybot.plugin.manager as manager_module
-
     monkeypatch.setattr(manager_module, "_PLUGIN_SHUTDOWN_GRACE_SECONDS", 0.01)
-    plugins_dir = make_plugin_dir("shutdown")
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    plugin = bot.plugin_manager.plugins.get("shutdown")
-    assert plugin is not None
-    hook_started = asyncio.Event()
-    hook_cancelled = asyncio.Event()
+    bot = await boot(blocking=_BLOCKING_BODY)
+    manager = bot.plugin_manager
+    plugin = manager.plugins["blocking"]
+    active_hook = asyncio.create_task(manager.call_plugin_hook("on_message", _MESSAGE))
+    await _until(lambda: plugin.entered)
 
-    async def on_message(_: Any) -> None:
-        hook_started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            hook_cancelled.set()
-            raise
-
-    monkeypatch.setattr(plugin, "on_message", on_message, raising=False)
-    active_hook = asyncio.create_task(
-        bot.plugin_manager.call_plugin_hook("on_message", _MESSAGE)
-    )
-    await hook_started.wait()
-
-    await bot.plugin_manager.shutdown_plugins()
+    await manager.shutdown_plugins()
 
     assert active_hook.cancelled()
-    assert hook_cancelled.is_set()
+    assert plugin.cancelled is True
 
 
-async def test_reload_plugin_replaces_instance_with_new_config(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
+@pytest.mark.parametrize(
+    "trigger",
+    [
+        lambda manager: manager.cleanup_plugins(),
+        lambda manager: manager.confirm_auto_post_published("blocking", "content"),
+    ],
+    ids=["cleanup", "auto-post-confirmation"],
+)
+async def test_blocked_plugin_callback_responds_to_cancellation(
+    trigger: Callable[[PluginManager], Any], boot
 ) -> None:
-    plugins_dir = make_plugin_dir("reload", body=_RELOAD_BODY)
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+    bot = await boot(blocking=_BLOCKING_BODY)
+    plugin = bot.plugin_manager.plugins["blocking"]
+    task = asyncio.create_task(trigger(bot.plugin_manager))
+    await _until(lambda: plugin.entered)
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert plugin.cancelled is True
+
+
+async def test_reload_plugin_replaces_instance_with_new_config(boot) -> None:
+    bot = await boot(reload=_RELOAD_BODY)
     manager = bot.plugin_manager
-    old = manager.plugins.get("reload")
-    assert old is not None
+    old = manager.plugins["reload"]
     await old.context.storage.set("kept", "yes")
     set_plugin_config(bot.config.root, "reload", {"enabled": True, "reply": "updated"})
 
     assert await bot.settings.reload() == {"reload": "enabled"}
 
-    new = manager.plugins.get("reload")
-    assert new is not None
+    new = manager.plugins["reload"]
     assert new is not old
     assert type(new) is type(old)
     assert old.events == ["init", "initialize", "startup", "shutdown", "cleanup"]
@@ -266,23 +218,18 @@ async def test_reload_plugin_replaces_instance_with_new_config(
     ]
 
 
-async def test_reload_plugin_failure_disables_only_that_plugin(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir("broken", body=_RELOAD_BODY)
-    make_plugin_dir(
-        "healthy",
-        body="async def on_message(self, event):\n    return self.handled('ok')\n",
+async def test_reload_plugin_failure_disables_only_that_plugin(boot) -> None:
+    bot = await boot(
+        broken=_RELOAD_BODY,
+        healthy="async def on_message(self, event):\n    return self.handled('ok')\n",
     )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     manager = bot.plugin_manager
-    old = manager.plugins.get("broken")
-    assert old is not None
+    old = manager.plugins["broken"]
     set_plugin_config(bot.config.root, "broken", {"enabled": True, "reply": [1]})
 
     assert await bot.settings.reload() == {"broken": "failed"}
 
-    assert manager.plugins.get("broken") is old
+    assert manager.plugins["broken"] is old
     assert old.events[-2:] == ["shutdown", "cleanup"]
     assert manager.get_plugin_states() == {"broken": False, "healthy": True}
     assert await manager.call_plugin_hook("on_message", _MESSAGE) == [
@@ -299,13 +246,12 @@ async def test_reload_plugin_follows_enabled_flag(
     bot = await make_bot(write_config(), plugins_dir=plugins_dir)
     manager = bot.plugin_manager
     root = bot.config.root
-    assert manager.plugins.get("toggle") is None
+    assert "toggle" not in manager.plugins
 
     set_plugin_config(root, "toggle", {"enabled": True})
     assert await bot.settings.reload() == {"toggle": "enabled"}
-    plugin = manager.plugins.get("toggle")
-    assert plugin is not None
-    assert plugin._started
+    plugin = manager.plugins["toggle"]
+    assert manager.get_plugin_states() == {"toggle": True}
 
     set_plugin_config(root, "toggle", None)
     assert await bot.settings.reload() == {"toggle": "disabled"}
@@ -315,146 +261,40 @@ async def test_reload_plugin_follows_enabled_flag(
 
     set_plugin_config(root, "toggle", {"enabled": True})
     assert await bot.settings.reload() == {"toggle": "enabled"}
-    reloaded = manager.plugins.get("toggle")
-    assert reloaded is not None
-    assert type(reloaded) is type(plugin)
+    assert type(manager.plugins["toggle"]) is type(plugin)
 
 
-async def test_settings_reload_only_restarts_changed_plugins(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir("first", body=_RELOAD_BODY)
-    make_plugin_dir("second", body=_RELOAD_BODY)
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    manager = bot.plugin_manager
-    second = manager.plugins.get("second")
+async def test_settings_reload_only_restarts_changed_plugins(boot) -> None:
+    bot = await boot(first=_RELOAD_BODY, second=_RELOAD_BODY)
+    second = bot.plugin_manager.plugins["second"]
     set_plugin_config(bot.config.root, "first", {"enabled": True, "reply": "new"})
 
     assert await bot.settings.reload() == {"first": "enabled"}
-    assert manager.plugins.get("second") is second
+    assert bot.plugin_manager.plugins["second"] is second
     assert await bot.settings.reload() == {}
 
 
-@pytest.mark.parametrize("name", ("missing", "../toggle", "."))
-async def test_reload_plugin_rejects_unknown_names(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    name: str,
-) -> None:
-    plugins_dir = make_plugin_dir("toggle", body=_RELOAD_BODY)
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+@pytest.mark.parametrize("name", ["missing", "../toggle", "."])
+async def test_reload_plugin_rejects_unknown_names(name: str, boot) -> None:
+    bot = await boot(toggle=_RELOAD_BODY)
 
     assert await bot.plugin_manager.reload_plugin(name) == "unknown"
 
 
-async def test_reload_plugin_drains_active_hook_before_shutdown(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir(
-        "slow",
-        body=_RELOAD_BODY.replace(
-            "async def on_message(self, event):\n",
-            "async def on_message(self, event):\n"
-            "    self.events.append('hook')\n"
-            "    await self.release.wait()\n",
-        ),
-    )
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+async def test_reload_plugin_drains_active_hook_before_shutdown(boot) -> None:
+    bot = await boot(slow=_RELOAD_BODY)
     manager = bot.plugin_manager
-    plugin = manager.plugins.get("slow")
-    assert plugin is not None
-    release = asyncio.Event()
-    plugin.release = release
+    plugin = manager.plugins["slow"]
+    release = plugin.gate = asyncio.Event()
     active_hook = asyncio.create_task(manager.call_plugin_hook("on_message", _MESSAGE))
-    async with asyncio.timeout(1):
-        while "hook" not in plugin.events:
-            await asyncio.sleep(0)
+    await _until(lambda: "hook" in plugin.events)
 
     reload = asyncio.create_task(manager.reload_plugin("slow"))
-    async with asyncio.timeout(1):
-        while "slow" not in manager._reloading:
-            await asyncio.sleep(0)
+    await _until_dispatch_stops(manager)
 
-    assert await manager.call_plugin_hook("on_message", _MESSAGE) == []
     assert "shutdown" not in plugin.events
 
     release.set()
     assert await reload == "enabled"
     assert (await active_hook)[0][1]["response"] == "default"
-    assert plugin.events[-3:] == ["hook", "shutdown", "cleanup"]
-
-
-async def test_reload_plugin_is_unavailable_after_shutdown(
-    make_bot: MakeBot, make_plugin_dir: MakePluginDir, write_config: WriteConfig
-) -> None:
-    plugins_dir = make_plugin_dir("toggle", body=_RELOAD_BODY)
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-
-    await bot.plugin_manager.shutdown_plugins()
-
-    assert await bot.plugin_manager.reload_plugin("toggle") == "unavailable"
-
-
-async def test_plugin_cleanup_responds_to_cancellation(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    plugins_dir = make_plugin_dir("cleanup")
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    plugin = bot.plugin_manager.plugins.get("cleanup")
-    assert plugin is not None
-    cleanup_started = asyncio.Event()
-    cleanup_cancelled = asyncio.Event()
-
-    async def cleanup() -> None:
-        cleanup_started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            cleanup_cancelled.set()
-            raise
-
-    monkeypatch.setattr(plugin, "cleanup", cleanup)
-    task = asyncio.create_task(bot.plugin_manager._cleanup_plugin(plugin))
-    await cleanup_started.wait()
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert cleanup_cancelled.is_set()
-
-
-async def test_auto_post_confirmation_responds_to_cancellation(
-    make_bot: MakeBot,
-    make_plugin_dir: MakePluginDir,
-    write_config: WriteConfig,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    plugins_dir = make_plugin_dir("publisher")
-    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
-    plugin = bot.plugin_manager.plugins.get("publisher")
-    assert plugin is not None
-    confirmation_started = asyncio.Event()
-    confirmation_cancelled = asyncio.Event()
-
-    async def confirm(_: str) -> None:
-        confirmation_started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            confirmation_cancelled.set()
-            raise
-
-    monkeypatch.setattr(plugin, "on_auto_post_published", confirm)
-    task = asyncio.create_task(
-        bot.plugin_manager.confirm_auto_post_published("publisher", "content")
-    )
-    await confirmation_started.wait()
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert confirmation_cancelled.is_set()
+    assert plugin.events[-4:] == ["hook", "hook-done", "shutdown", "cleanup"]

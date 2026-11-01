@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:0.12.23 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.6 AS uv
 FROM python:3.12-alpine AS base
 
 FROM base AS builder

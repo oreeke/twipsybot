@@ -4,7 +4,6 @@ import re
 from datetime import timedelta
 from typing import Annotated, Any, Literal
 
-import durationpy
 from loguru import logger
 from pydantic import Field, field_validator
 
@@ -13,6 +12,7 @@ from twipsybot.plugin import (
     PluginConfig,
     TimelineNoteEvent,
     When,
+    parse_duration,
 )
 
 Visibility = Literal["public", "home", "followers"]
@@ -66,7 +66,7 @@ class _Config(PluginConfig):
             case timedelta():
                 delay = value
             case str() if _DELAY_PATTERN.fullmatch(s := value.strip().lower()):
-                delay = durationpy.from_str(s)
+                delay = parse_duration(s)
             case _:
                 raise ValueError(_DELAY_ERROR)
         if not _DELAY_BOUNDS[0] <= delay <= _DELAY_BOUNDS[1]:
@@ -80,7 +80,7 @@ class RadarPlugin(PluginBase):
 
     def __init__(self, context):
         super().__init__(context)
-        self._pending: dict[str, asyncio.Task[None]] = {}
+        self._pending: set[str] = set()
 
     async def initialize(self) -> bool:
         selectors = self.context.bot.load_antenna_selectors()
@@ -99,17 +99,6 @@ class RadarPlugin(PluginBase):
         if isinstance(renote, dict):
             parts.append(self._effective_text(renote))
         return "\n".join(p for p in parts if p).strip()
-
-    def _should_skip_self(self, event: TimelineNoteEvent) -> bool:
-        bot_id = self.context.bot.user_id
-        if bot_id and event.user.id:
-            return event.user.id == bot_id
-        if event.user.host:
-            return False
-        bot_name = self.context.bot.username
-        if not isinstance(bot_name, str) or not bot_name:
-            return False
-        return bot_name.lower() == event.user.username.lower()
 
     @staticmethod
     def _format_reply_text(template: str, note: dict[str, Any]) -> str:
@@ -136,19 +125,17 @@ class RadarPlugin(PluginBase):
         return reply.strip() or None
 
     async def on_timeline_note(self, event: TimelineNoteEvent) -> None:
-        if event.channel != "antenna" or not event.id:
+        if event.channel != "antenna" or event.user.id == self.context.bot.user_id:
             return
-        if self._should_skip_self(event) or event.id in self._pending:
+        if (note_id := event.id) in self._pending:
             return
         if len(self._pending) >= _MAX_PENDING:
-            logger.debug(f"Radar pending queue full; skipping {event.id}")
+            logger.debug(f"Radar pending queue full; skipping {note_id}")
             return
-        note_id = event.id
-        task = asyncio.create_task(
-            self._delayed_act(event), name=f"plugin-{self.context.name}-{note_id}"
+        self._pending.add(note_id)
+        self.spawn(self._delayed_act(event)).add_done_callback(
+            lambda _: self._pending.discard(note_id)
         )
-        self._pending[note_id] = task
-        task.add_done_callback(lambda _: self._pending.pop(note_id, None))
 
     async def _delayed_act(self, event: TimelineNoteEvent) -> None:
         delay = self.settings.delay
@@ -168,12 +155,6 @@ class RadarPlugin(PluginBase):
         except Exception as e:
             logger.info(f"Radar skipped unavailable note {note_id}: {e!r}")
             return None
-
-    async def on_shutdown(self) -> None:
-        tasks = tuple(self._pending.values())
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _maybe_react(
         self, note_data: dict[str, Any], note_id: str, channel: str

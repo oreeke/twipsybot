@@ -5,19 +5,14 @@ from loguru import logger
 
 from ...shared.config import Settings, needs_restart
 from ...shared.errors import ConfigurationError
-from ...shared.keys import ConfigKeys
 from ...shared.logs import set_log_level
 from ...shared.settings import patch_settings
 
 _POLL_SECONDS = 2.0
 _POST_SCHEDULE_KEYS = frozenset(
-    {
-        ConfigKeys.POST_MODE,
-        ConfigKeys.POST_INTERVAL,
-        ConfigKeys.POST_TIMES,
-    }
+    {"autopost.mode", "autopost.interval", "autopost.times"}
 )
-_AI_KEYS = frozenset({ConfigKeys.BOT_MODEL, ConfigKeys.BOT_API_MODE})
+_AI_KEYS = frozenset({"bot.model", "bot.api_mode"})
 
 
 def _changed_keys(old: dict[str, Any], new: dict[str, Any]) -> set[str]:
@@ -60,13 +55,14 @@ class SettingsReloader:
             return await self._reload()
 
     async def _reload(self) -> dict[str, str]:
+        old = self._config.snapshot()
         try:
-            old = await asyncio.to_thread(self._config.load)
+            await asyncio.to_thread(self._config.load)
         except ConfigurationError as e:
             self._config.fingerprint = self._config.stat()
             logger.error(f"Settings rejected; keeping current: {e}")
             return {}
-        if not (changed := _changed_keys(old, self._config.data)):
+        if not (changed := _changed_keys(old, self._config.snapshot())):
             return {}
         await self._apply(changed)
         statuses = {
@@ -81,18 +77,16 @@ class SettingsReloader:
         return statuses
 
     async def _apply(self, changed: set[str]) -> None:
-        bot, get = self._bot, self._config.get
+        bot, settings = self._bot, self._config.settings
         if changed & _AI_KEYS:
-            bot.openai.update(
-                model=get(ConfigKeys.BOT_MODEL), api_mode=get(ConfigKeys.BOT_API_MODE)
-            )
-        if ConfigKeys.SYSTEM_LOG_LEVEL in changed:
-            set_log_level(get(ConfigKeys.SYSTEM_LOG_LEVEL))
-        if ConfigKeys.SYSTEM_DUMP_EVENTS in changed:
-            bot.streaming.log_dump_events = bool(get(ConfigKeys.SYSTEM_DUMP_EVENTS))
-        if ConfigKeys.SYSTEM_ALLOW_NETS in changed:
+            bot.openai.update(model=settings.bot.model, api_mode=settings.bot.api_mode)
+        if "system.log_level" in changed:
+            set_log_level(settings.system.log_level)
+        if "system.dump_events" in changed:
+            bot.streaming.log_dump_events = settings.system.dump_events
+        if "system.allow_nets" in changed:
             for fetcher in (bot.fetcher, bot.misskey.fetcher):
-                fetcher.set_nets(get(ConfigKeys.SYSTEM_ALLOW_NETS))
+                fetcher.set_nets(settings.system.allow_nets)
         if changed & _POST_SCHEDULE_KEYS:
             bot.auto_post.apply_schedule()
         if any(k.startswith("timeline.") for k in changed):

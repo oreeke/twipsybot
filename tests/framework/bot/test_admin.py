@@ -17,7 +17,6 @@ from support.types import MakeBot, MakePluginDir, WriteConfig
 
 from twipsybot import Neuro
 from twipsybot.bot.admin import handlers
-from twipsybot.shared.keys import ConfigKeys
 from twipsybot.shared.settings import read_settings
 
 type RunCommand = Callable[[Neuro, str], Awaitable[str]]
@@ -28,7 +27,7 @@ async def test_admin_check_matches_ids_and_canonical_handles(
 ) -> None:
     bot = await make_bot(write_config())
     local = bot.limits.canonical_handle("alice")
-    bot.config.data["bot"]["admins"] = ["user-1", local, "carol@remote.example"]
+    bot.config.settings.bot.admins = ["user-1", local, "carol@remote.example"]
 
     admin = bot.admin
     assert admin.is_admin("user-1", None)
@@ -77,9 +76,6 @@ async def test_admin_status_summarizes_runtime_without_leaking_secrets(
         "chat": {"name": "chatUser"},
     }
     monkeypatch.setattr(
-        bot.misskey, "instance_url", "https://example.com/path?token=secret"
-    )
-    monkeypatch.setattr(
         bot.plugin_manager,
         "get_plugin_states",
         Mock(return_value={f"p{i}": True for i in range(plugin_count)}),
@@ -88,8 +84,8 @@ async def test_admin_status_summarizes_runtime_without_leaking_secrets(
     response = await run_command(bot, "^status")
 
     assert response.count("```") == 2
-    assert "实例  example.com" in response
-    assert "secret" not in response
+    assert f"实例  {bot.me.host}" in response
+    assert "test-token" not in response
     assert "频道  main · home" in response
     assert "antenna x2 · chat x1" in response
     assert "授权  1" in response.splitlines()
@@ -190,9 +186,11 @@ async def test_admin_status_reports_auto_post_schedule(
     make_bot: MakeBot,
     write_config: WriteConfig,
     monkeypatch: pytest.MonkeyPatch,
+    today: str,
 ) -> None:
     bot = await make_bot(write_config(autopost={"daily_max": 5, **autopost}))
-    bot.auto_post.posts_today = count
+    await bot.db.set_auto_post_state(today, count)
+    await bot.auto_post.start()
     next_run = datetime(2026, 9, 9, 14, 30, tzinfo=UTC)
     job = SimpleNamespace(next_run_time=next_run) if has_job else None
     scheduler = SimpleNamespace(state=scheduler_state, get_job=Mock(return_value=job))
@@ -211,7 +209,7 @@ async def test_admin_commands_persist_to_settings(
     make_bot: MakeBot, write_config: WriteConfig
 ) -> None:
     bot = await make_bot(write_config())
-    await handlers.set_bool(bot, ConfigKeys.REPLY_CHAT, "chat", "off")
+    await handlers.set_bool(bot, "chat", "off")
     await handlers.set_model(bot, "temporary-model")
 
     assert bot.openai.model == "temporary-model"
@@ -222,7 +220,7 @@ async def test_admin_commands_persist_to_settings(
     assert response == "已恢复默认模型: gpt-6-luna"
     assert bot.openai.model == "gpt-6-luna"
     assert "model" not in read_settings(bot.config.settings_path)["bot"]
-    assert bot.config.get(ConfigKeys.REPLY_CHAT) is False
+    assert bot.config.settings.reply.chat is False
 
 
 async def test_admin_resets_auto_post_counter(
@@ -247,7 +245,7 @@ async def test_admin_autopost_switches_mode(
     assert bot.auto_post.mode == "rotation"
     assert await handlers.set_autopost(bot, "on") is None
 
-    await bot.settings.update({ConfigKeys.POST_TIMES: ["09:00"]})
+    await bot.settings.update({"autopost.times": ["09:00"]})
     assert await handlers.set_autopost(bot, "schedule") == "autopost: schedule"
     assert read_settings(bot.config.settings_path)["autopost"]["mode"] == "schedule"
     assert await handlers.set_autopost(bot, "off") == "autopost: off"
@@ -312,11 +310,11 @@ async def test_admin_chat_commands_skip_plugins_limits_and_ai_history(
     raw = {**CHAT_MESSAGE, "text": "^chat off"}
 
     await bot.chat.handle(message(raw))
-    assert bot.config.get(ConfigKeys.REPLY_CHAT) is False
+    assert bot.config.settings.reply.chat is False
 
     await bot.chat.handle(message({**raw, "id": "message-2", "text": "^chat on"}))
 
-    assert bot.config.get(ConfigKeys.REPLY_CHAT) is True
+    assert bot.config.settings.reply.chat is True
     plugin_hook.assert_not_awaited()
     assert await bot.db.get_response_limit_state("user-2") is None
 

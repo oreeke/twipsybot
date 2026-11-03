@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -24,7 +23,7 @@ from support.flows import (
 from support.plugins import CONTEXT_PLUGIN
 from support.types import MakeBot, MakePluginDir, WriteConfig
 
-from twipsybot import Neuro
+from twipsybot.bot.engine.core import BotIdentity
 from twipsybot.clients.misskey.models import MentionEvent
 from twipsybot.shared.errors import APIBadRequestError
 
@@ -110,24 +109,6 @@ async def test_mention_truncates_generated_reply_after_adding_mention(
     assert len(text) == 3000
     assert text.startswith("@alice\n")
     assert text.endswith("…")
-
-
-async def test_mention_skips_generation_when_source_note_is_missing(
-    make_bot: MakeBot,
-    write_config: WriteConfig,
-    misskey_server: FakeMisskeyServer,
-    openai_server: FakeOpenAIServer,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bot = await make_bot(write_config())
-    get_note = AsyncMock(side_effect=APIBadRequestError("NO_SUCH_NOTE: No such note."))
-    monkeypatch.setattr(bot.misskey, "get_note", get_note)
-
-    await bot.mention.handle(mention(MENTION_NOTE))
-
-    get_note.assert_awaited_once_with("note-mention-1")
-    assert openai_server.calls == []
-    assert "notes/create" not in misskey_server.calls
 
 
 @pytest.mark.parametrize(
@@ -418,7 +399,7 @@ async def test_mention_in_reply_to_third_party_includes_parent(
 
     prompt = openai_server.calls[0]["messages"][-1]["content"]
     assert prompt == "@testbot 翻译一下\n\nReplying to:\n第三方原帖"
-    assert get_note.await_count == (1 if inline else 2)
+    assert get_note.await_count == (0 if inline else 1)
 
 
 async def test_mention_ignores_unavailable_parent(
@@ -499,8 +480,6 @@ async def test_plugin_can_take_over_mention(
     ],
 )
 def test_bot_mention_matches_complete_local_account(text: str, expected: bool) -> None:
-    bot = cast(Any, object.__new__(Neuro))
-    bot.bot_username = "testbot"
-    bot.misskey = SimpleNamespace(instance_url="https://example.com")
+    me = BotIdentity("bot-id", "testbot", "example.com")
 
-    assert bot.is_bot_mentioned(text) is expected
+    assert me.mentioned_in(text) is expected

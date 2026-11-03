@@ -8,7 +8,6 @@ from support.types import WriteConfig
 
 from twipsybot.shared.config import Config
 from twipsybot.shared.errors import ConfigurationError
-from twipsybot.shared.keys import ConfigKeys
 from twipsybot.shared.settings import (
     write_settings,
 )
@@ -57,8 +56,8 @@ def test_secrets_come_from_file_with_env_override(
     monkeypatch.delenv("MISSKEY_ACCESS_TOKEN")
     config.load()
 
-    assert config.get(ConfigKeys.MISSKEY_TOKEN) == "file-token"
-    assert config.get(ConfigKeys.AI_API_KEY) == "test-key"
+    assert config.connect.misskey_token == "file-token"
+    assert config.connect.ai_api_key == "test-key"
 
     monkeypatch.delenv("AI_API_KEY")
     write_settings(config.secrets_path, {"misskey_token": "file-token"})
@@ -74,7 +73,7 @@ def test_plugin_secrets_merge_into_plugin_config(write_config: WriteConfig) -> N
     )
     config.load()
 
-    assert config.get("plugins") == {
+    assert config.settings.plugins == {
         "demo": {"enabled": True, "limit": 5, "token": "tok"},
         "other": {"token": "t2"},
     }
@@ -96,15 +95,15 @@ def test_config_loads_from_secrets_alone(
     )
     config.load()
 
-    assert config.get(ConfigKeys.MISSKEY_TOKEN) == "t"
-    assert config.get("plugins") == {}
+    assert config.connect.misskey_token == "t"
+    assert config.settings.plugins == {}
     assert config.log_path.parent.is_dir()
 
 
 def test_allow_nets_are_normalized_and_validated(write_config: WriteConfig) -> None:
     config = write_config(system={"allow_nets": ["198.18.0.1/15", "::1"]})
 
-    assert config.get(ConfigKeys.SYSTEM_ALLOW_NETS) == ["198.18.0.0/15", "::1/128"]
+    assert config.settings.system.allow_nets == ["198.18.0.0/15", "::1/128"]
     invalid = write_config(load=False, system={"allow_nets": ["nope"]})
     with pytest.raises(ConfigurationError, match="allow_nets"):
         invalid.load()
@@ -123,8 +122,8 @@ def test_prompt_files_resolve_from_root(
         autopost={"prompt": "prompts/post.txt"},
     )
 
-    assert config.get(ConfigKeys.BOT_SYSTEM_PROMPT) == "system from file"
-    assert config.get(ConfigKeys.POST_PROMPT) == "post from file"
+    assert config.settings.bot.system_prompt == "system from file"
+    assert config.settings.autopost.prompt == "post from file"
     fingerprint = config.fingerprint
     (prompts_dir / "post.txt").write_text("post edited", encoding="utf-8")
     assert config.stat() != fingerprint
@@ -136,7 +135,7 @@ def test_auto_post_interval_accepts_minutes_and_units(
 ) -> None:
     config = write_config(autopost={"interval": interval})
 
-    assert config.get(ConfigKeys.POST_INTERVAL).total_seconds() == 10800
+    assert config.settings.autopost.interval.total_seconds() == 10800
 
 
 @pytest.mark.parametrize(
@@ -160,7 +159,7 @@ def test_response_limit_duration_normalization(
 ) -> None:
     config = write_config(reply={"rate_limit": value})
 
-    assert config.get(ConfigKeys.REPLY_RATE_LIMIT) == expected
+    assert config.settings.reply.rate_limit == expected
 
 
 @pytest.mark.parametrize(
@@ -216,7 +215,7 @@ def test_fingerprint_is_taken_before_reading(
     monkeypatch.setattr(module, "read_settings", read_then_edit)
     config.load()
 
-    assert config.get(ConfigKeys.REPLY_CHAT) is True
+    assert config.settings.reply.chat is True
     assert config.stat() != config.fingerprint
 
 
@@ -225,7 +224,7 @@ def test_post_times_are_normalized_and_sorted(write_config: WriteConfig) -> None
         autopost={"mode": "schedule", "times": ["21:15", 510, "7:05"]}
     )
 
-    assert config.get(ConfigKeys.POST_TIMES) == ["07:05", "08:30", "21:15"]
+    assert config.settings.autopost.times == ["07:05", "08:30", "21:15"]
 
 
 @pytest.mark.parametrize(

@@ -6,7 +6,6 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-import durationpy
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -19,7 +18,6 @@ from pydantic import (
 )
 
 from .errors import ConfigurationError
-from .keys import ConfigKeys
 from .settings import When, deep_merge, get_dotted, read_settings, set_dotted
 
 SECRETS = {
@@ -29,12 +27,11 @@ SECRETS = {
     "ai_api_key": "AI_API_KEY",
 }
 _REQUIRED_SECRETS = ("misskey_url", "misskey_token", "ai_api_key")
-PROMPT_KEYS = (ConfigKeys.BOT_SYSTEM_PROMPT, ConfigKeys.POST_PROMPT)
+PROMPT_KEYS = ("bot.system_prompt", "autopost.prompt")
 _RESTART_PREFIX = "connect."
 POST_MIN_GAP = timedelta(minutes=5)
 POST_MAX_TIMES = 24
 
-_MISSING = object()
 _INTERVAL_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?[mhd]\s*)+")
 _MINUTES_PATTERN = re.compile(r"\d+(?:\.\d+)?")
 _INTERVAL_ERROR = "auto-post interval must use minutes, hours, or days"
@@ -42,10 +39,21 @@ _SECONDS_PATTERN = re.compile(r"(?:\d+[smhd]\s*)+")
 _SECONDS_ERROR = "limits must use whole seconds, minutes, hours, or days"
 _CLOCK_PATTERN = re.compile(r"(\d{1,2}):(\d{2})")
 _CLOCK_ERROR = "times must use HH:MM"
+_DURATION_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?[smhd]\s*)+")
+_DURATION_UNIT = re.compile(r"([smhd])")
+_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 def needs_restart(key: str) -> bool:
     return key.startswith(_RESTART_PREFIX)
+
+
+def parse_duration(value: str) -> timedelta:
+    if not _DURATION_PATTERN.fullmatch(text := value.strip().lower()):
+        raise ValueError(f"invalid duration: {value!r}")
+    parts = _DURATION_UNIT.split(text)
+    pairs = zip(parts[::2], parts[1::2])
+    return timedelta(seconds=sum(float(n) * _UNIT_SECONDS[u] for n, u in pairs))
 
 
 def _parse_interval(value: Any) -> timedelta:
@@ -59,7 +67,7 @@ def _parse_interval(value: Any) -> timedelta:
         case str() if _MINUTES_PATTERN.fullmatch(s := value.strip().lower()):
             interval = timedelta(minutes=float(s))
         case str() if _INTERVAL_PATTERN.fullmatch(s := value.strip().lower()):
-            interval = durationpy.from_str(s)
+            interval = parse_duration(s)
         case _:
             raise ValueError(_INTERVAL_ERROR)
     if interval < POST_MIN_GAP:
@@ -80,7 +88,7 @@ def parse_seconds(value: Any) -> int:
             if s.isdigit():
                 return int(s)
             if _SECONDS_PATTERN.fullmatch(s):
-                return int(durationpy.from_str(s).total_seconds())
+                return int(parse_duration(s).total_seconds())
     raise ValueError(_SECONDS_ERROR)
 
 
@@ -252,6 +260,15 @@ def _stat(path: Path) -> tuple[int, int]:
     return st.st_mtime_ns, st.st_size
 
 
+class Connect(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    misskey_url: str = ""
+    misskey_token: str = Field(default="", repr=False)
+    ai_base_url: str = ""
+    ai_api_key: str = Field(default="", repr=False)
+
+
 class Config:
     def __init__(self, root: str | Path = "."):
         self.root = Path(root)
@@ -260,11 +277,12 @@ class Config:
         self.db_path = self.root / "data" / "twipsybot.db"
         self.log_path = self.root / "data" / "logs" / "twipsybot.log"
         self.status_path = self.root / "data" / "status.json"
-        self.data: dict[str, Any] = {}
+        self.settings = Settings()
+        self.connect = Connect()
         self.fingerprint: tuple[tuple[int, int], ...] = ()
         self._watched: tuple[Path, ...] = (self.settings_path, self.secrets_path)
 
-    def load(self) -> dict[str, Any]:
+    def load(self) -> None:
         watched = [self.settings_path, self.secrets_path]
         stats = [_stat(path) for path in watched]
         raw = read_settings(self.settings_path)
@@ -274,11 +292,11 @@ class Config:
                 watched.append(path)
                 stats.append(_stat(path))
                 set_dotted(raw, key, path.read_text(encoding="utf-8").strip())
-        data = _validate(Settings, raw).model_dump(by_alias=True)
+        settings = _validate(Settings, raw)
         secrets = _validate(SecretsFile, read_settings(self.secrets_path))
-        data["plugins"] = deep_merge(data["plugins"], secrets.plugins)
-        data["connect"] = {f: secrets.resolve(f, env) for f, env in SECRETS.items()}
-        if missing := [f for f in _REQUIRED_SECRETS if not data["connect"][f]]:
+        settings.plugins = deep_merge(settings.plugins, secrets.plugins)
+        connect = {f: secrets.resolve(f, env) for f, env in SECRETS.items()}
+        if missing := [f for f in _REQUIRED_SECRETS if not connect[f]]:
             raise ConfigurationError(
                 f"missing {', '.join(missing)}; set them with `twipsybot cfg`"
             )
@@ -286,22 +304,15 @@ class Config:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as e:
             raise ConfigurationError(f"cannot create {self.log_path.parent}") from e
-        old, self.data = self.data, data
+        self.settings, self.connect = settings, Connect(**connect)
         self._watched = tuple(watched)
         self.fingerprint = tuple(stats)
-        return old
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            **self.settings.model_dump(by_alias=True),
+            "connect": self.connect.model_dump(),
+        }
 
     def stat(self) -> tuple[tuple[int, int], ...]:
         return tuple(_stat(path) for path in self._watched)
-
-    def get(self, key: str, default: Any = _MISSING) -> Any:
-        value = get_dotted(self.data, key)
-        if value is None and default is not _MISSING:
-            return default
-        return value
-
-    def get_required(self, key: str, desc: str | None = None) -> Any:
-        value = self.get(key)
-        if value is None or (isinstance(value, str) and not value.strip()):
-            raise ConfigurationError(f"missing required config: {desc or key}")
-        return value

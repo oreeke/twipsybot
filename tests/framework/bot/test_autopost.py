@@ -49,7 +49,6 @@ async def test_auto_post_restores_counter_and_resets_stale_date(
     await bot.db.set_auto_post_state("2000-01-01", 7)
     await bot.auto_post.start()
     assert bot.auto_post.posts_today == 0
-    assert await bot.db.get_auto_post_state() == (today, 0)
 
 
 async def test_auto_post_counter_resets_after_date_change(
@@ -57,14 +56,13 @@ async def test_auto_post_counter_resets_after_date_change(
 ) -> None:
     bot = await make_bot(write_config())
     await bot.auto_post.post_count()
-    assert bot.auto_post.daily_post_count == 1
+    assert bot.auto_post.posts_today == 1
 
     tomorrow = next_day()
 
-    assert bot.auto_post.daily_post_count == 0
-    assert await bot.auto_post.check_post_counter(1) is True
     assert bot.auto_post.posts_today == 0
-    assert await bot.db.get_auto_post_state() == (tomorrow, 0)
+    await bot.auto_post.post_count()
+    assert await bot.db.get_auto_post_state() == (tomorrow, 1)
 
 
 async def test_auto_post_keeps_memory_count_when_persistence_fails(

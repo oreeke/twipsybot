@@ -1,11 +1,13 @@
 import asyncio
 import inspect
 import re
+from dataclasses import dataclass
+from functools import cache, partial
 from typing import Any
-from urllib.parse import urlparse
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
+from yarl import URL
 
 from ...clients.fetch.public import PublicFetcher
 from ...clients.misskey.api import MisskeyAPI
@@ -15,60 +17,77 @@ from ...clients.openai.api import OpenAIAPI
 from ...db.sqlite import DBManager
 from ...plugin.manager import PluginManager
 from ...shared.config import Config
-from ...shared.errors import ConfigurationError
-from ...shared.keys import ConfigKeys
 from ..admin.service import AdminCommandService
 from ..flows.chat import ChatHandler
 from ..flows.mention import MentionHandler
-from ..flows.notification import NotificationHandler
 from ..flows.post import AutoPostService
 from .connect import StreamingConnector
 from .limits import ResponseLimiter
-from .pipeline import ClockTools, ResponsePipeline
+from .pipeline import ClockTools, ResponsePipeline, Toolbox
 from .reload import SettingsReloader
 from .runtime import BotRuntime
 
 _SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 
+@cache
+def _mention_pattern(username: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?<![A-Za-z0-9_@])@{re.escape(username)}"
+        rf"(?:(?:@(?P<host>[A-Za-z0-9.-]+))|(?![A-Za-z0-9_@]))",
+        re.IGNORECASE,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class BotIdentity:
+    id: str
+    username: str
+    host: str | None
+
+    def mentioned_in(self, text: str) -> bool:
+        return any(
+            not (host := match["host"])
+            or host.rstrip(".").lower() == (self.host or "").lower()
+            for match in _mention_pattern(self.username).finditer(text)
+        )
+
+
 class Neuro:
+    me: BotIdentity
+
     def __init__(self, config: Config):
         self.config = config
-        try:
-            instance_url = config.get_required(ConfigKeys.MISSKEY_URL)
-            access_token = config.get_required(ConfigKeys.MISSKEY_TOKEN)
-            shared = SharedSession()
-            nets = config.get(ConfigKeys.SYSTEM_ALLOW_NETS, [])
-            self.fetcher = PublicFetcher(nets)
-            self.misskey = MisskeyAPI(
-                instance_url,
-                access_token,
-                shared=shared,
-                fetcher=PublicFetcher(nets, origin=instance_url),
-            )
-            self.streaming = StreamingClient(
-                instance_url,
-                access_token,
-                log_dump_events=bool(config.get(ConfigKeys.SYSTEM_DUMP_EVENTS)),
-                shared=shared,
-            )
-            self.openai = OpenAIAPI(
-                config.get_required(ConfigKeys.AI_API_KEY),
-                config.get(ConfigKeys.BOT_MODEL),
-                base_url=config.get(ConfigKeys.AI_BASE_URL),
-                api_mode=config.get(ConfigKeys.BOT_API_MODE),
-            )
-            self.scheduler = AsyncIOScheduler()
-        except (ValueError, TypeError, KeyError) as e:
-            logger.error(f"Initialization failed: {e}")
-            raise ConfigurationError() from e
-        self.db = DBManager(config.db_path, config=config)
+        connect, system = config.connect, config.settings.system
+        shared = SharedSession()
+        self.fetcher = PublicFetcher(system.allow_nets)
+        self.misskey = MisskeyAPI(
+            connect.misskey_url,
+            connect.misskey_token,
+            shared=shared,
+            fetcher=PublicFetcher(system.allow_nets, origin=connect.misskey_url),
+        )
+        self.streaming = StreamingClient(
+            connect.misskey_url,
+            connect.misskey_token,
+            log_dump_events=system.dump_events,
+            shared=shared,
+        )
+        self.openai = OpenAIAPI(
+            connect.ai_api_key,
+            config.settings.bot.model,
+            base_url=connect.ai_base_url,
+            api_mode=config.settings.bot.api_mode,
+        )
+        self.scheduler = AsyncIOScheduler()
+        self.db = DBManager(config.db_path)
         self.runtime = BotRuntime()
+        self.admin = AdminCommandService(self)
         self.limits = ResponseLimiter(
             config=config,
             db=self.db,
             instance_url=self.misskey.instance_url,
-            blacklist_user=lambda user_id: self.admin.blacklist_response_user(user_id),
+            blacklist_user=self.admin.blacklist_response_user,
         )
         self.plugin_manager = PluginManager(
             config,
@@ -83,13 +102,10 @@ class Neuro:
             plugins=self.plugin_manager,
             runtime=self.runtime,
             is_admin=lambda user: self.admin.is_admin(user.id, user.handle),
-            is_follower=lambda user_id: self.admin.is_follower(user_id),
+            is_follower=self.admin.is_follower,
         )
-        self.bot_user_id = None
-        self.bot_username = None
         self.chat = ChatHandler(self)
         self.mention = MentionHandler(self)
-        self.notification = NotificationHandler(self)
         self.auto_post = AutoPostService(self)
         self.pipeline.add_tools("note", self.auto_post)
         self.pipeline.add_tools("time", ClockTools())
@@ -100,12 +116,13 @@ class Neuro:
             runtime=self.runtime,
             on_mention=self.mention.handle,
             on_message=self.chat.handle,
-            on_notification=self.notification.handle,
-            on_timeline_note=lambda event: self.plugin_manager.call_plugin_hook(
-                "on_timeline_note", event
+            on_notification=partial(
+                self.plugin_manager.call_plugin_hook, "on_notification"
+            ),
+            on_timeline_note=partial(
+                self.plugin_manager.call_plugin_hook, "on_timeline_note"
             ),
         )
-        self.admin = AdminCommandService(self)
         self.settings = SettingsReloader(self)
         logger.info("Bot initialized")
 
@@ -124,25 +141,23 @@ class Neuro:
     async def _initialize_services(self) -> None:
         await self.db.initialize()
         await self.auto_post.start()
-        current_user = await self.misskey.get_current_user()
-        self.bot_user_id = current_user.get("id")
-        self.bot_username = current_user.get("username")
+        user = await self.misskey.get_current_user()
+        self.me = BotIdentity(
+            user["id"], user["username"], URL(self.misskey.instance_url).host
+        )
         logger.info(
-            f"Connected to Misskey instance: bot_id={self.bot_user_id}, @{self.bot_username}"
+            f"Connected to Misskey instance: bot_id={self.me.id}, @{self.me.username}"
         )
         await self.plugin_manager.load_plugins()
         await self.plugin_manager.startup_plugins()
 
     def _setup_scheduler(self) -> None:
-        cron_jobs = [
-            (self.auto_post.reset_daily_counters, 0),
-            (self.db.vacuum, 2),
-            (self.db.cleanup_response_limit_state, 3),
-        ]
-        for func, hour in cron_jobs:
-            self.scheduler.add_job(func, "cron", hour=hour, minute=0, second=0)
+        self.scheduler.add_job(self._maintain_db, "cron", hour=3)
         self.auto_post.apply_schedule(initial=True)
         self.scheduler.start()
+
+    async def _maintain_db(self) -> None:
+        await self.db.maintain(self.config.settings.system.db_clear_days)
 
     async def stop(self) -> None:
         if not self.runtime.running:
@@ -183,28 +198,25 @@ class Neuro:
             except Exception as e:
                 logger.exception(f"Error {action}: {e}")
 
-    def is_bot_mentioned(self, text: str) -> bool:
-        if not text or not self.bot_username:
-            return False
-        pattern = re.compile(
-            rf"(?<![A-Za-z0-9_@])@{re.escape(self.bot_username)}"
-            rf"(?:(?:@(?P<host>[A-Za-z0-9.-]+))|(?![A-Za-z0-9_@]))",
-            re.IGNORECASE,
-        )
-        current_host = urlparse(self.misskey.instance_url).hostname
-        return any(
-            not (host := match.group("host"))
-            or bool(current_host and host.rstrip(".").lower() == current_host.lower())
-            for match in pattern.finditer(text)
-        )
-
     @property
     def system_prompt(self) -> str:
-        return self.config.get(ConfigKeys.BOT_SYSTEM_PROMPT, "")
+        return self.config.settings.bot.system_prompt
 
     @property
     def ai_config(self) -> dict[str, Any]:
-        return {
-            "max_tokens": self.config.get(ConfigKeys.BOT_MAX_TOKENS),
-            "temperature": self.config.get(ConfigKeys.BOT_TEMPERATURE),
-        }
+        bot = self.config.settings.bot
+        return {"max_tokens": bot.max_tokens, "temperature": bot.temperature}
+
+    async def generate_reply(
+        self,
+        history: list[dict[str, str]],
+        content: str | list[dict[str, Any]],
+        tools: Toolbox,
+    ) -> str:
+        messages: list[dict[str, Any]] = (
+            [{"role": "system", "content": self.system_prompt}]
+            if self.system_prompt
+            else []
+        )
+        messages += [*history, {"role": "user", "content": content}]
+        return await self.openai.generate_chat(messages, **self.ai_config, tools=tools)

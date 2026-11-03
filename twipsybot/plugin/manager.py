@@ -12,20 +12,21 @@ from functools import partial
 from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from loguru import logger
 
 from ..shared.config import Config
 from .base import PluginBase, ToolEntry, ToolSpec
 from .contracts import AutoPostEvent, AutoPostVisibility, PluginContext
-from .services import (
-    BotControlAdapter,
-    HttpServiceAdapter,
-    MisskeyServiceAdapter,
-    NamespacedPluginStorage,
-    OpenAIServiceAdapter,
-)
+from .services import BotControlAdapter, NamespacedPluginStorage, OpenAIServiceAdapter
+
+if TYPE_CHECKING:
+    from ..bot.engine.core import Neuro
+    from ..clients.fetch.public import PublicFetcher
+    from ..clients.misskey.api import MisskeyAPI
+    from ..clients.openai.api import OpenAIAPI
+    from ..db.sqlite import DBManager
 
 PluginReloadStatus = Literal["enabled", "disabled", "failed", "unknown", "unavailable"]
 HookResult = tuple[str, dict[str, Any]]
@@ -223,11 +224,11 @@ class PluginManager:
         config: Config,
         plugins_dir: str = "plugins",
         *,
-        db: Any,
-        misskey: Any,
-        openai: Any,
-        fetcher: Any,
-        bot: Any,
+        db: "DBManager",
+        misskey: "MisskeyAPI",
+        openai: "OpenAIAPI",
+        fetcher: "PublicFetcher",
+        bot: "Neuro",
     ):
         self.config = config
         self.plugins_dir = Path(plugins_dir)
@@ -238,7 +239,6 @@ class PluginManager:
         self.openai = openai
         self.fetcher = fetcher
         self.bot = bot
-        self._master_config: dict[str, Any] = {}
         self._accepting_hooks = False
         self._lifecycle_lock = asyncio.Lock()
         self._reloading: set[str] = set()
@@ -249,8 +249,9 @@ class PluginManager:
         self._plugin_idle: dict[str, asyncio.Event] = {}
 
     def _discover_plugin(self, key: str) -> dict[str, Any] | None:
-        configured = key in self._master_config
-        plugin_config = dict(self._master_config.get(key) or {})
+        plugins = self.config.settings.plugins
+        configured = key in plugins
+        plugin_config = dict(plugins.get(key) or {})
         try:
             enabled = PluginBase._parse_bool(plugin_config.get("enabled"), False)
         except ValueError as e:
@@ -263,7 +264,6 @@ class PluginManager:
         return plugin_config if configured and enabled else None
 
     async def load_plugins(self) -> None:
-        self._master_config = self._load_master_config()
         if not self.plugins_dir.exists():
             logger.info(f"Plugins directory not found: {self.plugins_dir}")
         for name, source in _plugin_sources(self.plugins_dir).items():
@@ -278,10 +278,6 @@ class PluginManager:
         logger.info(
             f"Found {len(self.discovered_plugins)} plugins; {enabled_count} enabled"
         )
-
-    def _load_master_config(self) -> dict[str, Any]:
-        plugins = self.config.get("plugins")
-        return plugins if isinstance(plugins, dict) else {}
 
     def _register_plugin(
         self,
@@ -340,9 +336,9 @@ class PluginManager:
             name=plugin_name,
             config=MappingProxyType(deepcopy(plugin_config)),
             storage=NamespacedPluginStorage(self.db, plugin_name),
-            misskey=MisskeyServiceAdapter(self.misskey),
+            misskey=self.misskey,
             openai=OpenAIServiceAdapter(self.openai, self.config),
-            http=HttpServiceAdapter(self.fetcher),
+            http=self.fetcher,
             bot=BotControlAdapter(self.bot),
         )
         return plugin_class(context)
@@ -423,7 +419,6 @@ class PluginManager:
     async def _restart_plugin(
         self, name: str, source: Path | EntryPoint, old: PluginBase | None
     ) -> PluginReloadStatus:
-        self._master_config = self._load_master_config()
         if (config := self._discover_plugin(name)) is None:
             return "disabled"
         try:

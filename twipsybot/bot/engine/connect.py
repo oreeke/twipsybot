@@ -15,7 +15,6 @@ from ...clients.misskey.models import (
 )
 from ...clients.misskey.stream import StreamingClient
 from ...shared.config import Config
-from ...shared.keys import ConfigKeys
 from ...shared.utils import normalize_tokens
 from .runtime import BotRuntime
 
@@ -49,7 +48,7 @@ class StreamingConnector:
         runtime: BotRuntime,
         on_mention: Callable[[MentionEvent], Awaitable[None]],
         on_message: Callable[[MessageEvent], Awaitable[None]],
-        on_notification: Callable[[NotificationEvent], Awaitable[None]],
+        on_notification: Callable[[NotificationEvent], Awaitable[Any]],
         on_timeline_note: Callable[[TimelineNoteEvent], Awaitable[Any]],
     ):
         self._config = config
@@ -62,16 +61,17 @@ class StreamingConnector:
         self._on_timeline_note = on_timeline_note
 
     def _load_timeline_channels(self) -> set[str]:
+        timeline = self._config.settings.timeline
         mapping = {
-            ConfigKeys.TIMELINE_HOME: ChannelType.HOME_TIMELINE.value,
-            ConfigKeys.TIMELINE_LOCAL: ChannelType.LOCAL_TIMELINE.value,
-            ConfigKeys.TIMELINE_HYBRID: ChannelType.HYBRID_TIMELINE.value,
-            ConfigKeys.TIMELINE_GLOBAL: ChannelType.GLOBAL_TIMELINE.value,
+            ChannelType.HOME_TIMELINE.value: timeline.home,
+            ChannelType.LOCAL_TIMELINE.value: timeline.local,
+            ChannelType.HYBRID_TIMELINE.value: timeline.hybrid,
+            ChannelType.GLOBAL_TIMELINE.value: timeline.global_,
         }
-        return {channel for key, channel in mapping.items() if self._config.get(key)}
+        return {channel for channel, enabled in mapping.items() if enabled}
 
     def load_antenna_selectors(self) -> list[str]:
-        return normalize_tokens(self._config.get(ConfigKeys.TIMELINE_ANTENNAS))
+        return normalize_tokens(self._config.settings.timeline.antennas)
 
     async def resolve_antenna_ids(self, selectors: list[str]) -> list[str]:
         selectors = [s.strip() for s in selectors if isinstance(s, str) and s.strip()]

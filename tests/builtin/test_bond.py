@@ -21,7 +21,6 @@ from twipsybot.plugin import (
     UserRef,
 )
 from twipsybot.plugin.services import BotControlAdapter, NamespacedPluginStorage
-from twipsybot.shared.config import Config
 
 ALICE = UserRef(id="u1", username="alice", host=None)
 
@@ -43,7 +42,7 @@ class Clock:
 
 @pytest.fixture
 async def db(tmp_path: Path) -> AsyncIterator[DBManager]:
-    manager = DBManager(config=Config(tmp_path))
+    manager = DBManager(tmp_path / "bot.db")
     await manager.initialize()
     try:
         yield manager
@@ -85,7 +84,9 @@ async def _plugin(
         storage=NamespacedPluginStorage(db, "bond"),
         misskey=misskey,
         openai=SimpleNamespace(),
-        bot=BotControlAdapter(SimpleNamespace(bot_user_id="bot", bot_username="bot")),
+        bot=BotControlAdapter(
+            SimpleNamespace(me=SimpleNamespace(id="bot", username="bot"))
+        ),
     )
     plugin = BondPlugin(cast(Any, context))
     assert await plugin.initialize()

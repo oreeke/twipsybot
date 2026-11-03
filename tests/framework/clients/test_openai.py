@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import base64
-import os
 from types import SimpleNamespace
 from typing import Any, Self, cast
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx2 import Request, Response
@@ -172,45 +171,6 @@ async def test_generate_image_override_uses_dedicated_client(
     [kwargs] = created
     assert kwargs["api_key"] == api_key
     assert kwargs["base_url"].split("/")[2] == host
-
-
-def test_token_encoding_loads_lazily_into_data_directory(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    encoding = SimpleNamespace(encode_ordinary=lambda text: list(text))
-    load_encoding = Mock(return_value=encoding)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("TIKTOKEN_CACHE_DIR", raising=False)
-    monkeypatch.setattr(
-        "twipsybot.clients.openai.api.tiktoken.encoding_for_model", load_encoding
-    )
-
-    api = OpenAIAPI("test", "deepseek-flash")
-
-    load_encoding.assert_not_called()
-    assert api.trim_chat_history([{"role": "user", "content": "hello"}], 9)
-    load_encoding.assert_called_once_with("deepseek-flash")
-    assert os.environ["TIKTOKEN_CACHE_DIR"] == str(
-        (tmp_path / "data" / "tiktoken").resolve()
-    )
-
-
-def test_token_encoding_failure_uses_character_estimate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    load_encoding = Mock(side_effect=OSError("offline"))
-    monkeypatch.setattr(
-        "twipsybot.clients.openai.api.tiktoken.encoding_for_model", load_encoding
-    )
-    api = OpenAIAPI("test", "deepseek-flash")
-    history = [
-        {"role": "user", "content": "123456"},
-        {"role": "assistant", "content": "ok"},
-    ]
-
-    assert api.trim_chat_history(history, 10) == [history[-1]]
-    assert api.trim_chat_history(history, 10) == [history[-1]]
-    load_encoding.assert_called_once_with("deepseek-flash")
 
 
 async def test_chat_mode_converts_responses_content_parts() -> None:

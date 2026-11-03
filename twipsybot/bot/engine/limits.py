@@ -7,8 +7,7 @@ from cachetools import TTLCache
 
 from ...clients.misskey.models import UserRef
 from ...db.sqlite import DBManager
-from ...shared.config import Config
-from ...shared.keys import ConfigKeys
+from ...shared.config import Config, ReplyConfig
 from ...shared.utils import normalize_tokens
 
 _CACHE_MAX = 2000
@@ -59,23 +58,23 @@ class ResponseLimiter:
                     candidates.add(f"@{canonical}")
         return candidates
 
-    def _in_user_list(self, key: str, *, user_id: str, handle: str | None) -> bool:
-        users = set(normalize_tokens(self._config.get(key), lower=True))
-        return bool(users) and not users.isdisjoint(
+    def _in_user_list(
+        self, users: list[str], *, user_id: str, handle: str | None
+    ) -> bool:
+        listed = set(normalize_tokens(users, lower=True))
+        return bool(listed) and not listed.isdisjoint(
             self._user_candidates(user_id=user_id, handle=handle)
         )
 
+    @property
+    def _reply(self) -> ReplyConfig:
+        return self._config.settings.reply
+
     def is_ignored_bot(self, user: UserRef) -> bool:
-        return user.is_bot and bool(self._config.get(ConfigKeys.REPLY_IGNORE_BOTS))
+        return user.is_bot and self._reply.ignore_bots
 
     def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
-        return self._in_user_list(
-            ConfigKeys.REPLY_BLACKLIST, user_id=user_id, handle=handle
-        )
-
-    def _duration_config_seconds(self, key: str) -> int:
-        value = self._config.get(key)
-        return value if isinstance(value, int) and not isinstance(value, bool) else -1
+        return self._in_user_list(self._reply.blacklist, user_id=user_id, handle=handle)
 
     async def _get_response_limit_state(self, user_id: str) -> _ResponseLimitState:
         if user_id in self._response_limits:
@@ -113,9 +112,10 @@ class ResponseLimiter:
     async def get_response_block_reply(
         self, *, user_id: str, handle: str | None
     ) -> tuple[bool, str]:
+        reply = self._reply
         if any(
-            self._in_user_list(key, user_id=user_id, handle=handle)
-            for key in (ConfigKeys.REPLY_WHITELIST, ConfigKeys.BOT_ADMINS)
+            self._in_user_list(users, user_id=user_id, handle=handle)
+            for users in (reply.whitelist, self._config.settings.bot.admins)
         ):
             return False, ""
         now = time.time()
@@ -125,17 +125,16 @@ class ResponseLimiter:
             state.blocked_until_ts = None
             await self._save_response_limit_state(user_id, state)
         if state.blocked_until_ts is not None and now < state.blocked_until_ts:
-            return True, self._config.get(ConfigKeys.REPLY_MAX_TURNS_MSG)
-        interval = self._duration_config_seconds(ConfigKeys.REPLY_RATE_LIMIT)
+            return True, reply.max_turns_msg
+        interval = reply.rate_limit
         if (
             interval > 0
             and state.last_reply_ts is not None
             and now - state.last_reply_ts < interval
         ):
-            return True, self._config.get(ConfigKeys.REPLY_RATE_LIMIT_MSG)
-        max_turns = self._config.get(ConfigKeys.REPLY_MAX_TURNS)
-        if self._turns_limited() and state.turns >= max_turns:
-            release = self._duration_config_seconds(ConfigKeys.REPLY_TURNS_RELEASE)
+            return True, reply.rate_limit_msg
+        if self._turns_limited() and state.turns >= reply.max_turns:
+            release = reply.turns_release
             if release < 0:
                 await self._blacklist_user(user_id)
                 state.turns = 0
@@ -143,12 +142,11 @@ class ResponseLimiter:
             else:
                 state.blocked_until_ts = now + release
             await self._save_response_limit_state(user_id, state)
-            return True, self._config.get(ConfigKeys.REPLY_MAX_TURNS_MSG)
+            return True, reply.max_turns_msg
         return False, ""
 
     def _turns_limited(self) -> bool:
-        max_turns = self._config.get(ConfigKeys.REPLY_MAX_TURNS)
-        return isinstance(max_turns, int) and max_turns >= 0
+        return self._reply.max_turns >= 0
 
     async def record_response(self, user_id: str, *, count_turn: bool) -> None:
         state = await self._get_response_limit_state(user_id)

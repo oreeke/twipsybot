@@ -28,7 +28,7 @@ TUI 右上角状态：
 | --- | --- |
 | `data/settings.yaml` | 一般运行设置 |
 | `data/secrets.yaml` | 连接信息与凭据 |
-| `data/twipsybot.db` | 轮转发帖计数、回复限制状态、插件私有数据 |
+| `data/twipsybot.db` | 轮转发帖计数、待发布帖子、回复限制状态、插件私有数据 |
 | `data/logs/twipsybot.log` | 日志 |
 | `data/status.json` | 运行心跳（每 3 秒刷新，退出时删除） |
 

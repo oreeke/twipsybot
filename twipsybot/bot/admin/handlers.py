@@ -3,7 +3,6 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version as package_version
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 
@@ -13,7 +12,6 @@ from ...shared.errors import (
     APINotFoundError,
     APIRateLimitError,
 )
-from ...shared.keys import ConfigKeys
 from ...shared.utils import normalize_tokens
 from ..flows.post import JOB_ID as AUTO_POST_JOB_ID
 
@@ -46,7 +44,7 @@ def _light(*, healthy: bool, waiting: bool = True) -> str:
 
 
 def admins(bot: "Neuro") -> list[str]:
-    return normalize_tokens(bot.config.get(ConfigKeys.BOT_ADMINS))
+    return normalize_tokens(bot.config.settings.bot.admins)
 
 
 def task_status_text(bot: "Neuro") -> str:
@@ -64,18 +62,18 @@ def task_status_text(bot: "Neuro") -> str:
 
 
 def auto_post_status_text(bot: "Neuro") -> str:
-    config = bot.config
-    match bot.auto_post.mode:
+    autopost = bot.config.settings.autopost
+    match autopost.mode:
         case "off":
             return "发帖  已关闭"
         case "rotation":
-            count = bot.auto_post.daily_post_count
-            limit = config.get(ConfigKeys.POST_DAILY_MAX)
+            count = bot.auto_post.posts_today
+            limit = autopost.daily_max
             text = f"发帖  轮转 {count}/{limit}"
             if count >= limit:
                 return f"{text} · 今日已达上限"
         case _:
-            text = f"发帖  定时 {len(config.get(ConfigKeys.POST_TIMES))} 个时间点"
+            text = f"发帖  定时 {len(autopost.times)} 个时间点"
     job = bot.scheduler.get_job(AUTO_POST_JOB_ID)
     next_run = getattr(job, "next_run_time", None)
     if bot.scheduler.state != STATE_RUNNING or next_run is None:
@@ -113,16 +111,13 @@ def status_text(bot: "Neuro") -> str:
             f" · queue {events['queue_size']}/{events['queue_capacity']}"
         ),
         "",
+        f"账号  @{bot.me.username} ({bot.me.id})",
+        f"实例  {bot.me.host}",
+        f"模型  {bot.openai.model}",
     ]
-    if bot.bot_username:
-        suffix = f" ({bot.bot_user_id})" if bot.bot_user_id else ""
-        parts.append(f"账号  @{bot.bot_username}{suffix}")
-    if hostname := urlsplit(bot.misskey.instance_url).hostname:
-        parts.append(f"实例  {hostname}")
-    if bot.openai.model:
-        parts.append(f"模型  {bot.openai.model}")
-    chat = "on" if bot.config.get(ConfigKeys.REPLY_CHAT) else "off"
-    mention = "on" if bot.config.get(ConfigKeys.REPLY_MENTION) else "off"
+    reply = bot.config.settings.reply
+    chat = "on" if reply.chat else "off"
+    mention = "on" if reply.mention else "off"
     parts += [
         "",
         f"开关  autopost={bot.auto_post.mode} mention={mention} chat={chat}",
@@ -136,12 +131,12 @@ def status_text(bot: "Neuro") -> str:
     return "\n".join(parts)
 
 
-async def set_bool(bot: "Neuro", key: str, label: str, args: str) -> str | None:
+async def set_bool(bot: "Neuro", name: str, args: str) -> str | None:
     action = args.strip().lower()
     if action not in {"on", "off"}:
         return None
-    await bot.settings.update({key: action == "on"})
-    return f"{label}: {action}"
+    await bot.settings.update({f"reply.{name}": action == "on"})
+    return f"{name}: {action}"
 
 
 async def set_model(bot: "Neuro", args: str) -> str:
@@ -149,9 +144,9 @@ async def set_model(bot: "Neuro", args: str) -> str:
     if not model:
         return f"当前模型: {bot.openai.model}"
     if model.lower() in {"reset", "default"}:
-        await bot.settings.update({ConfigKeys.BOT_MODEL: None})
+        await bot.settings.update({"bot.model": None})
         return f"已恢复默认模型: {bot.openai.model}"
-    await bot.settings.update({ConfigKeys.BOT_MODEL: model})
+    await bot.settings.update({"bot.model": model})
     return f"已切换模型: {model}"
 
 
@@ -162,9 +157,9 @@ async def set_autopost(bot: "Neuro", args: str) -> str | None:
         return "自动发帖计数器已重置"
     if mode not in {"rotation", "schedule", "off"}:
         return None
-    if mode == "schedule" and not bot.config.get(ConfigKeys.POST_TIMES):
+    if mode == "schedule" and not bot.config.settings.autopost.times:
         return "定时发帖需要先在 twipsybot cfg 中添加时间点"
-    await bot.settings.update({ConfigKeys.POST_MODE: mode})
+    await bot.settings.update({"autopost.mode": mode})
     return f"autopost: {mode}"
 
 
@@ -212,8 +207,8 @@ async def manage_plugins(bot: "Neuro", args: str) -> str | None:
     return None
 
 
-async def edit_user_list(bot: "Neuro", key: str, label: str, args: str) -> str | None:
-    current = normalize_tokens(bot.config.get(key), lower=True)
+async def edit_user_list(bot: "Neuro", name: str, args: str) -> str | None:
+    current = normalize_tokens(getattr(bot.config.settings.reply, name), lower=True)
     action, *rest = args.split(maxsplit=1) or [""]
     action = action.lower()
     if action in {"", "list", "status", "show"}:
@@ -229,8 +224,8 @@ async def edit_user_list(bot: "Neuro", key: str, label: str, args: str) -> str |
         updated = values
     else:
         return None
-    await bot.settings.update({key: updated})
-    return "\n".join([f"已更新 {label}", "", *(updated or ["(空)"])])
+    await bot.settings.update({f"reply.{name}": updated})
+    return "\n".join([f"已更新 {name}", "", *(updated or ["(空)"])])
 
 
 def _created_at(note: dict[str, Any]) -> datetime | None:
@@ -336,11 +331,9 @@ async def clean_posts(bot: "Neuro", args: str) -> str | None:
         return None
     if days < 1:
         return "天数必须大于 0"
-    if not (user_id := bot.bot_user_id):
-        return "机器人账号尚未初始化"
     cutoff = datetime.now(UTC) - timedelta(days=days)
     pinned = await _pinned_note_ids(bot)
-    notes = await _collect_clean_posts(bot, user_id, cutoff, pinned)
+    notes = await _collect_clean_posts(bot, bot.me.id, cutoff, pinned)
     if not notes:
         return f"未发现超过 {days} 天未被互动的帖子"
     if len(parts) == 2:

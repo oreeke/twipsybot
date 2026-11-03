@@ -7,32 +7,7 @@ from typing import Any
 import pytest
 from support.fakes import FakeMisskeyServer
 
-from twipsybot.plugin.services import BotControlAdapter, OpenAIServiceAdapter
-
-
-@pytest.mark.parametrize(
-    ("values", "expected"),
-    [
-        ({"bot.system_prompt": None}, ("", None, None)),
-        (
-            {
-                "bot.system_prompt": "be brief",
-                "bot.max_tokens": 64,
-                "bot.temperature": 0.5,
-            },
-            ("be brief", 64, 0.5),
-        ),
-    ],
-)
-def test_openai_adapter_reads_generation_settings_from_config(
-    values: dict[str, Any], expected: tuple[str, int | None, float | None]
-) -> None:
-    config = SimpleNamespace(get=lambda key, default=None: values.get(key, default))
-    adapter = OpenAIServiceAdapter(SimpleNamespace(), config)
-
-    actual = (adapter.system_prompt, adapter.max_tokens, adapter.temperature)
-
-    assert actual == expected
+from twipsybot.plugin.services import BotControlAdapter
 
 
 async def _hold(lock: Any) -> None:
@@ -67,7 +42,7 @@ async def test_plugin_storage_is_namespaced_per_plugin(boot) -> None:
     assert await two.get("key") == "2"
 
 
-async def test_plugin_context_hides_internals_and_isolates_antennas(
+async def test_plugin_context_isolates_config_and_antennas(
     boot, misskey_server: FakeMisskeyServer
 ) -> None:
     bot = await boot(context="pass")
@@ -75,8 +50,6 @@ async def test_plugin_context_hides_internals_and_isolates_antennas(
     antenna = {"id": "antenna-1", "name": "original"}
     misskey_server.set_response("antennas/list", lambda payload: [antenna])
 
-    assert not hasattr(context.misskey, "access_token")
-    assert not hasattr(context.openai, "client")
     with pytest.raises(TypeError):
         context.config["enabled"] = False
 

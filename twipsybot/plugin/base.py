@@ -1,6 +1,6 @@
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, get_type_hints
 
@@ -100,6 +100,7 @@ class PluginBase:
         self._initialized = False
         self._started = False
         self._resources_to_cleanup = []
+        self._tasks: set[asyncio.Task[Any]] = set()
 
     @staticmethod
     def _parse_bool(value: Any, default: bool) -> bool:
@@ -116,7 +117,17 @@ class PluginBase:
         return True
 
     async def cleanup(self) -> None:
+        tasks = tuple(self._tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await self._cleanup_registered_resources()
+
+    def spawn(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
+        task = asyncio.create_task(coro, name=f"plugin-{self.context.name}")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
     async def on_startup(self) -> None:
         await asyncio.sleep(0)

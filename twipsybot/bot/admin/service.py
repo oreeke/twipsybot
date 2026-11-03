@@ -8,7 +8,6 @@ from cachetools import TTLCache
 from loguru import logger
 
 from ...clients.misskey.models import MessageEvent
-from ...shared.keys import ConfigKeys
 from ...shared.utils import normalize_tokens
 from . import handlers
 
@@ -54,25 +53,13 @@ class AdminCommandService:
             "clean": _Command(
                 partial(handlers.clean_posts, bot), "清理旧贴", "posts <天数> [-y]"
             ),
-            "mention": _Command(
-                partial(set_bool, ConfigKeys.REPLY_MENTION, "mention"),
-                "提及",
-                "on|off",
-            ),
-            "chat": _Command(
-                partial(set_bool, ConfigKeys.REPLY_CHAT, "chat"),
-                "聊天",
-                "on|off",
-            ),
+            "mention": _Command(partial(set_bool, "mention"), "提及", "on|off"),
+            "chat": _Command(partial(set_bool, "chat"), "聊天", "on|off"),
             "whitelist": _Command(
-                partial(user_list, ConfigKeys.REPLY_WHITELIST, "whitelist"),
-                "白名单",
-                "[list|add|del|set|clear]",
+                partial(user_list, "whitelist"), "白名单", "[list|add|del|set|clear]"
             ),
             "blacklist": _Command(
-                partial(user_list, ConfigKeys.REPLY_BLACKLIST, "blacklist"),
-                "黑名单",
-                "[list|add|del|set|clear]",
+                partial(user_list, "blacklist"), "黑名单", "[list|add|del|set|clear]"
             ),
             "plugin": _Command(
                 partial(handlers.manage_plugins, bot),
@@ -113,10 +100,13 @@ class AdminCommandService:
         )
 
     async def blacklist_response_user(self, user_id: str) -> None:
-        key = ConfigKeys.REPLY_BLACKLIST
-        blacklist = normalize_tokens(self.bot.config.get(key), lower=True)
+        blacklist = normalize_tokens(
+            self.bot.config.settings.reply.blacklist, lower=True
+        )
         if (normalized := user_id.strip().lower()) and normalized not in blacklist:
-            await self.bot.settings.update({key: [*blacklist, normalized]})
+            await self.bot.settings.update(
+                {"reply.blacklist": [*blacklist, normalized]}
+            )
 
     async def is_follower(self, user_id: str | None) -> bool:
         if not user_id:

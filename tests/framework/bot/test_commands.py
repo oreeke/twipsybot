@@ -182,6 +182,23 @@ async def test_post_tool_schedules_note_and_cancels_it(
         admin_bot.scheduler.shutdown(wait=False)
 
 
+async def test_scheduled_notes_are_restored_after_restart(admin_bot: Neuro) -> None:
+    await admin_bot.auto_post.publish(
+        message(CHAT_MESSAGE), "夏夜观星", at="2099-07-01 08:00"
+    )
+    [job] = admin_bot.scheduler.get_jobs()
+    admin_bot.scheduler.remove_job(job.id)
+    await admin_bot.db.add_scheduled_note(
+        "note_old", "2000-01-01T08:00:00+00:00", "过期", None, None
+    )
+
+    await admin_bot.auto_post.start()
+
+    [restored] = admin_bot.scheduler.get_jobs()
+    assert (restored.id, restored.args[1]) == (job.id, "夏夜观星")
+    assert [row[0] for row in await admin_bot.db.get_scheduled_notes()] == [job.id]
+
+
 @pytest.mark.parametrize("running", [False, True])
 async def test_scheduled_note_is_skipped_or_failure_is_contained(
     running: bool, admin_bot: Neuro, misskey_server: FakeMisskeyServer

@@ -1,6 +1,6 @@
 [project]
 name = "twipsybot"
-version = "0.29.0"
+version = "0.30.0"
 description = "AI-powered Misskey bot with OpenAI-compatible APIs."
 readme = "README.md"
 license = "MIT"
@@ -15,7 +15,6 @@ dependencies = [
     "beautifulsoup4==4.15.0",
     "cachetools==7.2.5",
     "click==8.5.0",
-    "durationpy==0.11",
     "feedparser==6.0.14",
     "loguru==0.7.3",
     "openai==3.37.0",
@@ -23,7 +22,6 @@ dependencies = [
     "pyyaml==6.0.3",
     "python-dotenv==1.2.4",
     "textual==8.2.8",
-    "tiktoken==0.14.0",
 ]
 
 [project.optional-dependencies]

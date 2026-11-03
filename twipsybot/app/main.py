@@ -7,7 +7,6 @@ from contextlib import suppress
 from io import TextIOWrapper
 from pathlib import Path
 
-from dotenv import load_dotenv
 from loguru import logger
 
 from ..bot.engine.core import Neuro
@@ -19,7 +18,6 @@ from ..shared.errors import (
     ConfigurationError,
     WebSocketConnectionError,
 )
-from ..shared.keys import ConfigKeys
 from ..shared.logs import set_log_level, setup_logging
 from ..shared.status import HEARTBEAT_SECONDS, write_status
 from .banner import BANNER
@@ -61,7 +59,6 @@ class BotRunner:
         self._shutdown_called = False
 
     async def run(self) -> None:
-        load_dotenv()
         config = Config()
         setup_logging(config.log_path, "INFO")
         print(BANNER)
@@ -97,7 +94,7 @@ class BotRunner:
             before = config.stat()
             try:
                 config.load()
-                set_log_level(config.get(ConfigKeys.SYSTEM_LOG_LEVEL))
+                set_log_level(config.settings.system.log_level)
                 logger.info("Starting bot...")
                 self.bot = Neuro(config)
                 await self.bot.start()
@@ -157,7 +154,3 @@ def main() -> int:
     except Exception:
         logger.exception("Unhandled exception during startup")
         return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

@@ -6,51 +6,69 @@ from typing import Any
 import aiosqlite
 from loguru import logger
 
-from ..shared.config import Config
-from ..shared.keys import ConfigKeys
-
 Row = Sequence[Any]
+
+_SCHEMA = """
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA busy_timeout=30000;
+CREATE TABLE IF NOT EXISTS plugin_data (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plugin_name TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(plugin_name, key)
+);
+CREATE TABLE IF NOT EXISTS response_limit_state (
+    user_id TEXT PRIMARY KEY,
+    last_reply_ts REAL,
+    turns INTEGER NOT NULL DEFAULT 0,
+    blocked_until_ts REAL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_response_limit_state_updated
+    ON response_limit_state(updated_at);
+CREATE TABLE IF NOT EXISTS auto_post_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    post_date TEXT NOT NULL,
+    posts INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS scheduled_notes (
+    id TEXT PRIMARY KEY,
+    run_at TEXT NOT NULL,
+    text TEXT NOT NULL,
+    visibility TEXT,
+    local_only INTEGER
+);
+"""
 
 
 class DBManager:
-    def __init__(
-        self,
-        db_path: str | Path | None = None,
-        config: Config | None = None,
-    ):
-        self.config = config or Config()
-        self.db_path = Path(db_path) if db_path else self.config.db_path
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
         self._connection: aiosqlite.Connection | None = None
         self._lock = asyncio.Lock()
-        self._initialized = False
 
     async def initialize(self) -> None:
-        if self._initialized:
-            return
         async with self._lock:
-            if self._initialized:
+            if self._connection is not None:
                 return
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             connection = await aiosqlite.connect(
                 self.db_path, timeout=30.0, isolation_level=None
             )
             try:
-                await connection.execute("PRAGMA journal_mode=WAL")
-                await connection.execute("PRAGMA synchronous=NORMAL")
-                await connection.execute("PRAGMA cache_size=10000")
-                await connection.execute("PRAGMA busy_timeout=30000")
-                await self._execute_schema(connection)
+                await connection.executescript(_SCHEMA)
             except BaseException:
                 await asyncio.shield(connection.close())
                 raise
             self._connection = connection
-            self._initialized = True
         logger.info(f"DB manager initialized: {self.db_path}")
 
     async def close(self) -> None:
         async with self._lock:
             connection, self._connection = self._connection, None
-            self._initialized = False
             if connection is not None:
                 await connection.close()
         logger.debug("DB manager closed")
@@ -60,159 +78,34 @@ class DBManager:
             raise RuntimeError("database is not initialized")
         return self._connection
 
-    @staticmethod
-    async def _execute_schema(conn: aiosqlite.Connection) -> None:
-        schema_statements = [
-            """
-            CREATE TABLE IF NOT EXISTS plugin_data (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                plugin_name TEXT NOT NULL,
-                key TEXT NOT NULL,
-                value TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(plugin_name, key)
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS response_limit_state (
-                user_id TEXT PRIMARY KEY,
-                last_reply_ts REAL,
-                turns INTEGER NOT NULL DEFAULT 0,
-                blocked_until_ts REAL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS auto_post_state (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                post_date TEXT NOT NULL,
-                posts INTEGER NOT NULL DEFAULT 0
-            )
-            """,
-        ]
-        index_statements = [
-            "CREATE INDEX IF NOT EXISTS idx_response_limit_state_updated ON response_limit_state(updated_at)",
-        ]
-        await conn.execute("BEGIN")
-        try:
-            for statement in schema_statements:
-                await conn.execute(statement)
-            for index_sql in index_statements:
-                await conn.execute(index_sql)
-            await conn.commit()
-        except Exception:
-            await conn.rollback()
-            raise
+    async def _fetch_all(self, query: str, params: tuple[Any, ...] = ()) -> list[Row]:
+        async with (
+            self._lock,
+            self._get_connection().execute(query, params) as cursor,
+        ):
+            return list(await cursor.fetchall())
 
     async def _fetch_one(self, query: str, params: tuple[Any, ...] = ()) -> Row | None:
-        async with self._lock:
-            conn = self._get_connection()
-            async with conn.execute(query, params) as cursor:
-                return await cursor.fetchone()
+        return next(iter(await self._fetch_all(query, params)), None)
 
     async def _execute_write(self, query: str, params: tuple[Any, ...] = ()) -> int:
-        async with self._lock:
-            conn = self._get_connection()
-            try:
-                async with conn.execute(query, params) as cursor:
-                    await conn.commit()
-                    return cursor.rowcount
-            except aiosqlite.Error as e:
-                await conn.rollback()
-                logger.error(f"Database write operation failed: {e}")
-                raise
+        async with (
+            self._lock,
+            self._get_connection().execute(query, params) as cursor,
+        ):
+            return cursor.rowcount
 
     async def get_plugin_data(self, plugin_name: str, key: str) -> str | None:
-        result = await self._fetch_one(
+        row = await self._fetch_one(
             "SELECT value FROM plugin_data WHERE plugin_name = ? AND key = ?",
             (plugin_name, key),
         )
-        return result[0] if result else None
+        return row[0] if row else None
 
     async def set_plugin_data(self, plugin_name: str, key: str, value: str) -> None:
         await self._execute_write(
-            """
-            INSERT INTO plugin_data (plugin_name, key, value, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(plugin_name, key) DO UPDATE SET
-                value = excluded.value,
-                updated_at = excluded.updated_at
-            """,
+            "INSERT OR REPLACE INTO plugin_data (plugin_name, key, value) VALUES (?, ?, ?)",
             (plugin_name, key, value),
-        )
-
-    async def get_response_limit_state(
-        self, user_id: str
-    ) -> tuple[float | None, int, float | None] | None:
-        result = await self._fetch_one(
-            "SELECT last_reply_ts, turns, blocked_until_ts FROM response_limit_state WHERE user_id = ?",
-            (user_id,),
-        )
-        if not result:
-            return None
-        last_reply_ts, turns, blocked_until_ts = result
-        turns_value = int(turns) if turns is not None else 0
-        return last_reply_ts, turns_value, blocked_until_ts
-
-    async def set_response_limit_state(
-        self,
-        *,
-        user_id: str,
-        last_reply_ts: float | None,
-        turns: int,
-        blocked_until_ts: float | None,
-    ) -> None:
-        await self._execute_write(
-            """
-            INSERT INTO response_limit_state
-                (user_id, last_reply_ts, turns, blocked_until_ts, updated_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(user_id) DO UPDATE SET
-                last_reply_ts = excluded.last_reply_ts,
-                turns = excluded.turns,
-                blocked_until_ts = excluded.blocked_until_ts,
-                updated_at = excluded.updated_at
-            """,
-            (
-                user_id,
-                last_reply_ts,
-                int(turns),
-                blocked_until_ts,
-            ),
-        )
-
-    async def get_auto_post_state(self) -> tuple[str, int] | None:
-        result = await self._fetch_one(
-            "SELECT post_date, posts FROM auto_post_state WHERE id = 1"
-        )
-        return (str(result[0]), int(result[1])) if result else None
-
-    async def set_auto_post_state(self, post_date: str, posts: int) -> None:
-        await self._execute_write(
-            """
-            INSERT INTO auto_post_state (id, post_date, posts)
-            VALUES (1, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                post_date = excluded.post_date,
-                posts = excluded.posts
-            """,
-            (post_date, posts),
-        )
-
-    async def cleanup_response_limit_state(
-        self, *, max_age_days: int | None = None
-    ) -> int:
-        if max_age_days is None:
-            max_age_days = self.config.get(ConfigKeys.SYSTEM_DB_CLEAR_DAYS)
-        if not isinstance(max_age_days, int):
-            max_age_days = -1
-        if max_age_days < 0:
-            return 0
-        if max_age_days == 0:
-            return await self._execute_write("DELETE FROM response_limit_state")
-        return await self._execute_write(
-            "DELETE FROM response_limit_state WHERE updated_at < datetime('now', ?)",
-            (f"-{max_age_days} days",),
         )
 
     async def delete_plugin_data(self, plugin_name: str, key: str | None = None) -> int:
@@ -224,10 +117,65 @@ class DBManager:
             params = (plugin_name,)
         return await self._execute_write(query, params)
 
-    async def vacuum(self) -> None:
-        async with self._lock:
-            try:
-                await self._get_connection().execute("VACUUM")
-                logger.debug("Database vacuum completed")
-            except Exception as e:
-                logger.error(f"Database vacuum failed: {e}")
+    async def get_response_limit_state(
+        self, user_id: str
+    ) -> tuple[float | None, int, float | None] | None:
+        row = await self._fetch_one(
+            "SELECT last_reply_ts, turns, blocked_until_ts FROM response_limit_state "
+            "WHERE user_id = ?",
+            (user_id,),
+        )
+        return (row[0], row[1], row[2]) if row else None
+
+    async def set_response_limit_state(
+        self,
+        *,
+        user_id: str,
+        last_reply_ts: float | None,
+        turns: int,
+        blocked_until_ts: float | None,
+    ) -> None:
+        await self._execute_write(
+            "INSERT OR REPLACE INTO response_limit_state "
+            "(user_id, last_reply_ts, turns, blocked_until_ts) VALUES (?, ?, ?, ?)",
+            (user_id, last_reply_ts, turns, blocked_until_ts),
+        )
+
+    async def get_auto_post_state(self) -> tuple[str, int] | None:
+        row = await self._fetch_one("SELECT post_date, posts FROM auto_post_state")
+        return (row[0], row[1]) if row else None
+
+    async def set_auto_post_state(self, post_date: str, posts: int) -> None:
+        await self._execute_write(
+            "INSERT OR REPLACE INTO auto_post_state VALUES (1, ?, ?)",
+            (post_date, posts),
+        )
+
+    async def maintain(self, max_age_days: int) -> None:
+        if max_age_days >= 0:
+            await self._execute_write(
+                "DELETE FROM response_limit_state WHERE updated_at < datetime('now', ?)",
+                (f"-{max_age_days} days",),
+            )
+        await self._execute_write("PRAGMA optimize")
+
+    async def add_scheduled_note(
+        self,
+        note_id: str,
+        run_at: str,
+        text: str,
+        visibility: str | None,
+        local_only: bool | None,
+    ) -> None:
+        await self._execute_write(
+            "INSERT INTO scheduled_notes VALUES (?, ?, ?, ?, ?)",
+            (note_id, run_at, text, visibility, local_only),
+        )
+
+    async def delete_scheduled_note(self, note_id: str) -> None:
+        await self._execute_write(
+            "DELETE FROM scheduled_notes WHERE id = ?", (note_id,)
+        )
+
+    async def get_scheduled_notes(self) -> list[Row]:
+        return await self._fetch_all("SELECT * FROM scheduled_notes")

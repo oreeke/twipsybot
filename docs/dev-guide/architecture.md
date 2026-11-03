@@ -25,7 +25,7 @@ flowchart TB
 	Flows --> Pipeline[响应管道] --> Limiter[ResponseLimiter]
 	Flows & Pipeline --> Plugins[PluginManager]
 	Plugins --> Builtins[内置插件]
-	Plugins --> Services[受限服务与命名空间存储]
+	Plugins --> Services[服务与命名空间存储]
 	Limiter & Services --> SQLite[(SQLite)]
 
 	classDef ext stroke-dasharray: 4 3
@@ -55,7 +55,7 @@ twipsybot/
 └── docs/               文档站点
 ```
 
-`Neuro`（`bot/engine/core.py`）是对象图根：装配 engine 组件与 flows，编排启停，并作为 `bot` 供 flow 回调；插件仅经 `BotControlAdapter` 受限访问。
+`Neuro` 是对象图根：装配 engine 组件与 flows，编排启停，并作为 `bot` 供 flow 回调；插件经 `PluginContext` 访问。
 
 | 配置模块 | 职责 |
 | --- | --- |
@@ -98,7 +98,7 @@ Linux 处理 `SIGINT`、`SIGTERM`、`SIGHUP`，Windows 处理 `SIGINT`、`SIGTER
 
 ## 数据与并发
 
-- SQLite（WAL）：`plugin_data`、`response_limit_state`、`auto_post_state`。
+- SQLite（WAL）：`plugin_data`、`response_limit_state`、`auto_post_state`、`scheduled_notes`。
 - 插件仅通过命名空间隔离的 `PluginStorage` 读写字符串。
 - 回复限制状态带内存缓存，以 SQLite 为准；聊天历史短期缓存，过期从 Misskey 重新获取。
 - actor lock 串行化同一用户的操作；不同用户与事件并发，共享内存状态需自行同步。

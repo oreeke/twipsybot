@@ -31,7 +31,7 @@ def make_event(
 
 
 def plugin_tasks() -> list[asyncio.Task[Any]]:
-    return [t for t in asyncio.all_tasks() if t.get_name().startswith("plugin-Test-")]
+    return [t for t in asyncio.all_tasks() if t.get_name() == "plugin-Test"]
 
 
 async def settle() -> None:
@@ -43,9 +43,6 @@ class Radar:
         self,
         config: dict[str, Any],
         note: dict[str, Any] | Exception | None = None,
-        *,
-        bot_id: str | None = "bot-id",
-        username: str | None = "bot",
     ) -> None:
         if not isinstance(note, Exception):
             note = {"id": "note-1", **(note or {})}
@@ -74,9 +71,7 @@ class Radar:
                 {"enabled": True, **config},
                 misskey=self.misskey,
                 openai=self.openai,
-                bot=SimpleNamespace(
-                    user_id=bot_id, username=username, actor_lock=actor_lock
-                ),
+                bot=SimpleNamespace(user_id="bot-id", actor_lock=actor_lock),
             )
         )
 
@@ -138,45 +133,19 @@ async def test_radar_waits_random_delay_without_configured_delay(
 
 
 @pytest.mark.parametrize(
-    ("bot_id", "username", "event", "acted"),
+    ("event", "acted"),
     [
-        pytest.param("bot-id", "bot", make_event(), True, id="other-user"),
+        pytest.param(make_event(), True, id="other-user"),
         pytest.param(
-            "bot-id",
-            "bot",
-            make_event(user=UserRef("bot-id", "bot", None)),
-            False,
-            id="same-id",
+            make_event(user=UserRef("bot-id", "bot", None)), False, id="same-id"
         ),
-        pytest.param(
-            None,
-            "Bot",
-            make_event(user=UserRef(None, "bot", None)),
-            False,
-            id="same-local-username-without-id",
-        ),
-        pytest.param(
-            None,
-            "bot",
-            make_event(user=UserRef("remote-id", "bot", "remote.example")),
-            True,
-            id="same-username-on-remote-host",
-        ),
-        pytest.param(
-            None,
-            None,
-            make_event(user=UserRef(None, "bot", None)),
-            True,
-            id="no-bot-name",
-        ),
-        pytest.param("bot-id", "bot", make_event(channel="home"), False, id="channel"),
-        pytest.param("bot-id", "bot", make_event(""), False, id="missing-note-id"),
+        pytest.param(make_event(channel="home"), False, id="channel"),
     ],
 )
 async def test_radar_reacts_only_to_foreign_antenna_notes(
-    bot_id: str | None, username: str | None, event: TimelineNoteEvent, acted: bool
+    event: TimelineNoteEvent, acted: bool
 ) -> None:
-    radar = Radar({"reaction": "heart"}, bot_id=bot_id, username=username)
+    radar = Radar({"reaction": "heart"})
 
     await radar.run(event)
 
@@ -212,13 +181,13 @@ async def test_radar_drops_notes_when_pending_queue_is_full(sleep: AsyncMock) ->
     assert radar.misskey.create_reaction.await_count == 100
 
 
-async def test_radar_shutdown_cancels_pending_notes(sleep: AsyncMock) -> None:
+async def test_radar_cleanup_cancels_pending_notes(sleep: AsyncMock) -> None:
     sleep.side_effect = lambda _: asyncio.Event().wait()
     radar = Radar({"reaction": "heart"})
     await radar.plugin.on_timeline_note(make_event())
     assert plugin_tasks()
 
-    await radar.plugin.on_shutdown()
+    await radar.plugin.cleanup()
 
     assert not plugin_tasks()
     radar.misskey.get_note.assert_not_awaited()

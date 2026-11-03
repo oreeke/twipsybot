@@ -6,7 +6,6 @@ from support.fakes import DEFAULT_AI_REPLY, FakeMisskeyServer, FakeOpenAIServer
 from support.flows import CHAT_MESSAGE, MENTION_NOTE
 from support.types import MakeBot, WriteConfig
 
-from twipsybot.shared.keys import ConfigKeys
 from twipsybot.shared.settings import read_settings
 
 
@@ -63,7 +62,7 @@ async def test_permanent_turn_limit_uses_manageable_blacklist(
     await bot.chat.handle(message({**CHAT_MESSAGE, "id": "msg-2"}))
     await bot.chat.handle(message({**CHAT_MESSAGE, "id": "msg-3"}))
 
-    assert bot.config.get("reply.blacklist") == ["user-2"]
+    assert bot.config.settings.reply.blacklist == ["user-2"]
     assert read_settings(bot.config.settings_path)["reply"]["blacklist"] == ["user-2"]
     assert len(openai_server.calls) == 1
 
@@ -78,7 +77,7 @@ async def test_permanent_turn_limit_uses_manageable_blacklist(
     )
     await bot.chat.handle(message({**CHAT_MESSAGE, "id": "msg-4"}))
 
-    assert bot.config.get("reply.blacklist") == []
+    assert bot.config.settings.reply.blacklist == []
     assert len(openai_server.calls) == 2
     replies = misskey_server.calls["chat/messages/create-to-user"]
     assert len(replies) == 3
@@ -156,6 +155,6 @@ async def test_turns_are_counted_only_when_turn_limit_is_enabled(
     await bot.limits.record_response("user-9", count_turn=True)
     assert (await bot.db.get_response_limit_state("user-9"))[1] == 0
 
-    await bot.settings.update({ConfigKeys.REPLY_MAX_TURNS: 5})
+    await bot.settings.update({"reply.max_turns": 5})
     await bot.limits.record_response("user-9", count_turn=True)
     assert (await bot.db.get_response_limit_state("user-9"))[1] == 1

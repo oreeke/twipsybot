@@ -9,7 +9,6 @@ from support.fakes import FakeMisskeyServer
 from support.types import MakeBot, WriteConfig
 
 from twipsybot.bot.admin import handlers
-from twipsybot.shared.keys import ConfigKeys
 from twipsybot.shared.settings import read_settings, write_settings
 
 
@@ -38,7 +37,7 @@ async def test_settings_reload_applies_live_and_flags_restart(
     assert bot.system_prompt == "新的人设"
     assert handlers.admins(bot) == ["user-9"]
     assert bot.streaming.log_dump_events is True
-    assert bot.config.get(ConfigKeys.SYSTEM_ALLOW_NETS) == ["198.18.0.0/15"]
+    assert bot.config.settings.system.allow_nets == ["198.18.0.0/15"]
     for fetcher in (bot.fetcher, bot.misskey.fetcher):
         assert fetcher.is_public(ipaddress.ip_address("198.19.1.1"))
     warning.assert_called_once_with("Restart required for: connect.ai_api_key")
@@ -114,5 +113,5 @@ async def test_settings_reload_keeps_current_on_invalid_file(
     bot.config.settings_path.write_text("reply: {memory: 999}\n", encoding="utf-8")
 
     assert await bot.settings.reload() == {}
-    assert bot.config.get(ConfigKeys.REPLY_MEMORY) == 10
+    assert bot.config.settings.reply.memory == 10
     assert bot.config.fingerprint == bot.config.stat()

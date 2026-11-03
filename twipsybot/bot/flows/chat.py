@@ -1,21 +1,24 @@
 import time
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from cachetools import TTLCache
 from loguru import logger
 
 from ...clients.misskey.models import MessageEvent, parse_message
-from ...shared.keys import ConfigKeys
 from ...shared.logs import format_log_text
-from ..engine.pipeline import Augment, Deliver, Reply, Source, replied
+from ..engine.pipeline import Augment, Deliver, Reply, Source, replied, trim_history
 
 if TYPE_CHECKING:
     from ..engine.core import Neuro
 
 _CACHE_MAX_USERS = 1000
 _CACHE_TTL = 3600
+
+
+def _ends_with(history: list[dict[str, str]], role: str, content: str) -> bool:
+    return bool(history) and history[-1] == {"role": role, "content": content}
 
 
 @dataclass(slots=True)
@@ -74,36 +77,21 @@ class ChatHandler:
         limit: int,
     ) -> None:
         history = list(self._histories.get(conversation_id) or [])
-        last = next(reversed(history), None)
-        if user_text and not (
-            isinstance(last, dict)
-            and last.get("role") == "user"
-            and last.get("content") == user_text
-        ):
+        if user_text and not _ends_with(history, "user", user_text):
             history.append({"role": "user", "content": user_text})
-        last = next(reversed(history), None)
-        if assistant_text and not (
-            isinstance(last, dict)
-            and last.get("role") == "assistant"
-            and last.get("content") == assistant_text
-        ):
+        if assistant_text and not _ends_with(history, "assistant", assistant_text):
             history.append({"role": "assistant", "content": assistant_text})
         self._histories[conversation_id] = self._trim_history(history, limit)
 
     async def handle(self, message: MessageEvent) -> None:
-        chat_enabled = self.bot.config.get(ConfigKeys.REPLY_CHAT)
-        admin_command = message.text.startswith("^")
-        if not chat_enabled and not admin_command:
+        if not self.bot.config.settings.reply.chat and not message.text.startswith("^"):
             return
-        if self.bot.bot_user_id and message.user.id == self.bot.bot_user_id:
+        if message.user.id == self.bot.me.id:
             return
         if self.bot.limits.is_ignored_bot(message.user):
             logger.debug(f"Ignoring chat from bot account @{message.user.handle}")
             return
-        try:
-            await self._process(message)
-        except Exception as e:
-            logger.error(f"Error handling chat: {e}")
+        await self._process(message)
 
     @staticmethod
     def _log_incoming_chat(ctx: _ChatContext) -> None:
@@ -115,7 +103,7 @@ class ChatHandler:
         if not (ctx := self._parse_chat_context(message)):
             return
         self._log_incoming_chat(ctx)
-        limit: int = self.bot.config.get(ConfigKeys.REPLY_MEMORY)
+        limit = self.bot.config.settings.reply.memory
         deliver = partial(self._deliver, ctx, limit)
         async with self.bot.pipeline.hold(ctx.actor_id, ctx.username):
             if await self._run_command(message, ctx, deliver):
@@ -170,7 +158,7 @@ class ChatHandler:
         if not message.text and not message.files:
             logger.debug("Chat missing required info: empty text and no media")
             return None
-        if message.room_id and not self.bot.is_bot_mentioned(message.text):
+        if message.room_id and not self.bot.me.mentioned_in(message.text):
             logger.debug(
                 f"Room chat from @{user.username} does not mention the bot; skipping"
             )
@@ -210,7 +198,7 @@ class ChatHandler:
         if not ctx.text and not augment.media:
             return None
         user_content = ctx.user_content
-        token_budget = self.bot.config.get(ConfigKeys.REPLY_CTX_TOKENS)
+        token_budget = self.bot.config.settings.reply.ctx_tokens
         history = (
             await self.get_or_load_history(
                 ctx.conversation_id,
@@ -218,31 +206,18 @@ class ChatHandler:
                 user_id=ctx.user_id,
                 room_id=ctx.room_id,
             )
-            if limit > 0 and isinstance(token_budget, int) and token_budget > 0
+            if limit > 0 and token_budget > 0
             else []
         )
-        last = next(reversed(history), None)
-        if (
-            isinstance(last, dict)
-            and last.get("role") == "user"
-            and last.get("content") == user_content
-        ):
+        if _ends_with(history, "user", user_content):
             history.pop()
-        history = self.bot.openai.trim_chat_history(history, token_budget)
+        history = trim_history(history, token_budget)
         if ctx.room_id and self._has_other_speakers(ctx, history):
             augment.tools.taint()
-        messages: list[dict[str, Any]] = []
-        if self.bot.system_prompt:
-            messages.append({"role": "system", "content": self.bot.system_prompt})
-        messages.extend(history)
-        messages.append(
-            {
-                "role": "user",
-                "content": augment.content(augment.apply(user_content, ctx.text)),
-            }
-        )
-        return await self.bot.openai.generate_chat(
-            messages, **self.bot.ai_config, tools=augment.tools
+        return await self.bot.generate_reply(
+            history,
+            augment.content(augment.apply(user_content, ctx.text)),
+            augment.tools,
         )
 
     async def get_chat_history(
@@ -266,16 +241,16 @@ class ChatHandler:
         self, room_id: str, limit: int
     ) -> list[dict[str, str]]:
         messages = await self.bot.misskey.get_room_messages(room_id, limit=limit)
-        bot_user_id = self.bot.bot_user_id
         history: list[dict[str, str]] = []
         for raw in reversed(messages):
             if not (msg := parse_message(raw)):
                 continue
-            is_assistant = bool(bot_user_id and msg.user.id == bot_user_id)
-            content = msg.text if is_assistant else f"{msg.user.username}: {msg.text}"
-            history.append(
-                {"role": "assistant" if is_assistant else "user", "content": content}
-            )
+            if msg.user.id == self.bot.me.id:
+                history.append({"role": "assistant", "content": msg.text})
+            else:
+                history.append(
+                    {"role": "user", "content": f"{msg.user.username}: {msg.text}"}
+                )
         return history
 
     async def _get_user_chat_history(

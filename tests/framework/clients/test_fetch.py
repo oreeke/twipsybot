@@ -6,9 +6,10 @@ from typing import Any
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-from support.types import MakeBot, WriteConfig
+from support.types import WriteConfig
 from yarl import URL
 
+from twipsybot import Neuro
 from twipsybot.clients.fetch.public import PublicFetcher
 from twipsybot.clients.misskey.api import MisskeyAPI
 from twipsybot.shared.errors import (
@@ -186,10 +187,8 @@ async def test_drive_fetch_bytes_uses_guarded_fetcher(server: TestServer) -> Non
         await api.close()
 
 
-async def test_web_fetcher_has_no_misskey_origin_exemption(
-    make_bot: MakeBot, write_config: WriteConfig
-) -> None:
-    bot = await make_bot(write_config())
+def test_web_fetcher_has_no_misskey_origin_exemption(write_config: WriteConfig) -> None:
+    bot = Neuro(write_config())
     origin = URL(bot.misskey.instance_url)
 
     assert bot.misskey.fetcher.is_origin(origin.host or "", origin.port)

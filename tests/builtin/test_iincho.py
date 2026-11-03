@@ -19,9 +19,7 @@ _INTERVAL = 300.0
 _CF_ID = "0123456789abcdef0123456789abcdef"
 
 
-def _context(
-    config: dict[str, Any], admins: tuple[str, ...], bot_id: str | None
-) -> Any:
+def _context(config: dict[str, Any], admins: tuple[str, ...]) -> Any:
     return SimpleNamespace(
         name="iincho",
         config={
@@ -43,7 +41,7 @@ def _context(
             create_note=AsyncMock(return_value={}),
             send_message=AsyncMock(return_value={}),
         ),
-        bot=SimpleNamespace(user_id=bot_id, username="iincho", admins=admins),
+        bot=SimpleNamespace(user_id="bot-id", admins=admins),
     )
 
 
@@ -129,18 +127,14 @@ async def make_iincho(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Make]:
     monkeypatch.setattr(asyncio, "sleep", sleep)
 
     def make(
-        config: dict[str, Any] | None = None,
-        *,
-        admins: tuple[str, ...] = (),
-        bot_id: str | None = "bot-id",
+        config: dict[str, Any] | None = None, *, admins: tuple[str, ...] = ()
     ) -> Iincho:
-        built.append(Iincho(_context(config or {}, admins, bot_id), parked))
+        built.append(Iincho(_context(config or {}, admins), parked))
         return built[0]
 
     yield make
 
     for iincho in built:
-        await iincho.plugin.on_shutdown()
         await iincho.plugin.cleanup()
 
 
@@ -165,7 +159,7 @@ async def make_iincho(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Make]:
     ),
 )
 def test_iincho_rejects_invalid_config(config: dict[str, Any]) -> None:
-    context = _context(config, (), "bot-id")
+    context = _context(config, ())
 
     with pytest.raises(ValueError):
         IinchoPlugin(context)
@@ -189,17 +183,6 @@ async def test_iincho_ignores_ineligible_notes(
     await iincho.cycle()
 
     iincho.context.openai.moderate_texts.assert_not_awaited()
-    iincho.context.misskey.create_note.assert_not_awaited()
-
-
-async def test_iincho_ignores_own_note_by_username_without_bot_id(
-    make_iincho: Make,
-) -> None:
-    iincho = make_iincho({"min_notes": 1}, bot_id=None)
-
-    await iincho.note(username="iincho")
-    await iincho.cycle()
-
     iincho.context.misskey.create_note.assert_not_awaited()
 
 
@@ -361,8 +344,8 @@ async def test_iincho_notifies_every_admin_with_trends_and_flagged_note_ids(
     calls = iincho.context.misskey.send_message.await_args_list
     assert [call.args[0] for call in calls] == ["admin-1", "admin-2"]
     for call in calls:
-        assert "💢 骚扰攻击、⚖️ 违法活动: note-1" in call.args[1]
-        assert "• 新功能体验" in call.args[1]
+        assert "$[fg.color=e74c3c 💢 骚扰攻击 · ⚖️ 违法活动] note-1" in call.args[1]
+        assert "> 新功能体验" in call.args[1]
 
 
 async def test_iincho_admin_failure_does_not_block_others_or_summary(
@@ -439,12 +422,12 @@ async def test_iincho_discards_window_when_moderation_count_mismatches(
     iincho.context.misskey.create_note.assert_not_awaited()
 
 
-async def test_iincho_stops_cycles_after_shutdown(make_iincho: Make) -> None:
+async def test_iincho_stops_cycles_after_cleanup(make_iincho: Make) -> None:
     iincho = make_iincho({"min_notes": 1})
     await iincho.start()
     await iincho.note()
 
-    await iincho.plugin.on_shutdown()
+    await iincho.plugin.cleanup()
     iincho.gate.put_nowait(None)
     await asyncio.sleep(0.01)
 

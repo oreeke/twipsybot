@@ -12,7 +12,6 @@ from loguru import logger
 from plugins.web.plugin import WebPlugin
 from twipsybot.clients.fetch.public import PublicFetcher
 from twipsybot.plugin import HandledResult, MessageEvent, UserRef
-from twipsybot.plugin.services import HttpServiceAdapter
 
 _HTML = (
     "<html><head><title>Doc</title><style>p{}</style></head><body>"
@@ -43,7 +42,7 @@ def _context(config: dict[str, Any], fetcher: PublicFetcher | None = None) -> An
         storage=SimpleNamespace(),
         misskey=SimpleNamespace(),
         openai=SimpleNamespace(),
-        http=HttpServiceAdapter(fetcher or PublicFetcher()),
+        http=fetcher or PublicFetcher(),
         bot=SimpleNamespace(),
     )
 

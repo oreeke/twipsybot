@@ -5,7 +5,6 @@ from contextlib import closing
 
 from support.types import MakeBot, WriteConfig
 
-from twipsybot.shared.keys import ConfigKeys
 from twipsybot.shared.settings import read_settings
 
 
@@ -30,9 +29,9 @@ async def test_database_persists_updates_and_cleans_expired_state(
             "UPDATE response_limit_state SET updated_at = '2000-01-01 00:00:00'"
         )
         conn.commit()
-    assert await bot.db.cleanup_response_limit_state() == 0
+    await bot.db.maintain(-1)
     assert await bot.db.get_response_limit_state("old-user") is not None
-    assert await bot.db.cleanup_response_limit_state(max_age_days=30) == 1
+    await bot.db.maintain(30)
     assert await bot.db.get_response_limit_state("old-user") is None
 
 
@@ -64,7 +63,7 @@ async def test_legacy_permanent_turn_block_migrates_to_blacklist(
     )
 
     assert blocked == (False, "")
-    assert bot.config.get(ConfigKeys.REPLY_BLACKLIST) == ["legacy-user"]
+    assert bot.config.settings.reply.blacklist == ["legacy-user"]
     assert read_settings(bot.config.settings_path)["reply"]["blacklist"] == [
         "legacy-user"
     ]

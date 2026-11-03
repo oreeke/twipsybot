@@ -59,6 +59,7 @@ class ExampleConfig(PluginConfig):
 
 - `LineText`：TUI 中为多行文本，验证时拆为非空行并忽略 `#` 注释行。
 - `When("mode", "a")` 加入 `Annotated`：TUI 仅在同级字段 `mode` 为 `a` 时显示该字段。
+- `parse_duration`：解析 `s` / `m` / `h` / `d` 组合时长，供字段验证器使用。
 
 ## Entry Points
 
@@ -78,7 +79,7 @@ example = "twipsybot_example:plugin"
 | `on_shutdown()` | 停止接收新 Hook 后 |
 | `cleanup()` | 释放资源，初始化失败时也会调用 |
 
-- `_register_resource(resource)` 注册带 `close()` 的资源，清理时自动关闭。
+- `spawn(coro)` 启动后台任务，`_register_resource(resource)` 注册带 `close()` 的资源，`cleanup()` 时自动取消或关闭；覆盖 `cleanup()` 须调用 `super()`。
 - 重载（配置变更、`^plugin on|off`）会新建实例：运行时状态放实例内，跨重载的数据写入 `storage`，不用模块或类变量。
 
 ## Hook

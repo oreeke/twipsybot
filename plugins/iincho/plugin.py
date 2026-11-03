@@ -2,13 +2,11 @@ import asyncio
 import json
 import random
 import re
-from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 import aiohttp
-import durationpy
 from loguru import logger
 from pydantic import Field, SecretStr, field_validator, model_validator
 
@@ -17,6 +15,7 @@ from twipsybot.plugin import (
     PluginConfig,
     TimelineNoteEvent,
     When,
+    parse_duration,
 )
 
 _MAX_MESSAGE_LENGTH = 2000
@@ -35,6 +34,12 @@ _RISK_TYPES = {
 _SEVERE_RISKS = frozenset({"sexual", "minors", "violence", "self_harm", "illegal"})
 _SEVERE_COLOR = "e74c3c"
 _WARN_COLOR = "e67e22"
+
+
+def _risk_color(categories: list[str]) -> str:
+    return _SEVERE_COLOR if _SEVERE_RISKS.intersection(categories) else _WARN_COLOR
+
+
 _OPENAI_RISKS = {
     "harassment": "harassment",
     "hate": "hate",
@@ -132,7 +137,7 @@ class _Config(PluginConfig):
         if isinstance(value, timedelta):
             return value
         try:
-            return durationpy.from_str(str(value))
+            return parse_duration(str(value))
         except (TypeError, ValueError) as error:
             raise ValueError(f"invalid interval: {value!r}") from error
 
@@ -150,7 +155,6 @@ class IinchoPlugin(PluginBase):
     def __init__(self, context):
         super().__init__(context)
         self._window = _Window()
-        self._task: asyncio.Task[None] | None = None
         self._rng = random.Random()
         self._cf_session: aiohttp.ClientSession | None = None
         self._moderate = self._moderate_openai
@@ -175,18 +179,7 @@ class IinchoPlugin(PluginBase):
         return True
 
     async def on_startup(self) -> None:
-        if self._task is None:
-            self._task = asyncio.create_task(
-                self._run(), name=f"plugin-{self.context.name}"
-            )
-
-    async def on_shutdown(self) -> None:
-        if self._task is None:
-            return
-        self._task.cancel()
-        with suppress(asyncio.CancelledError):
-            await self._task
-        self._task = None
+        self.spawn(self._run())
 
     async def _run(self) -> None:
         while True:
@@ -197,7 +190,10 @@ class IinchoPlugin(PluginBase):
                 logger.error(f"Iincho summary cycle failed: {error!r}")
 
     async def on_timeline_note(self, event: TimelineNoteEvent) -> None:
-        if event.channel != "localTimeline" or self._is_self(event):
+        if (
+            event.channel != "localTimeline"
+            or event.user.id == self.context.bot.user_id
+        ):
             return
         content = "\n".join(part.strip() for part in (event.cw, event.text) if part)
         if not content:
@@ -212,12 +208,6 @@ class IinchoPlugin(PluginBase):
         if index < self.settings.sample_size:
             self._window.samples[index] = sample
 
-    def _is_self(self, event: TimelineNoteEvent) -> bool:
-        bot_id = self.context.bot.user_id
-        if bot_id and event.user.id:
-            return bot_id == event.user.id
-        return not event.user.host and event.user.username == self.context.bot.username
-
     async def _process_window(self) -> None:
         window, self._window = self._window, _Window()
         if len(window.samples) < self.settings.min_notes:
@@ -227,10 +217,10 @@ class IinchoPlugin(PluginBase):
             )
             return
         result = await self._generate(window.samples)
-        await self._notify_admins(result, window.samples)
-        text = self._render(result, window, datetime.now(UTC))
+        summary = self._summary(result, window, datetime.now(UTC))
+        await self._notify_admins(result, window.samples, summary)
         await self.context.misskey.create_note(
-            text=text,
+            text=self._render(result, summary),
             visibility="public",
             local_only=self.settings.local_only,
         )
@@ -371,19 +361,18 @@ class IinchoPlugin(PluginBase):
         }
 
     async def _notify_admins(
-        self, result: dict[str, Any], samples: list[_Sample]
+        self, result: dict[str, Any], samples: list[_Sample], summary: list[str]
     ) -> None:
         admins = self.context.bot.admins
         if not admins or not result["violations"]:
             return
         lines = [
-            "🔥 热点",
-            *(f"• {self._sanitize(trend, 180)}" for trend in result["trends"]),
-            "",
-            "🚨 违规审查：",
+            "\n**🔥 热点**",
+            *(f"> {self._sanitize(trend, 180)}" for trend in result["trends"]),
+            "\n**🚨 违规审查**",
             *self._build_alert_lines(result["violations"], samples),
         ]
-        messages = self._batch_alerts(lines)
+        messages = self._batch_alerts("\n".join(["**📢 小报告**", *summary]), lines)
         for admin_id in admins:
             await self._notify_admin(admin_id, messages)
 
@@ -398,11 +387,9 @@ class IinchoPlugin(PluginBase):
             if note_id not in sample_ids or note_id in seen:
                 continue
             seen.add(note_id)
-            labels = "、".join(
-                " ".join(_RISK_TYPES[category])
-                for category in dict.fromkeys(violation["categories"])
-            )
-            lines.append(f"{labels}: {note_id}")
+            categories = list(dict.fromkeys(violation["categories"]))
+            labels = " · ".join(" ".join(_RISK_TYPES[c]) for c in categories)
+            lines.append(f"> $[fg.color={_risk_color(categories)} {labels}] {note_id}")
         return lines
 
     async def _notify_admin(self, admin_id: str, messages: list[str]) -> None:
@@ -416,37 +403,40 @@ class IinchoPlugin(PluginBase):
                 return
 
     @staticmethod
-    def _batch_alerts(lines: list[str]) -> list[str]:
-        header = "💡 Iincho 近期小报告\n\n"
+    def _batch_alerts(header: str, lines: list[str]) -> list[str]:
         messages: list[str] = []
         current = header
         for line in lines:
-            candidate = f"{current}{line}\n"
+            candidate = f"{current}\n{line}"
             if len(candidate) > _MAX_MESSAGE_LENGTH and current != header:
-                messages.append(current.rstrip())
-                current = f"{header}{line}\n"
+                messages.append(current)
+                current = f"{header}\n{line}"
             else:
                 current = candidate
-        messages.append(current[:_MAX_MESSAGE_LENGTH].rstrip())
+        messages.append(current[:_MAX_MESSAGE_LENGTH])
         return messages
 
-    def _render(
+    def _summary(
         self, result: dict[str, Any], window: _Window, ended_at: datetime
-    ) -> str:
-        risks = [
-            f"> $[fg.color={_SEVERE_COLOR if key in _SEVERE_RISKS else _WARN_COLOR} "
-            f"{emoji} {label} {result['risks'][key]}]"
-            for key, (emoji, label) in _RISK_TYPES.items()
-            if result["risks"][key]
-        ]
+    ) -> list[str]:
         started_at = window.started_at.astimezone()
         ended_at = ended_at.astimezone()
         end_format = "%H:%M" if started_at.date() == ended_at.date() else "%m-%d %H:%M"
+        return [
+            f"> {started_at:%Y-%m-%d %H:%M} 至 {ended_at:{end_format}}",
+            f"> 覆盖 {window.eligible} · AI 均匀抽样 {result['sample_count']}",
+        ]
+
+    def _render(self, result: dict[str, Any], summary: list[str]) -> str:
+        risks = [
+            f"> $[fg.color={_risk_color([key])} {emoji} {label} {result['risks'][key]}]"
+            for key, (emoji, label) in _RISK_TYPES.items()
+            if result["risks"][key]
+        ]
         model = _MODERATION_MODELS[self.settings.moderation.provider]
         sections = [
             "**📢 时间线报告**",
-            f"> {started_at:%Y-%m-%d %H:%M} 至 {ended_at:{end_format}}",
-            f"> 覆盖 {window.eligible} · AI 均匀抽样 {result['sample_count']}",
+            *summary,
             "\n**🔍 违规审查**",
             "\n".join(risks) if risks else "> ✅ 未发现明显违规",
             f"\n<small>🤖 {model}</small>",

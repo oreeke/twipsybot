@@ -153,6 +153,16 @@ def replied(source: Source) -> str:
     return {"admin": "Admin replied", "plugin": "Plugin replied"}.get(source, "Replied")
 
 
+def trim_history(history: list[dict[str, str]], budget: int) -> list[dict[str, str]]:
+    kept: list[dict[str, str]] = []
+    for message in reversed(history):
+        budget -= len(message["content"].encode()) // 3 + 4
+        if budget < 0:
+            break
+        kept.append(message)
+    return kept[::-1]
+
+
 class ClockTools:
     @tool("Get the current local date, time and timezone of the bot host.")
     async def now(self, event: Any) -> str:

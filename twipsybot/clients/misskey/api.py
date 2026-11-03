@@ -4,6 +4,7 @@ import random
 import re
 import time
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from typing import Any
 
 import aiohttp
@@ -28,6 +29,7 @@ NOTE_TEXT_MAX_LENGTH = 3000
 CHAT_TEXT_MAX_LENGTH = 2000
 MAX_RETRY_AFTER = 60.0
 _MAX_CONCURRENCY = 32
+_ANTENNAS_TTL = 30.0
 ENDPOINT_PATTERN = re.compile(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*")
 
 
@@ -47,7 +49,7 @@ class MisskeyAPI:
         self.drive: MisskeyDrive = MisskeyDrive(self)
         self._semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
         self._antennas_cache: list[dict[str, Any]] = []
-        self._antennas_cache_expires_at = 0.0
+        self._antennas_expires = 0.0
         self._antennas_cache_lock = asyncio.Lock()
 
     async def close(self) -> None:
@@ -260,18 +262,12 @@ class MisskeyAPI:
         await self.make_request("users/update-memo", {"userId": user_id, "memo": memo})
 
     async def list_antennas(self) -> list[dict[str, Any]]:
-        now = time.monotonic()
-        if now < self._antennas_cache_expires_at and self._antennas_cache:
-            return list(self._antennas_cache)
         async with self._antennas_cache_lock:
-            now = time.monotonic()
-            if now < self._antennas_cache_expires_at and self._antennas_cache:
-                return list(self._antennas_cache)
-            result = await self.make_read_request("antennas/list", {})
-            antennas = result if isinstance(result, list) else []
-            self._antennas_cache = antennas
-            self._antennas_cache_expires_at = time.monotonic() + 30.0
-            return list(antennas)
+            if not self._antennas_cache or time.monotonic() >= self._antennas_expires:
+                result = await self.make_read_request("antennas/list", {})
+                self._antennas_cache = result if isinstance(result, list) else []
+                self._antennas_expires = time.monotonic() + _ANTENNAS_TTL
+            return deepcopy(self._antennas_cache)
 
     async def send_message(
         self, user_id: str, text: str, file_id: str | None = None

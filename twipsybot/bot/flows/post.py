@@ -16,7 +16,7 @@ from ...clients.misskey.models import MentionEvent, MessageEvent
 from ...plugin.base import tool
 from ...plugin.contracts import AutoPostItem
 from ...plugin.manager import HookResult
-from ...shared.keys import ConfigKeys
+from ...shared.config import PostConfig
 from ...shared.logs import format_log_text
 
 if TYPE_CHECKING:
@@ -33,30 +33,39 @@ class AutoPostService:
 
     def __init__(self, bot: "Neuro"):
         self.bot = bot
-        self._counter_lock = asyncio.Lock()
-        self._post_date = self._today()
-        self.posts_today = 0
+        self._state = (self._today(), 0)
 
     @staticmethod
     def _today() -> str:
         return datetime.now().astimezone().date().isoformat()
 
     @property
+    def posts_today(self) -> int:
+        date, posts = self._state
+        return posts if date == self._today() else 0
+
+    async def _save(self, posts: int) -> None:
+        self._state = (self._today(), posts)
+        await self.bot.db.set_auto_post_state(*self._state)
+
+    @property
+    def _settings(self) -> PostConfig:
+        return self.bot.config.settings.autopost
+
+    @property
     def mode(self) -> str:
-        return self.bot.config.get(ConfigKeys.POST_MODE)
+        return self._settings.mode
 
     def _trigger(self) -> BaseTrigger | None:
-        get = self.bot.config.get
-        match self.mode:
+        settings = self._settings
+        match settings.mode:
             case "rotation":
-                return IntervalTrigger(
-                    seconds=get(ConfigKeys.POST_INTERVAL).total_seconds()
-                )
+                return IntervalTrigger(seconds=round(settings.interval.total_seconds()))
             case "schedule":
                 return OrTrigger(
                     [
                         CronTrigger(hour=int(t[:2]), minute=int(t[3:]))
-                        for t in get(ConfigKeys.POST_TIMES)
+                        for t in settings.times
                     ]
                 )
         return None
@@ -81,53 +90,24 @@ class AutoPostService:
         )
         logger.info(f"Auto-post {self.mode}: {trigger}")
 
-    @property
-    def daily_post_count(self) -> int:
-        return self.posts_today if self._post_date == self._today() else 0
-
     async def start(self) -> None:
-        today = self._today()
-        state = await self.bot.db.get_auto_post_state()
-        self._post_date = today
-        if state and state[0] == today:
-            self.posts_today = state[1]
-            return
-        await self.bot.db.set_auto_post_state(today, 0)
-        self.posts_today = 0
-
-    async def _ensure_current_day(self) -> None:
-        today = self._today()
-        if self._post_date == today:
-            return
-        await self.bot.db.set_auto_post_state(today, 0)
-        self._post_date = today
-        self.posts_today = 0
+        if state := await self.bot.db.get_auto_post_state():
+            self._state = state
+        expired = datetime.now().astimezone() - timedelta(
+            seconds=self._MISFIRE_GRACE_SECONDS
+        )
+        for note_id, run_at, *note in await self.bot.db.get_scheduled_notes():
+            if (when := datetime.fromisoformat(run_at)) < expired:
+                logger.warning(f"Scheduled note expired while offline: {note_id}")
+                await self.bot.db.delete_scheduled_note(note_id)
+            else:
+                self._add_note_job(note_id, when, *note)
 
     async def post_count(self) -> None:
-        async with self._counter_lock:
-            today = self._today()
-            if self._post_date != today:
-                self._post_date = today
-                self.posts_today = 0
-            self.posts_today += 1
-            await self.bot.db.set_auto_post_state(self._post_date, self.posts_today)
-
-    async def check_post_counter(self, max_posts: int) -> bool:
-        async with self._counter_lock:
-            await self._ensure_current_day()
-            if self.posts_today >= max_posts:
-                logger.debug(
-                    f"Daily post limit reached ({max_posts}); skipping auto-post"
-                )
-                return False
-            return True
+        await self._save(self.posts_today + 1)
 
     async def reset_daily_counters(self) -> None:
-        async with self._counter_lock:
-            today = self._today()
-            await self.bot.db.set_auto_post_state(today, 0)
-            self._post_date = today
-            self.posts_today = 0
+        await self._save(0)
         logger.debug("Post counter reset")
 
     @tool(
@@ -168,7 +148,7 @@ class AutoPostService:
             f"Manual post: visibility={visibility} local_only={local_only} at={at}"
         )
         if at is not None:
-            return self._schedule_note(text, visibility, local_only, at)
+            return await self._schedule_note(text, visibility, local_only, at)
         await self._send_note(text, visibility, local_only)
         logger.info(f"Manual post succeeded: {format_log_text(text)}")
         return "Note published."
@@ -199,6 +179,7 @@ class AutoPostService:
         if note_id not in {job.id for job in self._scheduled_jobs()}:
             return "Error: no scheduled note with this id"
         self.bot.scheduler.remove_job(note_id)
+        await self.bot.db.delete_scheduled_note(note_id)
         logger.info(f"Scheduled note cancelled: {note_id}")
         return "Scheduled note cancelled."
 
@@ -212,7 +193,7 @@ class AutoPostService:
             key=lambda job: job.next_run_time,
         )
 
-    def _schedule_note(
+    async def _schedule_note(
         self, text: str, visibility: str | None, local_only: bool | None, at: str
     ) -> str:
         try:
@@ -221,34 +202,51 @@ class AutoPostService:
             return "Error: at must be 'YYYY-MM-DD HH:MM'"
         if run_at <= datetime.now().astimezone():
             return "Error: the time has already passed; call time_now to check the time"
-        job = self.bot.scheduler.add_job(
+        note_id = f"{_NOTE_JOB_PREFIX}{uuid4().hex[:6]}"
+        await self.bot.db.add_scheduled_note(
+            note_id, run_at.isoformat(), text, visibility, local_only
+        )
+        self._add_note_job(note_id, run_at, text, visibility, local_only)
+        logger.info(f"Note scheduled: {note_id} at {run_at}")
+        return f"Scheduled as {note_id} for {run_at:%Y-%m-%d %H:%M %z}."
+
+    def _add_note_job(
+        self,
+        note_id: str,
+        run_at: datetime,
+        text: str,
+        visibility: str | None,
+        local_only: bool | None,
+    ) -> None:
+        self.bot.scheduler.add_job(
             self._send_scheduled,
             "date",
             run_date=run_at,
-            args=[text, visibility, local_only],
-            id=f"{_NOTE_JOB_PREFIX}{uuid4().hex[:6]}",
+            args=[note_id, text, visibility, local_only],
+            id=note_id,
             name=format_log_text(text),
             misfire_grace_time=self._MISFIRE_GRACE_SECONDS,
         )
-        logger.info(f"Note scheduled: {job.id} at {run_at}")
-        return f"Scheduled as {job.id} for {run_at:%Y-%m-%d %H:%M %z}."
 
     async def _send_scheduled(
-        self, text: str, visibility: str | None, local_only: bool | None
+        self, note_id: str, text: str, visibility: str | None, local_only: bool | None
     ) -> None:
         if not self.bot.runtime.running:
             return
         try:
             await self._send_note(text, visibility, local_only)
+            logger.info(f"Scheduled post succeeded: {format_log_text(text)}")
         except Exception as e:
             logger.error(f"Scheduled post failed: {e}")
-            return
-        logger.info(f"Scheduled post succeeded: {format_log_text(text)}")
+        await self.bot.db.delete_scheduled_note(note_id)
 
-    async def _allowed(self, limit: int | None) -> bool:
-        return self.bot.runtime.running and (
-            limit is None or await self.check_post_counter(limit)
-        )
+    def _allowed(self, limit: int | None) -> bool:
+        if not self.bot.runtime.running:
+            return False
+        if limit is not None and self.posts_today >= limit:
+            logger.debug(f"Daily post limit reached ({limit}); skipping auto-post")
+            return False
+        return True
 
     async def _record(self, limit: int | None) -> None:
         if limit is not None:
@@ -258,13 +256,9 @@ class AutoPostService:
     async def run(self) -> None:
         if (mode := self.mode) == "off":
             return
-        max_posts = (
-            self.bot.config.get(ConfigKeys.POST_DAILY_MAX)
-            if mode == "rotation"
-            else None
-        )
-        local_only = self.bot.config.get(ConfigKeys.POST_LOCAL_ONLY)
-        if not await self._allowed(max_posts):
+        max_posts = self._settings.daily_max if mode == "rotation" else None
+        local_only = self._settings.local_only
+        if not self._allowed(max_posts):
             return
         try:
             plugin_results = await self.bot.plugin_manager.call_plugin_hook(
@@ -286,7 +280,7 @@ class AutoPostService:
         max_posts: int | None,
         local_only: bool | None,
     ) -> bool:
-        default_visibility = self.bot.config.get(ConfigKeys.POST_VISIBILITY)
+        default_visibility = self._settings.visibility
         for name, result in plugin_results:
             if "contents" in result and await self._post_plugin_contents(
                 name,
@@ -308,7 +302,7 @@ class AutoPostService:
     ) -> bool:
         posted_any = False
         for i, item in enumerate(contents):
-            if not await self._allowed(max_posts):
+            if not self._allowed(max_posts):
                 return posted_any
             content, file_ids = (
                 (item, None)
@@ -341,9 +335,7 @@ class AutoPostService:
         if name:
             logger.info(f"Plugin {name} requested prompt modification: {plugin_prompt}")
         try:
-            content = await self._create_ai_post(
-                self.bot.config.get(ConfigKeys.POST_PROMPT, ""), plugin_prompt
-            )
+            content = await self._create_ai_post(self._settings.prompt, plugin_prompt)
         except ValueError as e:
             logger.warning(f"Auto-post failed; skipping this run: {e}")
             return
@@ -356,14 +348,10 @@ class AutoPostService:
         await self.bot.misskey.create_note(
             content,
             visibility=(
-                visibility
-                if visibility is not None
-                else self.bot.config.get(ConfigKeys.POST_VISIBILITY)
+                visibility if visibility is not None else self._settings.visibility
             ),
             local_only=(
-                local_only
-                if local_only is not None
-                else self.bot.config.get(ConfigKeys.POST_LOCAL_ONLY)
+                local_only if local_only is not None else self._settings.local_only
             ),
         )
 
@@ -374,7 +362,7 @@ class AutoPostService:
 
     async def generate(self, plugin_prompt: str = "", prompt: str | None = None) -> str:
         if prompt is None:
-            prompt = self.bot.config.get(ConfigKeys.POST_PROMPT, "")
+            prompt = self._settings.prompt
         if not prompt:
             raise ValueError("Missing prompt")
         return await self.bot.openai.generate_text(

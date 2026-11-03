@@ -7,6 +7,7 @@ from ..clients.misskey.models import (
     TimelineNoteEvent,
     UserRef,
 )
+from ..shared.config import parse_duration
 from ..shared.consts import USER_AGENT
 from ..shared.errors import APIResponseError, BlockedURLError
 from ..shared.settings import When
@@ -55,5 +56,6 @@ __all__ = (
     "TimelineNoteEvent",
     "UserRef",
     "When",
+    "parse_duration",
     "tool",
 )

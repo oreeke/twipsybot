@@ -1,119 +1,12 @@
-from collections.abc import Callable, Mapping, Sequence
-from copy import deepcopy
+from collections.abc import Sequence
 from typing import Any
 
-from yarl import URL
-
-from ..shared.keys import ConfigKeys
+from ..shared.config import Config
 from ..shared.locks import KeyedAsyncLock, actor_key
 
 
-class HttpServiceAdapter:
-    def __init__(self, fetcher: Any):
-        self._fetcher = fetcher
-
-    def open(self, url: str | URL, *, allow: Callable[[URL], bool] | None = None):
-        return self._fetcher.open(url, allow=allow)
-
-    async def read(self, response: Any, max_bytes: int, *, truncate: bool = False):
-        return await self._fetcher.read(response, max_bytes, truncate=truncate)
-
-
-class DriveServiceAdapter:
-    def __init__(self, drive: Any):
-        self._drive = drive
-
-    async def fetch_bytes(self, url: str, *, max_bytes: int | None = None) -> bytes:
-        return await self._drive.fetch_bytes(url, max_bytes=max_bytes)
-
-    async def show_file(self, file_id: str) -> dict[str, Any]:
-        return await self._drive.show_file(file_id)
-
-    async def upload_bytes(
-        self, data: bytes, *, name: str, content_type: str = "image/png"
-    ) -> dict[str, Any]:
-        return await self._drive.upload_bytes(
-            data, name=name, content_type=content_type
-        )
-
-    async def download_bytes(
-        self,
-        file_id: str,
-        *,
-        thumbnail: bool = False,
-        max_bytes: int | None = None,
-    ) -> bytes:
-        return await self._drive.download_bytes(
-            file_id, thumbnail=thumbnail, max_bytes=max_bytes
-        )
-
-
-class MisskeyServiceAdapter:
-    def __init__(self, misskey: Any):
-        self._misskey = misskey
-        self._drive = DriveServiceAdapter(misskey.drive)
-
-    @property
-    def instance_url(self) -> str:
-        return self._misskey.instance_url
-
-    @property
-    def drive(self) -> DriveServiceAdapter:
-        return self._drive
-
-    async def call_api(
-        self,
-        endpoint: str,
-        params: Mapping[str, Any] | None = None,
-        *,
-        retry: bool = False,
-    ) -> Any:
-        return await self._misskey.call_api(endpoint, params, retry=retry)
-
-    async def list_antennas(self) -> list[dict[str, Any]]:
-        return deepcopy(await self._misskey.list_antennas())
-
-    async def get_note(self, note_id: str) -> dict[str, Any]:
-        return await self._misskey.get_note(note_id)
-
-    async def create_reaction(self, note_id: str, reaction: str) -> dict[str, Any]:
-        return await self._misskey.create_reaction(note_id, reaction)
-
-    async def create_note(
-        self,
-        text: str,
-        visibility: str | None = None,
-        reply_id: str | None = None,
-        local_only: bool | None = None,
-        file_ids: Sequence[str] | None = None,
-    ) -> dict[str, Any]:
-        return await self._misskey.create_note(
-            text, visibility, reply_id, local_only, file_ids
-        )
-
-    async def create_renote(
-        self,
-        note_id: str,
-        visibility: str | None = None,
-        text: str | None = None,
-        local_only: bool | None = None,
-    ) -> dict[str, Any]:
-        return await self._misskey.create_renote(note_id, visibility, text, local_only)
-
-    async def send_message(
-        self, user_id: str, text: str, file_id: str | None = None
-    ) -> dict[str, Any]:
-        return await self._misskey.send_message(user_id, text, file_id)
-
-    async def show_user(self, user_id: str) -> dict[str, Any]:
-        return await self._misskey.show_user(user_id)
-
-    async def update_user_memo(self, user_id: str, memo: str | None) -> None:
-        await self._misskey.update_user_memo(user_id, memo)
-
-
 class OpenAIServiceAdapter:
-    def __init__(self, openai: Any, config: Any):
+    def __init__(self, openai: Any, config: Config):
         self._openai = openai
         self._config = config
 
@@ -123,15 +16,15 @@ class OpenAIServiceAdapter:
 
     @property
     def system_prompt(self) -> str:
-        return self._config.get(ConfigKeys.BOT_SYSTEM_PROMPT, "") or ""
+        return self._config.settings.bot.system_prompt
 
     @property
-    def max_tokens(self) -> int | None:
-        return self._config.get(ConfigKeys.BOT_MAX_TOKENS)
+    def max_tokens(self) -> int:
+        return self._config.settings.bot.max_tokens
 
     @property
-    def temperature(self) -> float | None:
-        return self._config.get(ConfigKeys.BOT_TEMPERATURE)
+    def temperature(self) -> float:
+        return self._config.settings.bot.temperature
 
     async def generate_text(
         self,
@@ -197,12 +90,12 @@ class BotControlAdapter:
         self._actor_locks = KeyedAsyncLock()
 
     @property
-    def user_id(self) -> str | None:
-        return self._bot.bot_user_id
+    def user_id(self) -> str:
+        return self._bot.me.id
 
     @property
-    def username(self) -> str | None:
-        return self._bot.bot_username
+    def username(self) -> str:
+        return self._bot.me.username
 
     def actor_lock(self, user_id: str | None, username: str | None):
         return self._actor_locks.hold(actor_key(user_id, username))

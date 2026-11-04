@@ -56,13 +56,12 @@ class BotRunner:
     def __init__(self):
         self.bot: Neuro | None = None
         self.shutdown_event = asyncio.Event()
-        self._shutdown_called = False
 
     async def run(self) -> None:
         config = Config()
         setup_logging(config.log_path, "INFO")
         print(BANNER)
-        self._setup_monitoring_and_signals()
+        _set_termination_handlers(self._on_signal)
         heartbeat = asyncio.create_task(self._heartbeat(config.status_path))
         try:
             if await self._start(config):
@@ -123,21 +122,13 @@ class BotRunner:
             await self.bot.stop()
             self.bot = None
 
-    def _setup_monitoring_and_signals(self) -> None:
-        def signal_handler(sig: signal.Signals) -> None:
-            logger.info(f"Received signal {sig.name}; preparing to shut down...")
-            if not self.shutdown_event.is_set():
-                self.shutdown_event.set()
-
-        _set_termination_handlers(signal_handler)
+    def _on_signal(self, sig: signal.Signals) -> None:
+        logger.info(f"Received signal {sig.name}; preparing to shut down...")
+        self.shutdown_event.set()
 
     async def shutdown(self) -> None:
-        if self._shutdown_called:
-            return
-        self._shutdown_called = True
         logger.info("Shutting down bot...")
-        if self.bot:
-            await self.bot.stop()
+        await self._discard_bot()
         logger.info("Bot shut down")
 
 

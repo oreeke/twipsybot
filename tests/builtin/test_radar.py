@@ -94,6 +94,7 @@ def sleep(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
         ("", None),
         ("  ", None),
         ("1m", timedelta(minutes=1)),
+        ("90s", timedelta(seconds=90)),
         ("2H", timedelta(hours=2)),
         ("1h30m", timedelta(minutes=90)),
         ("1d", timedelta(days=1)),
@@ -228,13 +229,23 @@ async def test_radar_later_actions_run_after_earlier_ones_fail() -> None:
         pytest.param(
             {"reply_text": "hi {username}"},
             {"user": {"username": "alice"}},
-            {"text": "hi alice", "reply_id": "note-1", "local_only": False},
+            {
+                "text": "hi alice",
+                "visibility": None,
+                "reply_id": "note-1",
+                "local_only": False,
+            },
             id="username-template",
         ),
         pytest.param(
             {"reply_text": "hi {username}"},
             {},
-            {"text": "hi unknown", "reply_id": "note-1", "local_only": False},
+            {
+                "text": "hi unknown",
+                "visibility": None,
+                "reply_id": "note-1",
+                "local_only": False,
+            },
             id="unknown-username",
         ),
         pytest.param(
@@ -293,7 +304,7 @@ async def test_radar_reply_ai_uses_configured_prompt_and_model_settings() -> Non
         "Reply:\nhello", "system", max_tokens=100, temperature=0.5
     )
     radar.misskey.create_note.assert_awaited_once_with(
-        text="generated", reply_id="note-1", local_only=False
+        text="generated", reply_id="note-1", local_only=False, visibility=None
     )
 
 

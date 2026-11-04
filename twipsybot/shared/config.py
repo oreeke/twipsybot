@@ -32,10 +32,7 @@ _RESTART_PREFIX = "connect."
 POST_MIN_GAP = timedelta(minutes=5)
 POST_MAX_TIMES = 24
 
-_INTERVAL_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?[mhd]\s*)+")
 _MINUTES_PATTERN = re.compile(r"\d+(?:\.\d+)?")
-_INTERVAL_ERROR = "auto-post interval must use minutes, hours, or days"
-_SECONDS_PATTERN = re.compile(r"(?:\d+[smhd]\s*)+")
 _SECONDS_ERROR = "limits must use whole seconds, minutes, hours, or days"
 _CLOCK_PATTERN = re.compile(r"(\d{1,2}):(\d{2})")
 _CLOCK_ERROR = "times must use HH:MM"
@@ -48,8 +45,12 @@ def needs_restart(key: str) -> bool:
     return key.startswith(_RESTART_PREFIX)
 
 
-def parse_duration(value: str) -> timedelta:
-    if not _DURATION_PATTERN.fullmatch(text := value.strip().lower()):
+def parse_duration(value: Any) -> timedelta:
+    if isinstance(value, timedelta):
+        return value
+    if not isinstance(value, str) or not _DURATION_PATTERN.fullmatch(
+        text := value.strip().lower()
+    ):
         raise ValueError(f"invalid duration: {value!r}")
     parts = _DURATION_UNIT.split(text)
     pairs = zip(parts[::2], parts[1::2])
@@ -58,18 +59,12 @@ def parse_duration(value: str) -> timedelta:
 
 def _parse_interval(value: Any) -> timedelta:
     match value:
-        case bool():
-            raise ValueError(_INTERVAL_ERROR)
-        case timedelta():
-            interval = value
-        case int() | float():
+        case int() | float() if not isinstance(value, bool):
             interval = timedelta(minutes=value)
-        case str() if _MINUTES_PATTERN.fullmatch(s := value.strip().lower()):
+        case str() if _MINUTES_PATTERN.fullmatch(s := value.strip()):
             interval = timedelta(minutes=float(s))
-        case str() if _INTERVAL_PATTERN.fullmatch(s := value.strip().lower()):
-            interval = parse_duration(s)
         case _:
-            raise ValueError(_INTERVAL_ERROR)
+            interval = parse_duration(value)
     if interval < POST_MIN_GAP:
         raise ValueError(f"auto-post interval must be at least {_MIN_GAP_TEXT}")
     return interval
@@ -87,7 +82,7 @@ def parse_seconds(value: Any) -> int:
                 return -1
             if s.isdigit():
                 return int(s)
-            if _SECONDS_PATTERN.fullmatch(s):
+            if "." not in s and _DURATION_PATTERN.fullmatch(s):
                 return int(parse_duration(s).total_seconds())
     raise ValueError(_SECONDS_ERROR)
 

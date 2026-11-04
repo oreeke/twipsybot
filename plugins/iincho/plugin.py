@@ -4,11 +4,12 @@ import random
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Annotated, Any, Literal
 
 import aiohttp
 from loguru import logger
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import BeforeValidator, Field, SecretStr, field_validator, model_validator
 
 from twipsybot.plugin import (
     PluginBase,
@@ -38,6 +39,9 @@ _WARN_COLOR = "e67e22"
 
 def _risk_color(categories: list[str]) -> str:
     return _SEVERE_COLOR if _SEVERE_RISKS.intersection(categories) else _WARN_COLOR
+
+
+_dump_json = partial(json.dumps, ensure_ascii=False, separators=(",", ":"))
 
 
 _OPENAI_RISKS = {
@@ -122,7 +126,9 @@ class _ModerationConfig(PluginConfig):
 class _Config(PluginConfig):
     prompt: str = Field("", description=_PROMPT)
     system_prompt: str = Field("", description=_SYSTEM_PROMPT)
-    interval: timedelta = Field(timedelta(hours=1), ge=timedelta(minutes=5))
+    interval: Annotated[timedelta, BeforeValidator(parse_duration)] = Field(
+        timedelta(hours=1), ge=timedelta(minutes=5)
+    )
     min_notes: int = Field(10, strict=True, ge=1)
     sample_size: int = Field(100, strict=True, ge=1)
     max_input_chars: int = Field(24000, strict=True, ge=1000)
@@ -130,16 +136,6 @@ class _Config(PluginConfig):
     temperature: float = Field(0.2, strict=True, ge=0, le=2)
     local_only: bool = Field(True, strict=True)
     moderation: _ModerationConfig = Field(default_factory=_ModerationConfig)
-
-    @field_validator("interval", mode="before")
-    @classmethod
-    def _parse_interval(cls, value: Any) -> timedelta:
-        if isinstance(value, timedelta):
-            return value
-        try:
-            return parse_duration(str(value))
-        except (TypeError, ValueError) as error:
-            raise ValueError(f"invalid interval: {value!r}") from error
 
     @model_validator(mode="after")
     def _validate_sample_size(self) -> "_Config":
@@ -218,7 +214,7 @@ class IinchoPlugin(PluginBase):
             return
         result = await self._generate(window.samples)
         summary = self._summary(result, window, datetime.now(UTC))
-        await self._notify_admins(result, window.samples, summary)
+        await self._notify_admins(result, summary)
         await self.context.misskey.create_note(
             text=self._render(result, summary),
             visibility="public",
@@ -295,35 +291,26 @@ class IinchoPlugin(PluginBase):
         return [task.result() for task in tasks]
 
     def _serialize_samples(self, samples: list[_Sample]) -> tuple[str, list[_Sample]]:
+        limit = self.settings.max_input_chars
         items: list[str] = []
         selected: list[_Sample] = []
         for sample in samples:
-            items.append(sample.text)
-            payload = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
-            if len(payload) <= self.settings.max_input_chars:
+            if len(_dump_json([*items, sample.text])) <= limit:
+                items.append(sample.text)
                 selected.append(sample)
                 continue
             low, high = 0, len(sample.text)
             while low < high:
                 middle = (low + high + 1) // 2
-                items[-1] = sample.text[:middle]
-                payload = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
-                if len(payload) <= self.settings.max_input_chars:
+                if len(_dump_json([*items, sample.text[:middle]])) <= limit:
                     low = middle
                 else:
                     high = middle - 1
-            items[-1] = sample.text[:low]
-            payload = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
-            if len(payload) > self.settings.max_input_chars:
-                items.pop()
-            elif items[-1]:
-                selected.append(_Sample(sample.note_id, items[-1]))
-            else:
-                items.pop()
-            payload = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
-            return payload, selected
-        payload = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
-        return payload, selected
+            if low:
+                items.append(text := sample.text[:low])
+                selected.append(_Sample(sample.note_id, text))
+            break
+        return _dump_json(items), selected
 
     @staticmethod
     def _validate_trends(value: Any) -> list[str]:
@@ -360,9 +347,7 @@ class IinchoPlugin(PluginBase):
             "sample_count": len(samples),
         }
 
-    async def _notify_admins(
-        self, result: dict[str, Any], samples: list[_Sample], summary: list[str]
-    ) -> None:
+    async def _notify_admins(self, result: dict[str, Any], summary: list[str]) -> None:
         admins = self.context.bot.admins
         if not admins or not result["violations"]:
             return
@@ -370,24 +355,21 @@ class IinchoPlugin(PluginBase):
             "\n**🔥 热点**",
             *(f"> {self._sanitize(trend, 180)}" for trend in result["trends"]),
             "\n**🚨 违规审查**",
-            *self._build_alert_lines(result["violations"], samples),
+            *self._build_alert_lines(result["violations"]),
         ]
         messages = self._batch_alerts("\n".join(["**📢 小报告**", *summary]), lines)
         for admin_id in admins:
             await self._notify_admin(admin_id, messages)
 
-    def _build_alert_lines(
-        self, violations: list[dict[str, Any]], samples: list[_Sample]
-    ) -> list[str]:
-        sample_ids = {sample.note_id for sample in samples}
+    @staticmethod
+    def _build_alert_lines(violations: list[dict[str, Any]]) -> list[str]:
         lines: list[str] = []
         seen: set[str] = set()
         for violation in violations:
-            note_id = violation["id"]
-            if note_id not in sample_ids or note_id in seen:
+            note_id, categories = violation["id"], violation["categories"]
+            if note_id in seen:
                 continue
             seen.add(note_id)
-            categories = list(dict.fromkeys(violation["categories"]))
             labels = " · ".join(" ".join(_RISK_TYPES[c]) for c in categories)
             lines.append(f"> $[fg.color={_risk_color(categories)} {labels}] {note_id}")
         return lines

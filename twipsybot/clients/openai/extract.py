@@ -53,7 +53,7 @@ def _output_texts(output: list[Any]) -> Iterator[str]:
                 yield text
 
 
-def process_chat_completions_response(response: Any, call_type: str) -> str:
+def extract_chat_text(response: Any, call_type: str) -> str:
     if not response.choices:
         raise APIConnectionError("Empty choices")
     choice = response.choices[0]

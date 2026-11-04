@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from loguru import logger
 
 from twipsybot.clients.misskey.api import MisskeyAPI
+from twipsybot.clients.misskey.bridge import SharedSession
 from twipsybot.clients.misskey.stream import StreamingClient
 from twipsybot.shared.consts import API_MAX_RETRIES
 from twipsybot.shared.errors import (
@@ -148,6 +151,16 @@ async def test_write_requests_are_not_retried(
         await api.make_request("notes/create")
 
     assert len(misskey_server.requests) == 1
+
+
+async def test_request_timeouts_raise_connection_errors(
+    api: MisskeyAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = SimpleNamespace(post=Mock(side_effect=TimeoutError))
+    monkeypatch.setattr(SharedSession, "session", property(lambda _: session))
+
+    with pytest.raises(APIConnectionError):
+        await api.make_request("notes/create")
 
 
 @pytest.mark.parametrize("retry", [False, True])

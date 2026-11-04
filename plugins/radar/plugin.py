@@ -1,6 +1,6 @@
 import asyncio
 import random
-import re
+from contextlib import suppress
 from datetime import timedelta
 from typing import Annotated, Any, Literal
 
@@ -18,7 +18,6 @@ from twipsybot.plugin import (
 Visibility = Literal["public", "home", "followers"]
 _DELAY_RANGE = (180.0, 300.0)
 _DELAY_BOUNDS = (timedelta(minutes=1), timedelta(days=1))
-_DELAY_PATTERN = re.compile(r"(?:\d+[mhd])+")
 _DELAY_ERROR = "delay must be between 1m and 1d, e.g. 30m, 2h, 1d"
 _MAX_PENDING = 100
 _REPLY_AI_PROMPT = (
@@ -58,20 +57,13 @@ class _Config(PluginConfig):
     @field_validator("delay", mode="before")
     @classmethod
     def _parse_delay(cls, value: Any) -> timedelta | None:
-        match value:
-            case None:
-                return None
-            case str() if not value.strip():
-                return None
-            case timedelta():
-                delay = value
-            case str() if _DELAY_PATTERN.fullmatch(s := value.strip().lower()):
-                delay = parse_duration(s)
-            case _:
-                raise ValueError(_DELAY_ERROR)
-        if not _DELAY_BOUNDS[0] <= delay <= _DELAY_BOUNDS[1]:
-            raise ValueError(_DELAY_ERROR)
-        return delay
+        if value is None or isinstance(value, str) and not value.strip():
+            return None
+        lo, hi = _DELAY_BOUNDS
+        with suppress(ValueError):
+            if lo <= (delay := parse_duration(value)) <= hi:
+                return delay
+        raise ValueError(_DELAY_ERROR)
 
 
 class RadarPlugin(PluginBase):
@@ -145,7 +137,7 @@ class RadarPlugin(PluginBase):
         try:
             async with self.context.bot.actor_lock(event.user.id, event.user.handle):
                 if note := await self._fetch_note(event.id):
-                    await self._act(note, event.id, "antenna")
+                    await self._act(note, event.id)
         except Exception as e:
             logger.error(f"Radar interaction failed: {e!r}")
 
@@ -156,16 +148,12 @@ class RadarPlugin(PluginBase):
             logger.info(f"Radar skipped unavailable note {note_id}: {e!r}")
             return None
 
-    async def _maybe_react(
-        self, note_data: dict[str, Any], note_id: str, channel: str
-    ) -> None:
+    async def _maybe_react(self, note_data: dict[str, Any], note_id: str) -> None:
         if not self.settings.reaction or note_data.get("myReaction"):
             return
         try:
             await self.context.misskey.create_reaction(note_id, self.settings.reaction)
-            self._log_plugin_action(
-                "reacted", f"{note_id} {self.settings.reaction} [{channel}]"
-            )
+            self._log_plugin_action("reacted", f"{note_id} {self.settings.reaction}")
         except Exception as e:
             logger.error(f"Radar reaction failed: {e!r}")
 
@@ -190,9 +178,7 @@ class RadarPlugin(PluginBase):
             logger.error(f"Radar AI {action} failed: {e!r}")
             return None
 
-    async def _maybe_reply(
-        self, note_data: dict[str, Any], note_id: str, channel: str
-    ) -> None:
+    async def _maybe_reply(self, note_data: dict[str, Any], note_id: str) -> None:
         if not self.settings.reply_enabled:
             return
         text = await self._build_action_text(
@@ -205,23 +191,21 @@ class RadarPlugin(PluginBase):
         if not text:
             return
         try:
-            kwargs = {
-                "text": text,
-                "reply_id": note_id,
-                "local_only": self.settings.reply_local_only,
-            }
-            if note_data.get("visibility") == "specified":
-                kwargs["visibility"] = "specified"
-            elif self.settings.reply_visibility:
-                kwargs["visibility"] = self.settings.reply_visibility
-            await self.context.misskey.create_note(**kwargs)
-            self._log_plugin_action("replied", f"{note_id} [{channel}]")
+            await self.context.misskey.create_note(
+                text=text,
+                reply_id=note_id,
+                local_only=self.settings.reply_local_only,
+                visibility=(
+                    "specified"
+                    if note_data.get("visibility") == "specified"
+                    else self.settings.reply_visibility
+                ),
+            )
+            self._log_plugin_action("replied", note_id)
         except Exception as e:
             logger.error(f"Radar reply failed: {e!r}")
 
-    async def _maybe_quote(
-        self, note_data: dict[str, Any], note_id: str, channel: str
-    ) -> bool:
+    async def _maybe_quote(self, note_data: dict[str, Any], note_id: str) -> bool:
         text = await self._build_action_text(
             note_data,
             text=self.settings.quote_text,
@@ -239,8 +223,7 @@ class RadarPlugin(PluginBase):
                 local_only=self.settings.quote_local_only,
             )
             self._log_plugin_action(
-                "quoted",
-                f"{note_id} {self.settings.quote_visibility or ''} [{channel}]",
+                "quoted", f"{note_id} {self.settings.quote_visibility or ''}"
             )
             return True
         except Exception as e:
@@ -248,34 +231,30 @@ class RadarPlugin(PluginBase):
             return False
 
     async def _renote(
-        self, note_id: str, channel: str, visibility: str | None, local_only: bool
+        self, note_id: str, visibility: str | None, local_only: bool
     ) -> None:
         try:
             await self.context.misskey.create_renote(
                 note_id, visibility=visibility, local_only=local_only
             )
-            self._log_plugin_action(
-                "renoted", f"{note_id} {visibility or ''} [{channel}]"
-            )
+            self._log_plugin_action("renoted", f"{note_id} {visibility or ''}")
         except Exception as e:
             logger.error(f"Radar renote failed: {e!r}")
 
-    async def _act(self, note_data: dict[str, Any], note_id: str, channel: str) -> None:
-        await self._maybe_react(note_data, note_id, channel)
-        await self._maybe_reply(note_data, note_id, channel)
+    async def _act(self, note_data: dict[str, Any], note_id: str) -> None:
+        await self._maybe_react(note_data, note_id)
+        await self._maybe_reply(note_data, note_id)
         match self.settings.repeat:
             case "quote":
-                if not await self._maybe_quote(note_data, note_id, channel):
+                if not await self._maybe_quote(note_data, note_id):
                     await self._renote(
                         note_id,
-                        channel,
                         self.settings.quote_visibility,
                         self.settings.quote_local_only,
                     )
             case "renote":
                 await self._renote(
                     note_id,
-                    channel,
                     self.settings.renote_visibility,
                     self.settings.renote_local_only,
                 )

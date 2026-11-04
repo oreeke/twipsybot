@@ -58,16 +58,8 @@ class MisskeyAPI:
         logger.debug("Misskey API client closed")
 
     @property
-    def session(self) -> aiohttp.ClientSession:
-        return self.shared.session
-
-    @property
     def semaphore(self) -> asyncio.Semaphore:
         return self._semaphore
-
-    @property
-    def auth_headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.access_token}"}
 
     @staticmethod
     def _parse_error(raw: str) -> tuple[str, str | None]:
@@ -148,22 +140,25 @@ class MisskeyAPI:
         return await self.make_request(endpoint, data)
 
     async def make_request(
-        self, endpoint: str, data: dict[str, Any] | None = None
+        self, endpoint: str, data: Mapping[str, Any] | aiohttp.FormData | None = None
     ) -> Any:
-        url = f"{self.instance_url}/api/{endpoint}"
-        payload = dict(data) if data else {}
+        body: dict[str, Any] = (
+            {"data": data}
+            if isinstance(data, aiohttp.FormData)
+            else {"json": dict(data or {})}
+        )
         try:
-            session: aiohttp.ClientSession = self.session
             async with (
                 self._semaphore,
-                session.post(url, json=payload, headers=self.auth_headers) as response,
+                self.shared.session.post(
+                    f"{self.instance_url}/api/{endpoint}",
+                    headers={"Authorization": f"Bearer {self.access_token}"},
+                    **body,
+                ) as response,
             ):
                 return await self._process_response(response, endpoint)
-        except (
-            aiohttp.ClientError,
-            json.JSONDecodeError,
-        ) as e:
-            logger.error(f"HTTP request error: {e}")
+        except (aiohttp.ClientError, OSError) as e:
+            logger.error(f"HTTP request error: {e!r}")
             raise APIConnectionError() from e
 
     async def call_api(

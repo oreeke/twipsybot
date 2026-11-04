@@ -25,18 +25,7 @@ class MisskeyDrive:
         form = aiohttp.FormData()
         form.add_field("name", name)
         form.add_field("file", data, filename=name, content_type=content_type)
-        try:
-            session: aiohttp.ClientSession = self._api.session
-            url = f"{self._api.instance_url}/api/drive/files/create"
-            async with (
-                self._api.semaphore,
-                session.post(
-                    url, data=form, headers=self._api.auth_headers
-                ) as response,
-            ):
-                return await self._api._process_response(response, "drive/files/create")
-        except (aiohttp.ClientError, OSError) as e:
-            raise APIConnectionError() from e
+        return await self._api.make_request("drive/files/create", form)
 
     async def fetch_bytes(self, url: str, *, max_bytes: int | None = None) -> bytes:
         fetcher = self._api.fetcher

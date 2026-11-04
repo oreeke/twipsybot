@@ -129,7 +129,7 @@ def test_prompt_files_resolve_from_root(
     assert config.stat() != fingerprint
 
 
-@pytest.mark.parametrize("interval", (180, "180", "3h"))
+@pytest.mark.parametrize("interval", (180, "180", "3h", "10800s"))
 def test_auto_post_interval_accepts_minutes_and_units(
     write_config: WriteConfig, interval: int | str
 ) -> None:

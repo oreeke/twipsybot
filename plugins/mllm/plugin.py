@@ -50,12 +50,12 @@ class MLLMPlugin(PluginBase):
             sources.reverse()
         return next(((url, m) for url, m in sources if url), (None, mime))
 
-    async def _try_fetch_bytes_by_url(self, direct_url: str | None) -> bytes | None:
-        if not direct_url:
+    async def _fetch_url(self, url: str | None) -> bytes | None:
+        if not url:
             return None
         try:
             return await self.context.misskey.drive.fetch_bytes(
-                direct_url, max_bytes=self.settings.max_bytes
+                url, max_bytes=self.settings.max_bytes
             )
         except Exception as e:
             logger.error(f"MLLM failed to download file: {e!r}")
@@ -117,7 +117,7 @@ class MLLMPlugin(PluginBase):
             url, mime = self._select_source(file, mime)
         else:
             url = self._normalize_url(file.url)
-        data = await self._try_fetch_bytes_by_url(url)
+        data = await self._fetch_url(url)
         if data is None:
             return None
         return self._make_part(file, mime, data)

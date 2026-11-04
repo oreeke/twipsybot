@@ -257,14 +257,13 @@ class AutoPostService:
         if (mode := self.mode) == "off":
             return
         max_posts = self._settings.daily_max if mode == "rotation" else None
-        local_only = self._settings.local_only
         if not self._allowed(max_posts):
             return
         try:
             plugin_results = await self.bot.plugin_manager.call_plugin_hook(
                 "on_auto_post"
             )
-            if await self._try_plugin_post(plugin_results, max_posts, local_only):
+            if await self._try_plugin_post(plugin_results, max_posts):
                 return
             await self._generate_ai_post(plugin_results, max_posts)
         except asyncio.CancelledError:
@@ -275,19 +274,11 @@ class AutoPostService:
             logger.error(f"Error during auto-post: {e}")
 
     async def _try_plugin_post(
-        self,
-        plugin_results: list[HookResult],
-        max_posts: int | None,
-        local_only: bool | None,
+        self, plugin_results: list[HookResult], max_posts: int | None
     ) -> bool:
-        default_visibility = self._settings.visibility
         for name, result in plugin_results:
             if "contents" in result and await self._post_plugin_contents(
-                name,
-                result["contents"],
-                result.get("visibility", default_visibility),
-                max_posts,
-                local_only,
+                name, result["contents"], result.get("visibility"), max_posts
             ):
                 return True
         return False
@@ -298,7 +289,6 @@ class AutoPostService:
         contents: Sequence[str | AutoPostItem],
         visibility: str | None,
         max_posts: int | None,
-        local_only: bool | None,
     ) -> bool:
         posted_any = False
         for i, item in enumerate(contents):
@@ -309,12 +299,7 @@ class AutoPostService:
                 if isinstance(item, str)
                 else (item["text"], item.get("file_ids"))
             )
-            await self.bot.misskey.create_note(
-                content,
-                visibility=visibility,
-                local_only=local_only,
-                file_ids=file_ids,
-            )
+            await self._send_note(content, visibility, file_ids=file_ids)
             await self.bot.plugin_manager.confirm_auto_post_published(
                 plugin_name, content
             )
@@ -335,35 +320,30 @@ class AutoPostService:
         if name:
             logger.info(f"Plugin {name} requested prompt modification: {plugin_prompt}")
         try:
-            content = await self._create_ai_post(self._settings.prompt, plugin_prompt)
+            content = await self.generate(plugin_prompt)
         except ValueError as e:
             logger.warning(f"Auto-post failed; skipping this run: {e}")
             return
+        await self._send_note(content)
         logger.info(f"Auto-post succeeded: {format_log_text(content)}")
         await self._record(max_posts)
 
     async def _send_note(
-        self, content: str, visibility: str | None, local_only: bool | None
+        self,
+        content: str,
+        visibility: str | None = None,
+        local_only: bool | None = None,
+        file_ids: list[str] | None = None,
     ) -> None:
         await self.bot.misskey.create_note(
             content,
-            visibility=(
-                visibility if visibility is not None else self._settings.visibility
-            ),
-            local_only=(
-                local_only if local_only is not None else self._settings.local_only
-            ),
+            visibility=self._settings.visibility if visibility is None else visibility,
+            local_only=self._settings.local_only if local_only is None else local_only,
+            file_ids=file_ids,
         )
 
-    async def _create_ai_post(self, prompt: str, plugin_prompt: str = "") -> str:
-        content = await self.generate(plugin_prompt, prompt)
-        await self._send_note(content, None, None)
-        return content
-
-    async def generate(self, plugin_prompt: str = "", prompt: str | None = None) -> str:
-        if prompt is None:
-            prompt = self._settings.prompt
-        if not prompt:
+    async def generate(self, plugin_prompt: str = "") -> str:
+        if not (prompt := self._settings.prompt):
             raise ValueError("Missing prompt")
         return await self.bot.openai.generate_text(
             f"{plugin_prompt}{prompt}", self.bot.system_prompt, **self.bot.ai_config

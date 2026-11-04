@@ -4,6 +4,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -84,6 +85,32 @@ async def test_plugin_module_requires_explicit_export(
     bot = await make_bot(write_config(), plugins_dir=tmp_path / "plugins")
 
     assert "implicit" not in bot.plugin_manager.plugins
+
+
+@pytest.mark.parametrize(
+    ("enabled", "loaded"),
+    [
+        (True, True),
+        (" True ", True),
+        ("false", False),
+        (None, False),
+        ("maybe", False),
+        (1, False),
+    ],
+)
+async def test_enabled_flag_controls_plugin_loading(
+    enabled: Any,
+    loaded: bool,
+    make_bot: MakeBot,
+    make_plugin_dir: MakePluginDir,
+    write_config: WriteConfig,
+) -> None:
+    plugins_dir = make_plugin_dir("toggle")
+    set_plugin_config(plugins_dir.parent, "toggle", {"enabled": enabled})
+
+    bot = await make_bot(write_config(), plugins_dir=plugins_dir)
+
+    assert ("toggle" in bot.plugin_manager.plugins) is loaded
 
 
 async def test_failed_plugin_import_removes_loaded_modules(

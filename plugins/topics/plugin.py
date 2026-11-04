@@ -3,7 +3,7 @@ import calendar
 import hashlib
 import json
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NamedTuple
 
 import aiohttp
 import feedparser
@@ -60,6 +60,16 @@ class _Config(PluginConfig):
         return value
 
 
+class _Entry(NamedTuple):
+    ts: int
+    key: str
+    title: str
+    link: str
+    summary: str
+    feed_idx: int
+    entry_idx: int
+
+
 class TopicsPlugin(PluginBase):
     config_class = _Config
     settings: _Config
@@ -72,16 +82,14 @@ class TopicsPlugin(PluginBase):
     async def initialize(self) -> bool:
         try:
             if self.settings.source == "rss":
-                await self._initialize_storage(
-                    {"rss_recent_keys": "[]", "rss_last_feed_idx": "0"}
-                )
                 details = f"RSS feeds: {len(self.settings.rss_list)}"
             else:
                 self.topics = self._configured_topics()
                 if not self.topics:
                     raise ValueError("list is empty")
-                initial_index = (self.settings.list_start_line - 1) % len(self.topics)
-                await self._initialize_storage({"last_used_line": str(initial_index)})
+                if await self.context.storage.get("last_used_line") is None:
+                    initial = (self.settings.list_start_line - 1) % len(self.topics)
+                    await self.context.storage.set("last_used_line", str(initial))
                 details = f"Custom topics: {len(self.topics)}"
             self._log_plugin_action("initialized", details)
             return True
@@ -107,15 +115,6 @@ class TopicsPlugin(PluginBase):
         except Exception as e:
             logger.error(f"Topics plugin auto-post hook failed: {e}")
             return None
-
-    async def _initialize_storage(self, defaults: dict[str, str]) -> None:
-        try:
-            for key, value in defaults.items():
-                if await self.context.storage.get(key) is None:
-                    await self.context.storage.set(key, value)
-        except Exception as e:
-            logger.warning(f"Topics plugin storage initialization failed: {e}")
-            raise
 
     def _configured_topics(self) -> list[str]:
         topics: list[str] = []
@@ -158,7 +157,7 @@ class TopicsPlugin(PluginBase):
 
         contents = await self._render_selected_rss_entries(selected)
         for content, entry in zip(contents, selected, strict=True):
-            self._pending_rss.setdefault(content, []).append((entry["key"], None))
+            self._pending_rss.setdefault(content, []).append((entry.key, None))
         return contents
 
     async def _get_next_rss_posts_rotate(self, urls: list[str]) -> list[str]:
@@ -180,7 +179,7 @@ class TopicsPlugin(PluginBase):
                     logger.warning(f"RSS fetch failed: {e}")
                     candidates = []
 
-                filtered = [c for c in candidates if c.get("key") not in recent_set]
+                filtered = [c for c in candidates if c.key not in recent_set]
                 best = self._pick_latest_entry(filtered)
                 if not best:
                     continue
@@ -188,7 +187,7 @@ class TopicsPlugin(PluginBase):
                 contents = await self._render_selected_rss_entries([best])
                 if contents:
                     self._pending_rss.setdefault(contents[0], []).append(
-                        (best["key"], (feed_idx + 1) % len(urls))
+                        (best.key, (feed_idx + 1) % len(urls))
                     )
                 return contents
 
@@ -203,14 +202,14 @@ class TopicsPlugin(PluginBase):
             timeout=_RSS_TIMEOUT, headers={"User-Agent": USER_AGENT}
         )
 
-    async def _fetch_all_rss_candidates(self, urls: list[str]) -> list[dict[str, Any]]:
+    async def _fetch_all_rss_candidates(self, urls: list[str]) -> list[_Entry]:
         async with self._rss_session() as session:
             tasks = [
                 self._fetch_rss_candidates(session, url, feed_idx=i)
                 for i, url in enumerate(urls)
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
-        candidates: list[dict[str, Any]] = []
+        candidates: list[_Entry] = []
         for result in results:
             if isinstance(result, BaseException):
                 logger.warning(f"RSS fetch failed: {result}")
@@ -220,15 +219,15 @@ class TopicsPlugin(PluginBase):
 
     @staticmethod
     def _select_latest_per_feed(
-        urls: list[str], candidates: list[dict[str, Any]], recent_set: set[str]
-    ) -> list[dict[str, Any]]:
-        by_feed_idx: dict[int, list[dict[str, Any]]] = {}
+        urls: list[str], candidates: list[_Entry], recent_set: set[str]
+    ) -> list[_Entry]:
+        by_feed_idx: dict[int, list[_Entry]] = {}
         for c in candidates:
-            if c["key"] in recent_set:
+            if c.key in recent_set:
                 continue
-            by_feed_idx.setdefault(int(c["feed_idx"]), []).append(c)
+            by_feed_idx.setdefault(c.feed_idx, []).append(c)
 
-        selected: list[dict[str, Any]] = []
+        selected: list[_Entry] = []
         for feed_idx in range(len(urls)):
             best = TopicsPlugin._pick_latest_entry(by_feed_idx.get(feed_idx))
             if best:
@@ -236,21 +235,16 @@ class TopicsPlugin(PluginBase):
         return selected
 
     @staticmethod
-    def _pick_latest_entry(
-        entries: list[dict[str, Any]] | None,
-    ) -> dict[str, Any] | None:
+    def _pick_latest_entry(entries: list[_Entry] | None) -> _Entry | None:
         if not entries:
             return None
-        return max(entries, key=lambda c: (c["ts"], -c["entry_idx"]))
+        return max(entries, key=lambda c: (c.ts, -c.entry_idx))
 
-    async def _render_selected_rss_entries(
-        self, selected: list[dict[str, Any]]
-    ) -> list[str]:
+    async def _render_selected_rss_entries(self, selected: list[_Entry]) -> list[str]:
         contents: list[str] = []
         for entry in selected:
             primary = await self._render_rss_primary_text(entry)
-            link = entry["link"]
-            contents.append(f"📡 {primary}\n\n📎 {link}")
+            contents.append(f"📡 {primary}\n\n📎 {entry.link}")
         return contents
 
     async def on_auto_post_published(self, content: str) -> None:
@@ -264,26 +258,21 @@ class TopicsPlugin(PluginBase):
         updated = self._append_recent_key(
             recent_keys, key, limit=_RSS_RECENT_KEYS_LIMIT
         )
-        if not await self._set_recent_rss_keys(updated):
+        if not await self._set_storage_value("rss_recent_keys", json.dumps(updated)):
             raise RuntimeError("failed to persist published RSS entry")
         if next_feed_idx is not None and not await self._set_storage_value(
-            "rss_last_feed_idx", str(max(0, next_feed_idx))
+            "rss_last_feed_idx", str(next_feed_idx)
         ):
             raise RuntimeError("failed to persist RSS feed position")
 
-    async def _render_rss_primary_text(self, entry: dict[str, Any]) -> str:
-        title = entry["title"]
-        link = entry["link"]
-        summary = entry.get("summary") or ""
-        primary = (summary or title).strip()
-        if not self.settings.rss_ai:
-            return primary or title
-        rewritten = await self._rewrite_rss_title_with_ai(title, link, summary=summary)
-        return rewritten or title
+    async def _render_rss_primary_text(self, entry: _Entry) -> str:
+        if self.settings.rss_ai:
+            return await self._rewrite_entry(entry)
+        return entry.summary or entry.title
 
     async def _fetch_rss_candidates(
         self, session: aiohttp.ClientSession, url: str, *, feed_idx: int
-    ) -> list[dict[str, Any]]:
+    ) -> list[_Entry]:
         try:
             async with session.get(url) as resp:
                 if resp.status >= 400:
@@ -294,7 +283,7 @@ class TopicsPlugin(PluginBase):
 
         parsed = feedparser.parse(raw)
         entries = getattr(parsed, "entries", None) or []
-        out: list[dict[str, Any]] = []
+        out: list[_Entry] = []
         for entry_idx, entry in enumerate(entries[:20]):
             if not isinstance(entry, dict):
                 continue
@@ -302,42 +291,25 @@ class TopicsPlugin(PluginBase):
             link = str(entry.get("link") or "").strip()
             if not title or not link:
                 continue
-            summary = self._extract_entry_summary(entry)
-            ts = self._get_entry_timestamp(entry)
-            key = self._make_entry_key(url, entry, title, link)
             out.append(
-                {
-                    "ts": ts,
-                    "key": key,
-                    "title": title,
-                    "link": link,
-                    "summary": summary,
-                    "feed_idx": feed_idx,
-                    "entry_idx": entry_idx,
-                }
+                _Entry(
+                    ts=self._get_entry_timestamp(entry),
+                    key=self._make_entry_key(url, entry),
+                    title=title,
+                    link=link,
+                    summary=self._entry_summary(entry),
+                    feed_idx=feed_idx,
+                    entry_idx=entry_idx,
+                )
             )
         return out
 
-    @classmethod
-    def _strip_html(cls, text: str) -> str:
-        if not text:
-            return ""
-        if "<" not in text and "&" not in text:
-            return text.strip()
-        return BeautifulSoup(text, "html.parser").get_text(" ", strip=True)
-
-    @classmethod
-    def _normalize_entry_text(cls, text: str, *, max_len: int) -> str:
-        s = cls._strip_html(text)
-        s = " ".join(s.split())
-        if max_len > 0 and len(s) > max_len:
-            return s[:max_len]
-        return s
-
-    @classmethod
-    def _extract_entry_summary(cls, entry: dict[str, Any]) -> str:
-        summary = str(entry.get("summary") or "").strip()
-        return cls._normalize_entry_text(summary, max_len=1200)
+    @staticmethod
+    def _entry_summary(entry: dict[str, Any]) -> str:
+        text = str(entry.get("summary") or "")
+        if "<" in text or "&" in text:
+            text = BeautifulSoup(text, "html.parser").get_text(" ", strip=True)
+        return " ".join(text.split())[:1200]
 
     @staticmethod
     def _get_entry_timestamp(entry: dict[str, Any]) -> int:
@@ -351,34 +323,25 @@ class TopicsPlugin(PluginBase):
         return 0
 
     @staticmethod
-    def _make_entry_key(
-        feed_url: str, entry: dict[str, Any], title: str, link: str
-    ) -> str:
-        raw = (
-            entry.get("id")
-            or entry.get("guid")
-            or entry.get("link")
-            or f"{title}\n{link}"
-        )
+    def _make_entry_key(feed_url: str, entry: dict[str, Any]) -> str:
+        raw = entry.get("id") or entry.get("guid") or entry.get("link")
         base = f"{feed_url}\n{raw}".encode(errors="ignore")
         return hashlib.sha256(base).hexdigest()
 
-    async def _rewrite_rss_title_with_ai(
-        self, title: str, link: str, *, summary: str
-    ) -> str:
+    async def _rewrite_entry(self, entry: _Entry) -> str:
         try:
             prompt = (self.settings.rss_ai_prefix.strip() or _RSS_AI_PREFIX).format(
-                title=title, link=link, summary=summary
+                title=entry.title, link=entry.link, summary=entry.summary
             )
         except Exception as e:
             logger.warning(f"Invalid rss_ai_prefix format: {e}")
-            return title
+            return entry.title
         try:
             text = await self.context.bot.generate_auto_post(prompt)
         except Exception as e:
             logger.warning(f"RSS title rewrite failed: {e}")
-            return title
-        return (text or "").strip() or title
+            return entry.title
+        return (text or "").strip() or entry.title
 
     async def _get_recent_rss_keys(self) -> list[str]:
         try:
@@ -392,14 +355,6 @@ class TopicsPlugin(PluginBase):
         except Exception as e:
             logger.warning(f"Failed to load rss_recent_keys: {e}")
             return []
-
-    async def _set_recent_rss_keys(self, keys: list[str]) -> bool:
-        try:
-            await self.context.storage.set("rss_recent_keys", json.dumps(keys))
-            return True
-        except Exception as e:
-            logger.warning(f"Failed to save rss_recent_keys: {e}")
-            return False
 
     async def _get_stored_int(self, key: str) -> int:
         try:

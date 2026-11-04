@@ -46,7 +46,7 @@ class ChatHandler:
             timer=time.monotonic,
         )
 
-    async def get_or_load_history(
+    async def _history(
         self,
         conversation_id: str,
         *,
@@ -56,7 +56,7 @@ class ChatHandler:
     ) -> list[dict[str, str]]:
         if (cached := self._histories.get(conversation_id)) is not None:
             return self._trim_history(list(cached), limit)
-        history = await self.get_chat_history(
+        history = await self._fetch_history(
             user_id=user_id, room_id=room_id, limit=limit
         )
         trimmed = self._trim_history(history, limit)
@@ -69,7 +69,7 @@ class ChatHandler:
     ) -> list[dict[str, str]]:
         return history[-limit_value:] if limit_value > 0 else []
 
-    def append_turn(
+    def _append_turn(
         self,
         conversation_id: str,
         user_text: str,
@@ -148,7 +148,7 @@ class ChatHandler:
             await send("", file_id)
         logger.info(f"{replied(source)} to @{ctx.username}: {format_log_text(text)}")
         if source in ("plugin", "ai") and ctx.text:
-            self.append_turn(ctx.conversation_id, ctx.user_content, reply.text, limit)
+            self._append_turn(ctx.conversation_id, ctx.user_content, reply.text, limit)
 
     def _parse_chat_context(self, message: MessageEvent) -> _ChatContext | None:
         user = message.user
@@ -200,7 +200,7 @@ class ChatHandler:
         user_content = ctx.user_content
         token_budget = self.bot.config.settings.reply.ctx_tokens
         history = (
-            await self.get_or_load_history(
+            await self._history(
                 ctx.conversation_id,
                 limit=limit,
                 user_id=ctx.user_id,
@@ -220,7 +220,7 @@ class ChatHandler:
             augment.tools,
         )
 
-    async def get_chat_history(
+    async def _fetch_history(
         self,
         *,
         user_id: str | None = None,

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 class MentionContext:
     text: str
     user_id: str | None
-    username: str | None
+    handle: str | None
     explicit_mention: bool
     reply_visibility: str | None
 
@@ -37,8 +37,8 @@ class MentionHandler:
 
     @staticmethod
     def _format_mention_reply(mention: MentionContext, text: str) -> str:
-        if mention.explicit_mention and mention.username:
-            return f"@{mention.username}\n{text}"
+        if mention.explicit_mention and mention.handle:
+            return f"@{mention.handle}\n{text}"
         return text
 
     def _is_reply_to_bot(self, event: MentionEvent) -> bool:
@@ -155,10 +155,10 @@ class MentionHandler:
         if not (mention := self._parse(event)):
             return
         if mention.user_id and self.bot.limits.is_response_blacklisted_user(
-            user_id=mention.user_id, handle=mention.username
+            user_id=mention.user_id, handle=mention.handle
         ):
             return
-        display = mention.username or "unknown"
+        display = mention.handle or "unknown"
 
         async def deliver(reply: Reply, source: Source) -> None:
             text = self._format_mention_reply(mention, reply.text)
@@ -173,10 +173,10 @@ class MentionHandler:
         logger.info(
             f"Mention received from @{display}: {format_log_text(mention.text)}"
         )
-        async with self.bot.pipeline.hold(mention.user_id, mention.username):
+        async with self.bot.pipeline.hold(mention.user_id, mention.handle):
             await self.bot.pipeline.respond(
                 user_id=mention.user_id,
-                handle=mention.username,
+                handle=mention.handle,
                 hook="on_mention",
                 event=event,
                 generate=lambda augment: self._generate_ai_reply(

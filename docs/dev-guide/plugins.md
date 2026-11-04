@@ -59,7 +59,7 @@ class ExampleConfig(PluginConfig):
 
 - `LineText`：TUI 中为多行文本，验证时拆为非空行并忽略 `#` 注释行。
 - `When("mode", "a")` 加入 `Annotated`：TUI 仅在同级字段 `mode` 为 `a` 时显示该字段。
-- `parse_duration`：解析 `s` / `m` / `h` / `d` 组合时长，供字段验证器使用。
+- `parse_duration`：解析 `s` / `m` / `h` / `d` 组合时长，`timedelta` 原样返回，可直接用作 `BeforeValidator`。
 
 ## Entry Points
 

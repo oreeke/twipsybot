@@ -27,12 +27,14 @@ async def test_admin_check_matches_ids_and_canonical_handles(
 ) -> None:
     bot = await make_bot(write_config())
     local = bot.limits.canonical_handle("alice")
-    bot.config.settings.bot.admins = ["user-1", local, "carol@remote.example"]
+    bot.config.settings.bot.admins = ["user-1", local, "carol@remote.example", "@dave"]
 
     admin = bot.admin
     assert admin.is_admin("user-1", None)
     assert admin.is_admin("other", "alice")
     assert admin.is_admin("other", "carol@remote.example")
+    assert admin.is_admin("other", "dave")
+    assert not admin.is_admin("other", "dave@remote.example")
     assert not admin.is_admin("other", "carol")
     assert not admin.is_admin(None, "alice")
     assert not admin.is_admin("other", None)

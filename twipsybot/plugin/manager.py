@@ -148,6 +148,17 @@ _RESULT_VALIDATORS: dict[str, Callable[[dict[str, Any]], bool]] = {
 }
 
 
+def _parse_enabled(value: Any) -> bool:
+    match value:
+        case None:
+            return False
+        case bool():
+            return value
+        case str() if (s := value.strip().lower()) in {"true", "false"}:
+            return s == "true"
+    raise ValueError(f"invalid boolean value: {value!r}")
+
+
 def _plugin_sources(plugins_dir: Path) -> dict[str, Path | EntryPoint]:
     sources: dict[str, Path | EntryPoint] = {}
     if plugins_dir.exists():
@@ -253,7 +264,7 @@ class PluginManager:
         configured = key in plugins
         plugin_config = dict(plugins.get(key) or {})
         try:
-            enabled = PluginBase._parse_bool(plugin_config.get("enabled"), False)
+            enabled = _parse_enabled(plugin_config.get("enabled"))
         except ValueError as e:
             logger.error(f"Invalid plugin config: plugin={key}: {e}")
             enabled = False

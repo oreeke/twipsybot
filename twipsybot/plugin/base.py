@@ -95,22 +95,12 @@ class PluginBase:
     def __init__(self, context: PluginContext):
         self.context = context
         self.settings = self.config_class.model_validate(context.config)
-        self._enabled = self._parse_bool(context.config.get("enabled"), False)
+        self._enabled = True
         self._tools = tool_specs(self)
         self._initialized = False
         self._started = False
-        self._resources_to_cleanup = []
+        self._resources: list[Any] = []
         self._tasks: set[asyncio.Task[Any]] = set()
-
-    @staticmethod
-    def _parse_bool(value: Any, default: bool) -> bool:
-        if value is None:
-            return default
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
-            return value.strip().lower() == "true"
-        raise ValueError(f"invalid boolean value: {value!r}")
 
     async def initialize(self) -> bool:
         await asyncio.sleep(0)
@@ -121,7 +111,7 @@ class PluginBase:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        await self._cleanup_registered_resources()
+        await self._close_resources()
 
     def spawn(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         task = asyncio.create_task(coro, name=f"plugin-{self.context.name}")
@@ -166,18 +156,14 @@ class PluginBase:
             result["links"] = list(links)
         return result
 
-    def _register_resource(self, resource: Any, cleanup_method: str = "close") -> None:
-        self._resources_to_cleanup.append((resource, cleanup_method))
+    def _register_resource(self, resource: Any) -> None:
+        self._resources.append(resource)
 
-    async def _cleanup_registered_resources(self) -> None:
-        for resource, cleanup_method in self._resources_to_cleanup:
+    async def _close_resources(self) -> None:
+        for resource in self._resources:
             try:
-                if hasattr(resource, cleanup_method):
-                    method = getattr(resource, cleanup_method)
-                    if inspect.iscoroutinefunction(method):
-                        await method()
-                    else:
-                        method()
+                if inspect.isawaitable(result := resource.close()):
+                    await result
             except Exception as e:
                 logger.error(f"Plugin {self.context.name} resource cleanup failed: {e}")
-        self._resources_to_cleanup.clear()
+        self._resources.clear()

@@ -18,9 +18,9 @@ from ...shared.errors import APIConnectionError, AuthenticationError
 from .extract import (
     ToolCalls,
     extract_chat_calls,
+    extract_chat_text,
     extract_responses_calls,
     extract_responses_text,
-    process_chat_completions_response,
 )
 from .requests import (
     TokenParam,
@@ -147,7 +147,7 @@ class OpenAIAPI:
             if reasoning := getattr(message, "reasoning_content", None):
                 item["reasoning_content"] = reasoning
             return _Turn("", calls, (item,))
-        return _Turn(process_chat_completions_response(response, call_type))
+        return _Turn(extract_chat_text(response, call_type))
 
     @property
     def uses_responses_api(self) -> bool:

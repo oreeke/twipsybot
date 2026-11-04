@@ -60,16 +60,6 @@ class StreamingConnector:
         self._on_notification = on_notification
         self._on_timeline_note = on_timeline_note
 
-    def _load_timeline_channels(self) -> set[str]:
-        timeline = self._config.settings.timeline
-        mapping = {
-            ChannelType.HOME_TIMELINE.value: timeline.home,
-            ChannelType.LOCAL_TIMELINE.value: timeline.local,
-            ChannelType.HYBRID_TIMELINE.value: timeline.hybrid,
-            ChannelType.GLOBAL_TIMELINE.value: timeline.global_,
-        }
-        return {channel for channel, enabled in mapping.items() if enabled}
-
     def load_antenna_selectors(self) -> list[str]:
         return normalize_tokens(self._config.settings.timeline.antennas)
 
@@ -94,19 +84,22 @@ class StreamingConnector:
         return list(dict.fromkeys(resolved))
 
     async def get_streaming_channels(self) -> list[ChannelSpec]:
-        active = {ChannelType.MAIN.value, *self._load_timeline_channels()}
-        ordered = [
+        timeline = self._config.settings.timeline
+        antenna_ids = await self.resolve_antenna_ids(self.load_antenna_selectors())
+        return [
             ChannelType.MAIN.value,
-            ChannelType.HOME_TIMELINE.value,
-            ChannelType.LOCAL_TIMELINE.value,
-            ChannelType.HYBRID_TIMELINE.value,
-            ChannelType.GLOBAL_TIMELINE.value,
+            *(
+                channel.value
+                for channel, enabled in (
+                    (ChannelType.HOME_TIMELINE, timeline.home),
+                    (ChannelType.LOCAL_TIMELINE, timeline.local),
+                    (ChannelType.HYBRID_TIMELINE, timeline.hybrid),
+                    (ChannelType.GLOBAL_TIMELINE, timeline.global_),
+                )
+                if enabled
+            ),
+            *((ChannelType.ANTENNA.value, {"antennaId": i}) for i in antenna_ids),
         ]
-        result: list[ChannelSpec] = [c for c in ordered if c in active]
-        selectors = self.load_antenna_selectors()
-        for antenna_id in await self.resolve_antenna_ids(selectors):
-            result.append((ChannelType.ANTENNA.value, {"antennaId": antenna_id}))
-        return result
 
     async def sync_timelines(self) -> None:
         if not self._streaming.running:

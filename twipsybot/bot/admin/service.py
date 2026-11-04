@@ -75,28 +75,16 @@ class AdminCommandService:
             command.help(f"^{name}") for name, command in self._commands.items()
         )
 
-    def _canonical_handle(self, username: str, handle: str | None) -> str | None:
-        if handle and (h := handle.strip()):
-            if "@" in h:
-                return h
-            if username and h != username:
-                return None
-        if not username or username == "unknown":
-            return None
-        return self.bot.limits.canonical_handle(username)
-
     @property
     def admins(self) -> tuple[str, ...]:
         return tuple(handlers.admins(self.bot))
 
     def is_admin(self, user_id: str | None, handle: str | None) -> bool:
-        handle = self._canonical_handle(handle or "", handle) or handle
-        return bool(user_id and self._is_authorized(user_id, handle))
-
-    def _is_authorized(self, user_id: str, handle: str | None) -> bool:
-        admins = handlers.admins(self.bot)
-        return user_id in admins or (
-            handle is not None and handle.lower() in {a.lower() for a in admins}
+        return bool(
+            user_id
+            and self.bot.limits.matches(
+                handlers.admins(self.bot), user_id=user_id, handle=handle
+            )
         )
 
     async def blacklist_response_user(self, user_id: str) -> None:
@@ -136,9 +124,8 @@ class AdminCommandService:
         if not text.startswith("^") or not (user_id := message.user.id):
             return None
         try:
-            username = message.user.username
-            handle = self._canonical_handle(username, message.user.known_handle)
-            if not self._is_authorized(user_id, handle):
+            handle = message.user.known_handle
+            if not self.is_admin(user_id, handle):
                 return _code_block("命令", "您没有权限使用命令。")
             command_text = text[1:].strip()
             name, *rest = command_text.split(maxsplit=1) or [""]
@@ -146,7 +133,7 @@ class AdminCommandService:
                 return _code_block(
                     f"^{name}", f"未知命令: {name}\n使用 ^help 查看可用命令。"
                 )
-            logger.info(f"Admin ran command: @{handle or username}: ^{command_text}")
+            logger.info(f"Admin ran command: @{message.user.handle}: ^{command_text}")
             result = await self._execute(name.lower(), command, " ".join(rest))
             return _code_block(command.title, result)
         except Exception as e:

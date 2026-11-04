@@ -58,9 +58,7 @@ class ResponseLimiter:
                     candidates.add(f"@{canonical}")
         return candidates
 
-    def _in_user_list(
-        self, users: list[str], *, user_id: str, handle: str | None
-    ) -> bool:
+    def matches(self, users: list[str], *, user_id: str, handle: str | None) -> bool:
         listed = set(normalize_tokens(users, lower=True))
         return bool(listed) and not listed.isdisjoint(
             self._user_candidates(user_id=user_id, handle=handle)
@@ -74,30 +72,15 @@ class ResponseLimiter:
         return user.is_bot and self._reply.ignore_bots
 
     def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
-        return self._in_user_list(self._reply.blacklist, user_id=user_id, handle=handle)
+        return self.matches(self._reply.blacklist, user_id=user_id, handle=handle)
 
     async def _get_response_limit_state(self, user_id: str) -> _ResponseLimitState:
-        if user_id in self._response_limits:
-            return self._response_limits[user_id]
-        last_reply_ts = None
-        turns = 0
-        blocked_until_ts = None
-        row = await self._db.get_response_limit_state(user_id)
-        if row:
-            last_reply_ts, turns, blocked_until_ts = row
-            if blocked_until_ts == -1:
-                await self._blacklist_user(user_id)
-                turns = 0
-                blocked_until_ts = None
-        state = _ResponseLimitState(
-            last_reply_ts=last_reply_ts,
-            turns=int(turns or 0),
-            blocked_until_ts=blocked_until_ts,
-        )
-        self._response_limits[user_id] = state
-        if row and row[2] == -1:
-            await self._save_response_limit_state(user_id, state)
-        return state
+        if user_id not in self._response_limits:
+            row = await self._db.get_response_limit_state(user_id)
+            self._response_limits[user_id] = (
+                _ResponseLimitState(*row) if row else _ResponseLimitState()
+            )
+        return self._response_limits[user_id]
 
     async def _save_response_limit_state(
         self, user_id: str, state: _ResponseLimitState
@@ -114,7 +97,7 @@ class ResponseLimiter:
     ) -> tuple[bool, str]:
         reply = self._reply
         if any(
-            self._in_user_list(users, user_id=user_id, handle=handle)
+            self.matches(users, user_id=user_id, handle=handle)
             for users in (reply.whitelist, self._config.settings.bot.admins)
         ):
             return False, ""

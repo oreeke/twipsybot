@@ -35,16 +35,7 @@ _RETRY = 600
 _TEXT_MAX = 200
 _MEMO_MAX = 2048
 _MEMO_TAG = "[bond]"
-_LABELS = {
-    "chat": "chat",
-    "mention": "mention",
-    "reply": "reply",
-    "quote": "quote",
-    "renote": "renote",
-    "reaction": "reaction",
-    "follow": "follow",
-}
-_NOTE_KINDS = frozenset(_LABELS) - {"chat"}
+_NOTE_KINDS = frozenset({"mention", "reply", "quote", "renote", "reaction", "follow"})
 _FOLLOW_STATES = {
     (True, True): "mutual follow",
     (True, False): "they follow you",
@@ -372,9 +363,7 @@ class BondPlugin(PluginBase):
             else f"Closeness: {score:.0f}"
         ]
         if bond.counts:
-            counts = ", ".join(
-                f"{_LABELS.get(k, k)} {n}" for k, n in bond.counts.items()
-            )
+            counts = ", ".join(f"{k} {n}" for k, n in bond.counts.items())
             lines.append(f"Interactions: {counts}")
         facts = [f"first met {_day(bond.first)}"] if bond.first else []
         recent = {today.isoformat(), (today - timedelta(days=1)).isoformat()}

@@ -146,14 +146,13 @@ def test_topics_rejects_list_start_line_below_one() -> None:
     [
         pytest.param({"list": ["prompts/none.md"]}, id="empty-list"),
         pytest.param({"list": ["topic"]}, id="list-storage-failure"),
-        pytest.param({"source": "rss"}, id="rss-storage-failure"),
     ],
 )
 async def test_topics_initialize_fails_when_list_is_empty_or_storage_fails(
     config: dict[str, Any],
 ) -> None:
     storage = MemoryStorage()
-    storage.failing = "list" not in config or "topic" in config["list"]
+    storage.failing = "topic" in config["list"]
     plugin = make_plugin(config, storage)
 
     assert await plugin.initialize() is False
@@ -222,14 +221,6 @@ async def test_topics_list_still_returns_topic_when_storage_write_fails() -> Non
     assert await post(plugin) == {"prompt": "first"}
 
 
-async def test_topics_rss_initialize_keeps_existing_state() -> None:
-    storage = MemoryStorage(rss_recent_keys='["old"]')
-
-    await start({"source": "rss"}, storage)
-
-    assert storage.values == {"rss_recent_keys": '["old"]', "rss_last_feed_idx": "0"}
-
-
 async def test_topics_rss_without_feeds_posts_nothing() -> None:
     plugin = await start({"source": "rss", "rss_list": []})
 
@@ -267,10 +258,10 @@ async def test_topics_rss_batch_posts_latest_unpublished_entry_per_feed(
             "📡 Published B\n\n📎 https://x/b1",
         ]
     }
-    assert storage.values["rss_recent_keys"] == "[]"
+    assert "rss_recent_keys" not in storage.values
 
     await plugin.on_auto_post_published("unknown content")
-    assert storage.values["rss_recent_keys"] == "[]"
+    assert "rss_recent_keys" not in storage.values
 
     for content in first["contents"]:
         await plugin.on_auto_post_published(content)
@@ -377,7 +368,7 @@ async def test_topics_rss_rotate_advances_through_feeds_after_publish(
     )
 
     assert await post(plugin) == {"contents": ["📡 A\n\n📎 https://x/a1"]}
-    assert storage.values["rss_last_feed_idx"] == "0"
+    assert "rss_last_feed_idx" not in storage.values
 
     await plugin.on_auto_post_published("📡 A\n\n📎 https://x/a1")
     assert storage.values["rss_last_feed_idx"] == "1"

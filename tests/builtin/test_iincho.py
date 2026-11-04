@@ -348,6 +348,21 @@ async def test_iincho_notifies_every_admin_with_trends_and_flagged_note_ids(
         assert "> 新功能体验" in call.args[1]
 
 
+async def test_iincho_alerts_duplicate_note_once_with_first_categories(
+    make_iincho: Make,
+) -> None:
+    iincho = make_iincho({"min_notes": 1}, admins=("admin-1",))
+    _flag(iincho.context, {"harassment"}, {"hate"})
+
+    await iincho.note("第一次", event_id="dup")
+    await iincho.note("第二次", event_id="dup")
+    await iincho.cycle()
+
+    message = iincho.context.misskey.send_message.await_args.args[1]
+    assert message.count("] dup") == 1
+    assert "💢 骚扰攻击] dup" in message
+
+
 async def test_iincho_admin_failure_does_not_block_others_or_summary(
     make_iincho: Make,
 ) -> None:

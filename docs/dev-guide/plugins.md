@@ -142,8 +142,6 @@ return {"prompt": "围绕开源维护写一篇短文。"}
 
 ## 工具
 
-`@tool` 声明模型可调用的能力。
-
 ```python
 from typing import Annotated
 

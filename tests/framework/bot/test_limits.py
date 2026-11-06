@@ -147,13 +147,13 @@ async def test_admins_bypass_response_limits(
     assert len(openai_server.calls) == 3
 
 
-async def test_turns_are_counted_only_when_turn_limit_is_enabled(
+async def test_responses_are_recorded_only_when_a_limit_is_enabled(
     make_bot: MakeBot, write_config: WriteConfig
 ) -> None:
     bot = await make_bot(write_config())
 
     await bot.limits.record_response("user-9", count_turn=True)
-    assert (await bot.db.get_response_limit_state("user-9"))[1] == 0
+    assert await bot.db.get_response_limit_state("user-9") is None
 
     await bot.settings.update({"reply.max_turns": 5})
     await bot.limits.record_response("user-9", count_turn=True)

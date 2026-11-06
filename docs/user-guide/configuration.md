@@ -64,7 +64,7 @@ reply:
 
 - `connect.ai_base_url`：OpenAI 兼容地址，留空为 OpenAI 官方。
 - `bot.model`：文本模型 ID，同一端点下可用 `^model <名称>` 热切换。
-- `bot.api_mode`：通常保持 `auto`，服务仅支持某一接口时再固定为 `chat` 或 `responses`。
+- `bot.api_mode`：通常 `auto`；服务仅支持某一接口时固定为 `chat` 或 `responses`。
 
 | 功能 | 要求 |
 | --- | --- |
@@ -84,7 +84,7 @@ autopost:
   prompt: prompts/auto-post.md
 ```
 
-支持 `.md` 与 `.txt`，文件内容原样作为提示词。Docker 示例将宿主机 `./prompts` 只读挂载到 `/app/prompts`。
+文件内容原样作为提示词（`.md` 与 `.txt`）。Docker 示例将宿主机 `./prompts` 只读挂载到 `/app/prompts`。
 
 ## 日志
 

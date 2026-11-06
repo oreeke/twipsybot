@@ -129,7 +129,6 @@ class StreamingClient:
             self.channels.clear()
             self._reset_channel_confirmations()
             await self.socket.close()
-            self.socket.clear_buffer()
             self.events.processed.clear()
             self.state = "disconnected"
 
@@ -224,7 +223,6 @@ class StreamingClient:
         await self.socket.connect()
         self._reset_channel_confirmations()
         await self._resubscribe_channels()
-        await self.socket.flush()
         self.state = "connected"
 
     async def _resubscribe_channels(self) -> None:
@@ -243,18 +241,18 @@ class StreamingClient:
         while self.running:
             try:
                 if (data := await self.socket.receive()) is not None:
-                    await self._process_message(data)
+                    self._process_message(data)
             except (ValueError, TypeError, AttributeError, KeyError) as e:
                 logger.error(f"Failed to parse message: {e}")
 
-    async def _process_message(self, data: Any) -> None:
+    def _process_message(self, data: Any) -> None:
         if not data or not isinstance(data, dict):
             logger.debug(f"Invalid message format; skipping: {data}")
             return
         message_type = data.get("type")
         body = data.get("body", {})
         if message_type == "channel":
-            await self.events.handle_channel_message(body)
+            self.events.handle_channel_message(body)
         elif message_type == "connected" and isinstance(body, dict):
             if isinstance(channel_id := body.get("id"), str):
                 self._confirm_channel(channel_id)

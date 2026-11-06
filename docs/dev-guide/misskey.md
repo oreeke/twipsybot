@@ -5,9 +5,7 @@ description: TwipsyBot 使用的 Misskey REST API、Streaming Channel、权限�
 
 # Misskey
 
-REST 与 Streaming 的协议适配集中在 `twipsybot/clients/misskey`，业务代码只调用客户端方法。插件使用 [`PluginContext.misskey`](plugins.md#misskey-与-drive)，未封装的端点用 `call_api()`。
-
-基于 Misskey API `2026.9.0`，随官方更新同步维护。
+REST 与 Streaming 的协议适配集中在 `twipsybot/clients/misskey`。插件使用 [`PluginContext.misskey`](plugins.md#misskey-与-drive)，未封装的端点用 `call_api()`。基于 Misskey API `2026.9.0`。
 
 ## REST
 
@@ -31,8 +29,7 @@ REST 与 Streaming 的协议适配集中在 `twipsybot/clients/misskey`，业务
 | `drive/files/create` | 上传文件 | `drive.upload_bytes()` |
 | 文件 URL（`GET`） | 下载文件 | `drive.fetch_bytes()`、`drive.download_bytes()`，经 `clients/fetch` 校验目标 |
 
-- 共享 32 并发槽位，单次超时 60 秒。
-- 读请求对连接错误与限流最多重试 2 次（指数退避加抖动，遵循 `retry_after`，上限 60 秒）；写请求不重试。
+- 单次超时 60 秒，无本地并发上限；读请求遇连接错误或 429 最多重试 2 次（指数退避加抖动，遵循 `Retry-After`，上限 60 秒），写请求不重试。
 - 帖子最长 3000 字符、聊天 2000 字符，超出安全截断；指定可见帖子按原可见性回复。
 
 ## Streaming
@@ -44,11 +41,11 @@ REST 与 Streaming 的协议适配集中在 `twipsybot/clients/misskey`，业务
 | `antenna` | 指定天线帖子 |
 | `chatUser` · `chatRoom` | 指定用户 / 房间的聊天消息 |
 
-- 自动断线重连与 Channel 恢复，单连接最多 32 个 Channel；断线期间待发消息有限缓冲，溢出丢弃最早的。
+- 断线自动重连并恢复订阅，期间的发送（已读回执）直接丢弃；单连接最多 32 个 Channel。
 
 ## 事件规范化
 
-`events.py` 的 `EventRouter` 把 Streaming 帧收敛为不可变事件，flow 与插件不接触 WebSocket 结构。
+`events.py` 的 `EventRouter` 把 Streaming 帧转换为不可变事件。
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -69,8 +66,7 @@ flowchart LR
 - **统一语义**：`cw` 与正文合并为 `body`；文件取 `files` 与 `fileIds`（聊天为 `file` 与 `fileId`）并按 ID 去重；`MentionEvent` 内联一层 `reply`、`renote` 并聚合 `attachments`。
 - **聊天订阅**：`main` 的聊天事件缺发送者详情时，由按用户缓存的 `fromUser` 补全；按需订阅 `chatUser` / `chatRoom` 发送 `read` 回执，空闲 120 秒退订。
 - **去重**：事件 ID 10 分钟内去重；时间线按 `Channel + 帖子 ID`，聊天与通知跨 Channel 共用同一键。
-- **并发**：24 worker 消费 1000 队列，入队等待 1 秒仍满则丢弃；单个 handler 异常只记录。
-- 新增事件：在客户端层注册路由与解析器，下游不依赖原始结构。
+- **并发**：24 worker 消费 200 队列，队满丢弃新事件；单个 handler 异常只记录。
 
 ## 出站抓取
 
@@ -92,9 +88,9 @@ flowchart LR
 | `write:reactions` | 添加反应 |
 | `write:account` | 写入个人备注（`users/update-memo`） |
 
-新增 API 能力时同步更新[快速开始](../user-guide/getting-started.md)的权限表，保持最小权限。
+新增 API 能力时同步更新[快速开始](../user-guide/getting-started.md)的权限表。
 
 ## 错误与测试
 
-- 错误分为参数、认证、权限、未找到、文件过大、限流与连接，保留 `status`、`code`、`retry_after`；上层不吞异常。
-- 测试不依赖真实例：REST 模拟 HTTP 响应，Streaming 构造事件与连接替身。新增 endpoint 或 Channel 至少覆盖成功、认证或参数失败、连接失败，以及有副作用的重试边界。
+- 错误分为参数、认证、权限、未找到、文件过大、限流与连接，保留 `status`、`code`、`retry_after`。
+- 测试不依赖真实例：REST 模拟 HTTP 响应，Streaming 使用连接替身。新增 endpoint 或 Channel 至少覆盖成功、认证或参数失败、连接失败，以及有副作用的重试边界。

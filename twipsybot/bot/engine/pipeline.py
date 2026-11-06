@@ -235,6 +235,41 @@ class ResponsePipeline:
             tuple(m for _, r in results for m in r.get("media", ())),
         )
 
+    async def _blocked(
+        self, user_id: str | None, handle: str | None, deliver: Deliver
+    ) -> bool:
+        if not user_id:
+            return False
+        blocked, notice = await self._limits.get_response_block_reply(
+            user_id=user_id, handle=handle
+        )
+        if blocked and notice:
+            await deliver(Reply(notice), "limit")
+            await self._limits.record_response(user_id, count_turn=False)
+        return blocked
+
+    async def _produce(
+        self,
+        hook: str,
+        event: Any,
+        generate: Callable[[Augment], Awaitable[str | None]],
+    ) -> tuple[str | None, Source, list[str], list[Callable[[], Awaitable[Any]]]]:
+        if results := await self._plugins.call_plugin_hook(hook, event):
+            name, result = results[0]
+            logger.debug(f"{hook} handled by plugin: {name}")
+            followup = result.get("followup")
+            return (
+                result["response"],
+                "plugin",
+                result.get("file_ids", []),
+                [followup] if followup else [],
+            )
+        augment = await self._augment(event)
+        text = await generate(augment)
+        if text:
+            text = _with_links(text, augment.tools.links)
+        return text, "ai", augment.tools.file_ids, augment.tools.followups
+
     async def respond(
         self,
         *,
@@ -245,33 +280,12 @@ class ResponsePipeline:
         generate: Callable[[Augment], Awaitable[str | None]],
         deliver: Deliver,
     ) -> None:
-        if user_id:
-            blocked, notice = await self._limits.get_response_block_reply(
-                user_id=user_id, handle=handle
-            )
-            if blocked:
-                if notice:
-                    await deliver(Reply(notice), "limit")
-                    await self._limits.record_response(user_id, count_turn=False)
-                return
-        source: Source
-        file_ids: list[str]
-        followups: list[Callable[[], Awaitable[Any]]] = []
-        if results := await self._plugins.call_plugin_hook(hook, event):
-            name, result = results[0]
-            logger.debug(f"{hook} handled by plugin: {name}")
-            text, source = result["response"], "plugin"
-            file_ids = result.get("file_ids", [])
-            followups = [f] if (f := result.get("followup")) else []
-        else:
-            augment = await self._augment(event)
-            text, source = await generate(augment), "ai"
-            if text:
-                text = _with_links(text, augment.tools.links)
-            file_ids, followups = augment.tools.file_ids, augment.tools.followups
-        if not text:
+        if await self._blocked(user_id, handle, deliver):
             return
-        await deliver(Reply(text, tuple(file_ids)), source)
+        text, source, file_ids, followups = await self._produce(hook, event, generate)
+        if not (text or file_ids):
+            return
+        await deliver(Reply(text or "", tuple(file_ids)), source)
         for followup in followups:
             self._runtime.spawn(self._deliver_followup(followup, deliver, source))
         if user_id:

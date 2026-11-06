@@ -1,7 +1,6 @@
 import asyncio
 import json
 import re
-from collections import deque
 from contextlib import suppress
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -15,7 +14,6 @@ from ...shared.errors import WebSocketConnectionError, WebSocketReconnectError
 _I_PARAM_RE = re.compile(r"([?&]i=)[^&#\s]+")
 _I_JSON_RE = re.compile(r'("i"\s*:\s*")[^"]+(")')
 _RECEIVE_TIMEOUT = 10
-_SEND_BUFFER_MAX = 200
 _CLOSED_TYPES = (
     aiohttp.WSMsgType.CLOSED,
     aiohttp.WSMsgType.CLOSING,
@@ -55,8 +53,6 @@ class StreamingSocket:
         self.access_token = access_token
         self.shared = shared
         self.ws: aiohttp.ClientWebSocketResponse | None = None
-        self.buffer: deque[dict[str, Any]] = deque(maxlen=_SEND_BUFFER_MAX)
-        self._overflow_warned = False
         self._ws_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
         self._connect_task: asyncio.Task[None] | None = None
@@ -65,25 +61,13 @@ class StreamingSocket:
     def available(self) -> bool:
         return self.ws is not None and not self.ws.closed
 
-    def buffer_outgoing(self, message: dict[str, Any]) -> None:
-        if len(self.buffer) == self.buffer.maxlen and not self._overflow_warned:
-            logger.warning("WebSocket send buffer full; dropping oldest messages")
-            self._overflow_warned = True
-        self.buffer.append(message)
-
-    def clear_buffer(self) -> None:
-        self.buffer.clear()
-        self._overflow_warned = False
-
     async def send(self, message: dict[str, Any]) -> None:
         async with self._send_lock:
             if (ws := self.ws) is None or ws.closed:
-                self.buffer_outgoing(message)
                 return
             try:
                 await ws.send_json(message)
             except (aiohttp.ClientError, OSError) as e:
-                self.buffer_outgoing(message)
                 await self._drop(e)
 
     async def send_control(self, message: dict[str, Any]) -> None:
@@ -101,12 +85,6 @@ class StreamingSocket:
         logger.debug(
             f"WebSocket send failed; reconnecting: {_redact_access_token(str(error))}"
         )
-
-    async def flush(self) -> None:
-        while self.buffer and self.available:
-            await self.send_control(self.buffer.popleft())
-        if not self.buffer:
-            self._overflow_warned = False
 
     async def connect(self) -> None:
         async with self._ws_lock:

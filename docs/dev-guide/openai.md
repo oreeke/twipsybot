@@ -7,7 +7,7 @@ description: TwipsyBot 使用的 OpenAI 兼容 API、接口模式、多模态能
 
 经 OpenAI Python SDK 连接 OpenAI 或兼容服务，适配集中在 `twipsybot/clients/openai`。业务代码调用 `OpenAIAPI`，不自建 SDK 客户端；插件使用 [`PluginContext.openai`](plugins.md#openai-与-bot)。`connect.ai_base_url` 原样传给 SDK，留空时读取 `OPENAI_BASE_URL`。
 
-基于 OpenAI Python SDK `3.24.0`，随官方更新同步维护。
+基于 OpenAI Python SDK `3.24.0`。
 
 ## 能力
 

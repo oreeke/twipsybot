@@ -31,7 +31,7 @@ class MisskeyDrive:
         fetcher = self._api.fetcher
         limit = _FETCH_MAX_BYTES if max_bytes is None else max_bytes
         try:
-            async with self._api.semaphore, fetcher.open(url) as response:
+            async with fetcher.open(url) as response:
                 if response.status != 200:
                     raise self._api._response_error(
                         response, "drive/files/download", ""

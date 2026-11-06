@@ -3,15 +3,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from cachetools import TTLCache
-
 from ...clients.misskey.models import UserRef
 from ...db.sqlite import DBManager
 from ...shared.config import Config, ReplyConfig
 from ...shared.utils import normalize_tokens
-
-_CACHE_MAX = 2000
-_CACHE_TTL = 86400
 
 
 @dataclass(slots=True)
@@ -34,11 +29,6 @@ class ResponseLimiter:
         self._db = db
         self._instance_url = instance_url
         self._blacklist_user = blacklist_user
-        self._response_limits: TTLCache[str, _ResponseLimitState] = TTLCache(
-            maxsize=_CACHE_MAX,
-            ttl=_CACHE_TTL,
-            timer=time.monotonic,
-        )
 
     def canonical_handle(self, username: str) -> str | None:
         host = urlparse(self._instance_url).hostname
@@ -74,13 +64,9 @@ class ResponseLimiter:
     def is_response_blacklisted_user(self, *, user_id: str, handle: str | None) -> bool:
         return self.matches(self._reply.blacklist, user_id=user_id, handle=handle)
 
-    async def _get_response_limit_state(self, user_id: str) -> _ResponseLimitState:
-        if user_id not in self._response_limits:
-            row = await self._db.get_response_limit_state(user_id)
-            self._response_limits[user_id] = (
-                _ResponseLimitState(*row) if row else _ResponseLimitState()
-            )
-        return self._response_limits[user_id]
+    async def _load_state(self, user_id: str) -> _ResponseLimitState:
+        row = await self._db.get_response_limit_state(user_id)
+        return _ResponseLimitState(*row) if row else _ResponseLimitState()
 
     async def _save_response_limit_state(
         self, user_id: str, state: _ResponseLimitState
@@ -102,7 +88,7 @@ class ResponseLimiter:
         ):
             return False, ""
         now = time.time()
-        state = await self._get_response_limit_state(user_id)
+        state = await self._load_state(user_id)
         if state.blocked_until_ts is not None and now >= state.blocked_until_ts:
             state.turns = 0
             state.blocked_until_ts = None
@@ -132,7 +118,9 @@ class ResponseLimiter:
         return self._reply.max_turns >= 0
 
     async def record_response(self, user_id: str, *, count_turn: bool) -> None:
-        state = await self._get_response_limit_state(user_id)
+        if self._reply.rate_limit <= 0 and not self._turns_limited():
+            return
+        state = await self._load_state(user_id)
         state.last_reply_ts = time.time()
         if count_turn and self._turns_limited():
             state.turns += 1

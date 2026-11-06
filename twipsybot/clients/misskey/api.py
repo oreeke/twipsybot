@@ -28,7 +28,6 @@ from .drive import MisskeyDrive
 NOTE_TEXT_MAX_LENGTH = 3000
 CHAT_TEXT_MAX_LENGTH = 2000
 MAX_RETRY_AFTER = 60.0
-_MAX_CONCURRENCY = 32
 _ANTENNAS_TTL = 30.0
 ENDPOINT_PATTERN = re.compile(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*")
 
@@ -47,7 +46,6 @@ class MisskeyAPI:
         self.shared: SharedSession = shared or SharedSession()
         self.fetcher = fetcher or PublicFetcher(origin=self.instance_url)
         self.drive: MisskeyDrive = MisskeyDrive(self)
-        self._semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
         self._antennas_cache: list[dict[str, Any]] = []
         self._antennas_expires = 0.0
         self._antennas_cache_lock = asyncio.Lock()
@@ -56,10 +54,6 @@ class MisskeyAPI:
         await self.shared.close_session()
         await self.fetcher.close()
         logger.debug("Misskey API client closed")
-
-    @property
-    def semaphore(self) -> asyncio.Semaphore:
-        return self._semaphore
 
     @staticmethod
     def _parse_error(raw: str) -> tuple[str, str | None]:
@@ -148,14 +142,11 @@ class MisskeyAPI:
             else {"json": dict(data or {})}
         )
         try:
-            async with (
-                self._semaphore,
-                self.shared.session.post(
-                    f"{self.instance_url}/api/{endpoint}",
-                    headers={"Authorization": f"Bearer {self.access_token}"},
-                    **body,
-                ) as response,
-            ):
+            async with self.shared.session.post(
+                f"{self.instance_url}/api/{endpoint}",
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                **body,
+            ) as response:
                 return await self._process_response(response, endpoint)
         except (aiohttp.ClientError, OSError) as e:
             logger.error(f"HTTP request error: {e!r}")

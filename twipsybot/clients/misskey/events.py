@@ -27,8 +27,7 @@ EventHandler = Callable[[Any], Awaitable[Any] | Any]
 
 _CHAT_IDLE_SECONDS = 120
 _WORKERS = 24
-_QUEUE_MAX = 1000
-_QUEUE_PUT_TIMEOUT = 1.0
+_QUEUE_MAX = 200
 _DEDUP_CACHE_MAX = 2000
 _DEDUP_CACHE_TTL = 600
 
@@ -147,7 +146,7 @@ class EventRouter:
         event = parse(body)
         return Incoming(key, event, channel_id) if event else None
 
-    async def handle_channel_message(self, body: dict[str, Any]) -> None:
+    def handle_channel_message(self, body: dict[str, Any]) -> None:
         channel_id = body.get("id")
         event_type = body.get("type")
         if channel_id not in self._client.channels:
@@ -177,20 +176,19 @@ class EventRouter:
         logger.debug(
             f"Received {channel_name} event: {event_type} (channel_id={channel_id})"
         )
-        if await self.enqueue(channel_name, incoming) and key:
+        if self.enqueue(channel_name, incoming) and key:
             self.processed[key] = True
 
-    async def enqueue(self, channel_name: str, incoming: Incoming) -> bool:
+    def enqueue(self, channel_name: str, incoming: Incoming) -> bool:
         try:
-            async with asyncio.timeout(_QUEUE_PUT_TIMEOUT):
-                await self.queue.put((channel_name, incoming))
-            return True
-        except TimeoutError:
+            self.queue.put_nowait((channel_name, incoming))
+        except asyncio.QueueFull:
             logger.warning(
-                f"Event queue congested; dropping event: {incoming.key} "
+                f"Event queue full; dropping event: {incoming.key} "
                 f"(id={incoming.event.id or 'unknown'})"
             )
             return False
+        return True
 
     async def worker_loop(self) -> None:
         while item := await self.queue.get():

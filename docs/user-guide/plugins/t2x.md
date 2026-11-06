@@ -36,7 +36,6 @@ plugins:
       api_key: "sk-..."
 ```
 
-
 ## 使用
 
 提供管理员专用的 `t2x_draw` [工具](../features/interactions.md#工具)，场景为私聊、群聊（需提及）与提及：

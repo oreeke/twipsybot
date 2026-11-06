@@ -43,8 +43,8 @@ def jitter(monkeypatch: pytest.MonkeyPatch) -> list[tuple[float, float]]:
 
 
 @pytest.fixture
-def routed(client: StreamingClient, monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
-    enqueue = AsyncMock()
+def routed(client: StreamingClient, monkeypatch: pytest.MonkeyPatch) -> Mock:
+    enqueue = Mock()
     monkeypatch.setattr(client.events, "enqueue", enqueue)
     client.channels["main-id"] = {"name": "main", "params": {}}
     return enqueue
@@ -213,36 +213,27 @@ async def test_channel_limit_is_enforced(client: StreamingClient) -> None:
         await client.connect_channel("antenna", {"antennaId": "overflow"})
 
 
-async def test_offline_messages_are_flushed_in_order_on_connect(
+async def test_offline_messages_are_dropped_not_replayed_on_connect(
     ws_server: Any, live_client: StreamingClient
 ) -> None:
-    for kind in ("first", "second"):
-        await live_client.send_channel_message("main-id", kind, {})
+    await live_client.send_channel_message("main-id", "stale", {})
 
     await live_client.connect_once()
+    await live_client.send_channel_message("main-id", "fresh", {})
 
-    await ws_server.until(lambda: len(ws_server.sent("ch")) == 2)
-    assert [m["body"]["type"] for m in ws_server.sent("ch")] == ["first", "second"]
-    assert not live_client.socket.buffer
+    await ws_server.until(lambda: len(ws_server.sent("ch")) == 1)
+    assert [m["body"]["type"] for m in ws_server.sent("ch")] == ["fresh"]
 
 
-async def test_send_buffer_overflow_warns_once_per_episode(
-    client: StreamingClient, monkeypatch: pytest.MonkeyPatch
+def test_full_queue_drops_event_without_blocking(
+    client: StreamingClient,
 ) -> None:
-    warning = Mock()
-    monkeypatch.setattr("twipsybot.clients.misskey.bridge.logger.warning", warning)
-    maxlen = client.socket.buffer.maxlen
-    assert maxlen is not None
+    client.events.queue = asyncio.Queue(maxsize=1)
+    event = notification({"id": "n-1", "type": "follow"})
+    incoming = Incoming("notification", event, "main-id")
 
-    for _ in range(maxlen + 2):
-        await client.send_channel_message("main-id", "x", {})
-
-    warning.assert_called_once()
-    await client.disconnect()
-    for _ in range(maxlen + 1):
-        await client.send_channel_message("main-id", "x", {})
-
-    assert warning.call_count == 2
+    assert client.events.enqueue("main", incoming) is True
+    assert client.events.enqueue("main", incoming) is False
 
 
 @pytest.mark.parametrize(
@@ -259,9 +250,9 @@ async def test_send_buffer_overflow_warns_once_per_episode(
         ("main", "mention", "main", "reply", 2),
     ],
 )
-async def test_event_deduplication_respects_channel_type(
+def test_event_deduplication_respects_channel_type(
     client: StreamingClient,
-    routed: AsyncMock,
+    routed: Mock,
     first_channel: str,
     first_type: str,
     second_channel: str,
@@ -274,7 +265,7 @@ async def test_event_deduplication_respects_channel_type(
     ):
         params = {"antennaId": channel_id} if channel_name == "antenna" else {}
         client.channels[channel_id] = {"name": channel_name, "params": params}
-        await client.events.handle_channel_message(
+        client.events.handle_channel_message(
             {
                 "id": channel_id,
                 "type": event_type,
@@ -282,23 +273,23 @@ async def test_event_deduplication_respects_channel_type(
             }
         )
 
-    assert [entry.args[0] for entry in routed.await_args_list] == [
+    assert [entry.args[0] for entry in routed.call_args_list] == [
         first_channel,
         second_channel,
     ][:expected_count]
 
 
-async def test_event_dropped_before_enqueue_is_not_marked_processed(
-    client: StreamingClient, routed: AsyncMock
+def test_event_dropped_before_enqueue_is_not_marked_processed(
+    client: StreamingClient, routed: Mock
 ) -> None:
     routed.side_effect = [False, True]
     client.channels["local-id"] = {"name": "localTimeline", "params": {}}
     message = {"id": "local-id", "type": "note", "body": {"id": "same-note"}}
 
-    await client.events.handle_channel_message(message)
-    await client.events.handle_channel_message(message)
+    client.events.handle_channel_message(message)
+    client.events.handle_channel_message(message)
 
-    assert routed.await_count == 2
+    assert routed.call_count == 2
 
 
 @pytest.mark.parametrize(
@@ -309,14 +300,14 @@ async def test_event_dropped_before_enqueue_is_not_marked_processed(
         ("unreadNotification", "notification", None),
     ],
 )
-async def test_main_events_are_decoded_into_typed_events(
+def test_main_events_are_decoded_into_typed_events(
     client: StreamingClient,
-    routed: AsyncMock,
+    routed: Mock,
     event_type: str,
     key: str,
     kind: str | None,
 ) -> None:
-    await client.events.handle_channel_message(
+    client.events.handle_channel_message(
         {
             "id": "main-id",
             "type": event_type,
@@ -324,7 +315,7 @@ async def test_main_events_are_decoded_into_typed_events(
         }
     )
 
-    incoming = routed.await_args_list[-1].args[1]
+    incoming = routed.call_args_list[-1].args[1]
     assert (incoming.key, incoming.channel_id) == (key, "main-id")
     assert incoming.event.id == "e-1"
     if kind:
@@ -332,48 +323,48 @@ async def test_main_events_are_decoded_into_typed_events(
 
 
 @pytest.mark.parametrize("body", [None, "text", {}, {"text": "no id"}])
-async def test_events_without_required_fields_are_skipped(
-    client: StreamingClient, routed: AsyncMock, body: Any
+def test_events_without_required_fields_are_skipped(
+    client: StreamingClient, routed: Mock, body: Any
 ) -> None:
     for event_type in ("mention", "newChatMessage", "notification"):
-        await client.events.handle_channel_message(
+        client.events.handle_channel_message(
             {"id": "main-id", "type": event_type, "body": body}
         )
 
-    routed.assert_not_awaited()
+    routed.assert_not_called()
 
 
-async def test_unsupported_and_invalid_events_log_at_different_levels(
-    client: StreamingClient, routed: AsyncMock, monkeypatch: pytest.MonkeyPatch
+def test_unsupported_and_invalid_events_log_at_different_levels(
+    client: StreamingClient, routed: Mock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     warning = Mock()
     monkeypatch.setattr("twipsybot.clients.misskey.events.logger.warning", warning)
 
-    await client.events.handle_channel_message(
+    client.events.handle_channel_message(
         {"id": "main-id", "type": "follow", "body": {"id": "u-1"}}
     )
     warning.assert_not_called()
 
-    await client.events.handle_channel_message(
+    client.events.handle_channel_message(
         {"id": "main-id", "type": "mention", "body": {"text": "no id"}}
     )
     warning.assert_called_once()
 
 
-async def test_chat_user_message_reuses_sender_from_main_notice(
-    client: StreamingClient, routed: AsyncMock
+def test_chat_user_message_reuses_sender_from_main_notice(
+    client: StreamingClient, routed: Mock
 ) -> None:
     client.channels["chat-id"] = {"name": "chatUser", "params": {"otherId": "user-1"}}
     sender = {"id": "user-1", "username": "alice"}
 
-    await client.events.handle_channel_message(
+    client.events.handle_channel_message(
         {
             "id": "main-id",
             "type": "newChatMessage",
             "body": {"id": "m-1", "fromUserId": "user-1", "fromUser": sender},
         }
     )
-    await client.events.handle_channel_message(
+    client.events.handle_channel_message(
         {
             "id": "chat-id",
             "type": "message",
@@ -381,25 +372,25 @@ async def test_chat_user_message_reuses_sender_from_main_notice(
         }
     )
 
-    event = routed.await_args_list[-1].args[1].event
+    event = routed.call_args_list[-1].args[1].event
     assert (event.id, event.user.username) == ("m-2", "alice")
     assert event.raw["fromUser"] == sender
 
 
-async def test_event_dump_records_original_payload_even_when_dropped(
+def test_event_dump_records_original_payload_even_when_dropped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = StreamingClient("https://example.com", "token", log_dump_events=True)
     dump = Mock()
     monkeypatch.setattr("twipsybot.clients.misskey.events.maybe_log_event_dump", dump)
-    monkeypatch.setattr(client.events, "enqueue", AsyncMock(return_value=True))
+    monkeypatch.setattr(client.events, "enqueue", Mock(return_value=True))
     client.channels["local-id"] = {"name": "localTimeline", "params": {}}
     message = {"id": "local-id", "type": "note", "body": {"id": "n-1"}}
     unknown = {"id": "gone", "type": "note"}
 
-    await client.events.handle_channel_message(message)
-    await client.events.handle_channel_message(message)
-    await client.events.handle_channel_message(unknown)
+    client.events.handle_channel_message(message)
+    client.events.handle_channel_message(message)
+    client.events.handle_channel_message(unknown)
 
     payloads = [call.kwargs["payload"] for call in dump.call_args_list]
     assert payloads == [message, message, unknown]

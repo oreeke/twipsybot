@@ -21,9 +21,9 @@ description: TwipsyBot 的状态查询、模型切换、功能开关、名单管
 | `^chat on\|off` | 聊天开关 |
 | `^whitelist` · `^blacklist` | 名单管理 |
 | `^plugin [list]` | 列出插件及启用状态 |
-| `^plugin on\|off <插件名>` | 启用 / 停用插件，写入 `data/settings.yaml` |
+| `^plugin on\|off <插件名>` | 启用 / 停用插件 |
 
-模型、开关与名单的修改写入 `data/settings.yaml`。
+模型、开关、名单与插件状态的修改写入 `data/settings.yaml`。
 
 ### 名单
 

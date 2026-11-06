@@ -51,8 +51,9 @@ async def test_chat_message_plugin_takeover(
     [
         ("self.handled('pic', file_ids=['f1'])", [("pic", "f1")]),
         ("self.handled('pics', file_ids=['f1', 'f2'])", [("pics", "f1"), (None, "f2")]),
+        ("self.handled('', file_ids=['f1'])", [(None, "f1")]),
     ],
-    ids=["one-file", "extra-files-as-separate-messages"],
+    ids=["one-file", "extra-files-as-separate-messages", "file-only"],
 )
 async def test_plugin_chat_reply_attaches_files(
     result: str,

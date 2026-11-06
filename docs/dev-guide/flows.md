@@ -42,7 +42,7 @@ flowchart LR
 `MentionHandler` 在 `reply.mention` 开启时处理：
 
 1. 过滤自提及、Bot 账号与黑名单。
-2. 受理判定：`reply` 事件仅在回复机器人的帖子时受理；`mention` 事件须 `mentions` 含机器人，且回复机器人的帖子不重复受理，避免同一帖触发两次。
+2. 受理判定：`reply` 事件仅在回复机器人的帖子时受理；`mention` 事件须 `mentions` 含机器人，且回复机器人的帖子不重复受理。
 3. 构造提示：当前正文，附加被引用帖（`Quote`）与父帖（`Replying to`）。
 4. 回复链：经 `notes/conversation` 取最近 `reply.memory` 条祖先，保留根帖、父帖及机器人与当前用户的发言，转为多轮消息并按 `reply.ctx_tokens` 截断。
 
@@ -57,7 +57,7 @@ flowchart LR
 
 ## 回复限制
 
-`ResponseLimiter` 按用户 ID 维护 `(last_reply_ts, turns, blocked_until_ts)`，内存 TTL 缓存 24 小时，写穿 SQLite，每日 03:00 清理过期记录。
+`ResponseLimiter` 按用户 ID 在 SQLite 维护 `(last_reply_ts, turns, blocked_until_ts)`，`rate_limit` 与 `max_turns` 均关闭时不写入，每日 03:00 清理过期记录。
 
 ```mermaid
 stateDiagram-v2

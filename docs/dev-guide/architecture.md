@@ -101,7 +101,7 @@ Linux 处理 `SIGINT`、`SIGTERM`、`SIGHUP`，Windows 处理 `SIGINT`、`SIGTER
 - SQLite（WAL）：`plugin_data`、`response_limit_state`、`auto_post_state`、`scheduled_notes`。
 - 插件仅通过命名空间隔离的 `PluginStorage` 读写字符串。
 - 回复限制状态带内存缓存，以 SQLite 为准；聊天历史短期缓存，过期从 Misskey 重新获取。
-- actor lock 串行化同一用户的操作；不同用户与事件并发，共享内存状态需自行同步。
+- actor lock 串行化同一用户的操作：主流程与插件 `actor_lock` 是两套独立的锁，互不排斥（插件钩子在主流程持锁时被调用，共用会死锁）；不同用户与事件并发，共享内存状态需自行同步。
 - 关闭时为 Hook 保留 3 秒，整体最多 5 秒；Hook 与生命周期超时见[插件开发](plugins.md#约束)。
 
 ## 修改原则

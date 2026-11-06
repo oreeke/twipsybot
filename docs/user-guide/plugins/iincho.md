@@ -49,7 +49,7 @@ plugins:
 | `min_notes` | 生成报告所需最少有效样本 |
 | `sample_size` | 每周期最多样本数，不小于 `min_notes` |
 | `max_input_chars` | 送入趋势模型的文本上限 |
-| `local_only` | 报告不联合，建议保持 `true` |
+| `local_only` | 报告不联合，建议 `true` |
 | `moderation.cf_account_id` | Cloudflare 账户 ID |
 | `moderation.cf_api_token` | Cloudflare 帐户 API 令牌 |
 | `moderation.cf_concurrency` | Cloudflare 并发数 |

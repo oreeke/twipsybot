@@ -23,7 +23,7 @@ docker compose logs --tail 200 twipsybot
 
 ## 无法连接 Misskey
 
-- `misskey_url` 只填根地址，如 `https://misskey.example.com`。
+- `misskey_instance_url` 只填根地址，如 `https://misskey.example.com`。
 - 令牌属于机器人账号且未撤销。
 - 检查反向代理、证书与出站网络。
 - 能登录却无法发帖、聊天、反应或访问 Drive：令牌权限不足。

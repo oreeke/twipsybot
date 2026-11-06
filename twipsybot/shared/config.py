@@ -20,13 +20,7 @@ from pydantic import (
 from .errors import ConfigurationError
 from .settings import When, deep_merge, get_dotted, read_settings, set_dotted
 
-SECRETS = {
-    "misskey_url": "MISSKEY_INSTANCE_URL",
-    "misskey_token": "MISSKEY_ACCESS_TOKEN",
-    "ai_base_url": "AI_BASE_URL",
-    "ai_api_key": "AI_API_KEY",
-}
-_REQUIRED_SECRETS = ("misskey_url", "misskey_token", "ai_api_key")
+_REQUIRED_SECRETS = ("misskey_instance_url", "misskey_access_token", "ai_api_key")
 PROMPT_KEYS = ("bot.system_prompt", "autopost.prompt")
 _RESTART_PREFIX = "connect."
 POST_MIN_GAP = timedelta(minutes=5)
@@ -210,8 +204,8 @@ class Settings(_Section):
 class Secrets(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
-    misskey_url: str = ""
-    misskey_token: SecretStr = SecretStr("")
+    misskey_instance_url: str = ""
+    misskey_access_token: SecretStr = SecretStr("")
     ai_base_url: str = ""
     ai_api_key: SecretStr = SecretStr("")
 
@@ -220,6 +214,9 @@ class Secrets(BaseModel):
         if isinstance(value, SecretStr):
             value = value.get_secret_value()
         return os.environ.get(env, "").strip() or value.strip()
+
+
+CONNECT_ENV = {field: field.upper() for field in Secrets.model_fields}
 
 
 class SecretsFile(Secrets):
@@ -258,8 +255,8 @@ def _stat(path: Path) -> tuple[int, int]:
 class Connect(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    misskey_url: str = ""
-    misskey_token: str = Field(default="", repr=False)
+    misskey_instance_url: str = ""
+    misskey_access_token: str = Field(default="", repr=False)
     ai_base_url: str = ""
     ai_api_key: str = Field(default="", repr=False)
 
@@ -290,7 +287,7 @@ class Config:
         settings = _validate(Settings, raw)
         secrets = _validate(SecretsFile, read_settings(self.secrets_path))
         settings.plugins = deep_merge(settings.plugins, secrets.plugins)
-        connect = {f: secrets.resolve(f, env) for f, env in SECRETS.items()}
+        connect = {f: secrets.resolve(f, env) for f, env in CONNECT_ENV.items()}
         if missing := [f for f in _REQUIRED_SECRETS if not connect[f]]:
             raise ConfigurationError(
                 f"missing {', '.join(missing)}; set them with `twipsybot cfg`"

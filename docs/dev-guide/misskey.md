@@ -5,7 +5,9 @@ description: TwipsyBot 使用的 Misskey REST API、Streaming Channel、权限�
 
 # Misskey
 
-REST 与 Streaming 的协议适配集中在 `twipsybot/clients/misskey`。插件使用 [`PluginContext.misskey`](plugins.md#misskey-与-drive)，未封装的端点用 `call_api()`。基于 Misskey API `2026.9.0`。
+REST 与 Streaming 的协议适配集中在 `twipsybot/clients/misskey`。插件使用 [`PluginContext.misskey`](plugins.md#misskey-与-drive)，未封装的端点用 `call_api()`。
+
+基于 Misskey API `2026.9.0`。
 
 ## REST
 

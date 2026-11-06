@@ -16,9 +16,10 @@ docker compose logs -f --tail 200 twipsybot
 
 TUI 右上角状态：
 
-`bot`（运行中、等待设置、未运行）
-
-`stream`（已连接、连接中或重连、断开）
+| 项 | 取值 |
+| --- | --- |
+| `bot` | 运行中、等待设置、未运行 |
+| `stream` | 已连接、连接中或重连、断开 |
 
 配置修改规则见[生效方式](configuration.md#生效方式)。管理命令的修改同样写入 `data/settings.yaml`，重启后保留。
 
@@ -38,7 +39,9 @@ TUI 右上角状态：
 
 ## 升级
 
-新增设置自动采用默认值；已改名或移除的字段不再识别，启动被拦截时在 `twipsybot cfg` 中重新设置并保存，保存时会清除未知字段；若改过 `docker-compose.yaml`，对照最新版本保留自己的改动。
+- 新增设置自动采用默认值。
+- 已改名或移除的字段不再识别：启动被拦截时在 `twipsybot cfg` 中重新设置并保存，未知字段会在保存时清除。
+- 若改过 `docker-compose.yaml`，对照最新版本保留自己的改动。
 
 ::: code-group
 

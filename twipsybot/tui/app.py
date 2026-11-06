@@ -29,7 +29,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from ..plugin.manager import discover_plugin_classes
-from ..shared.config import SECRETS, Config
+from ..shared.config import CONNECT_ENV, Config
 from ..shared.errors import ConfigurationError
 from ..shared.settings import get_dotted, read_settings, set_dotted, write_settings
 from ..shared.status import read_status
@@ -105,7 +105,9 @@ class ConfigApp(App[None]):
         self._ids = {key: f"f{i}" for i, key in enumerate(self._specs)}
         self._keys = {wid: key for key, wid in self._ids.items()}
         self._files = {"settings": config.settings_path, "secrets": config.secrets_path}
-        self._env = {f: e for f, e in SECRETS.items() if os.environ.get(e, "").strip()}
+        self._env = {
+            f: e for f, e in CONNECT_ENV.items() if os.environ.get(e, "").strip()
+        }
         self._raw: dict[str, dict[str, Any]] = {}
         self._saved: dict[str, Any] = {}
         self._errors: dict[str, dict[str, str]] = {}
@@ -240,7 +242,7 @@ class ConfigApp(App[None]):
         return f"{dot}{section.title}{tail}"
 
     def _connect_text(self) -> str:
-        host = urlsplit(self._get("misskey_url").strip()).hostname
+        host = urlsplit(self._get("misskey_instance_url").strip()).hostname
         return "  ".join(
             [
                 escape(host) if host else "[$error]no instance[/]",

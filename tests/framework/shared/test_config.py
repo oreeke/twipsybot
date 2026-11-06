@@ -51,16 +51,17 @@ def test_secrets_come_from_file_with_env_override(
 ) -> None:
     config = write_config()
     write_settings(
-        config.secrets_path, {"misskey_token": "file-token", "ai_api_key": "k"}
+        config.secrets_path,
+        {"misskey_access_token": "file-token", "ai_api_key": "k"},
     )
     monkeypatch.delenv("MISSKEY_ACCESS_TOKEN")
     config.load()
 
-    assert config.connect.misskey_token == "file-token"
+    assert config.connect.misskey_access_token == "file-token"
     assert config.connect.ai_api_key == "test-key"
 
     monkeypatch.delenv("AI_API_KEY")
-    write_settings(config.secrets_path, {"misskey_token": "file-token"})
+    write_settings(config.secrets_path, {"misskey_access_token": "file-token"})
     with pytest.raises(ConfigurationError, match="missing ai_api_key"):
         config.load()
 
@@ -88,14 +89,14 @@ def test_config_loads_from_secrets_alone(
     write_settings(
         config.secrets_path,
         {
-            "misskey_url": "https://m.example",
-            "misskey_token": "t",
+            "misskey_instance_url": "https://m.example",
+            "misskey_access_token": "t",
             "ai_api_key": "k",
         },
     )
     config.load()
 
-    assert config.connect.misskey_token == "t"
+    assert config.connect.misskey_access_token == "t"
     assert config.settings.plugins == {}
     assert config.log_path.parent.is_dir()
 

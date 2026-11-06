@@ -5,7 +5,11 @@ description: 使用 Radar 对 Misskey 天线帖子添加反应、回复、引用
 
 # Radar：天线互动
 
-对指定天线中的帖子依次执行反应、回复、引用或转帖，仅处理 `antenna` 通道。启用前用机器人账号创建规则较窄的天线，写入 `timeline.antennas`，先只开 `reaction` 观察匹配结果，再逐项增加回复、引用或转帖。
+对指定天线中的帖子依次执行反应、回复、引用或转帖，仅处理 `antenna` 通道。
+
+::: tip 上线建议
+用机器人账号创建规则较窄的天线，写入 `timeline.antennas`，先只开 `reaction` 观察匹配结果，再逐项增加回复、引用或转帖。
+:::
 
 ## 配置
 
@@ -31,12 +35,16 @@ plugins:
 
 ## 动作规则
 
-- `reaction` 留空不反应，支持实例表情名或自定义表情格式；已有 `myReaction` 时跳过。
-- 回复：`reply_text` 优先（支持 `{username}`），为空且开启 `reply_ai` 时由模型生成。引用的 `quote_text` 与 `quote_ai` 同理。
-- `reply_ai_prompt`、`quote_ai_prompt` 留空使用内置提示，支持 `{content}`。
-- `repeat`：`off` / `renote` / `quote`；引用无有效文本或失败时退回转帖。
-- `*_visibility` 支持 `public` / `home` / `followers`，`*_local_only` 控制是否联合；原帖为 `specified` 时回复保持 `specified`。
-- `delay` 留空时收到帖子后随机延迟 3–5 分钟执行；填写后按精确时间延迟，支持 `s` / `m` / `h` / `d` 及组合，范围 `1m`–`1d`。
+| 字段 | 说明 |
+| --- | --- |
+| `reaction` | 实例表情名或自定义表情格式，留空不反应；已有 `myReaction` 时跳过 |
+| `reply_text`、`reply_ai` | `reply_text` 优先（支持 `{username}`），为空且开启 `reply_ai` 时由模型生成 |
+| `quote_text`、`quote_ai` | 与回复同理 |
+| `reply_ai_prompt`、`quote_ai_prompt` | 留空使用内置提示，支持 `{content}` |
+| `repeat` | `off` / `renote` / `quote`；引用无有效文本或失败时退回转帖 |
+| `*_visibility`、`*_local_only` | 可见性取 `public` / `home` / `followers`，后者控制是否联合；原帖为 `specified` 时回复保持 `specified` |
+| `delay` | 留空时随机延迟 3–5 分钟；填写后按精确时间延迟，支持 `s` / `m` / `h` / `d` 及组合，范围 `1m`–`1d` |
+
 - 执行前重新获取帖子，已删除或不可见时跳过。
 - 待处理上限 100 条，超出跳过；跳过机器人自身帖子。
 

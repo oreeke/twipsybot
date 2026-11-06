@@ -34,8 +34,8 @@ def test_core_sections_precede_discovered_plugin_sections(
     ]
     assert {"plugins.keyact", "plugins.mllm"} <= sections.keys()
     assert [s.key for s in sections["connect"].specs] == [
-        "misskey_url",
-        "misskey_token",
+        "misskey_instance_url",
+        "misskey_access_token",
         "ai_base_url",
         "ai_api_key",
     ]
@@ -55,7 +55,7 @@ def test_sections_and_secret_fields_route_to_their_files(
 @pytest.mark.parametrize(
     ("key", "kind"),
     [
-        ("misskey_token", "secret"),
+        ("misskey_access_token", "secret"),
         ("plugins.iincho.moderation.cf_api_token", "secret"),
         ("timeline.global", "bool"),
         ("bot.system_prompt", "multiline"),
@@ -74,7 +74,7 @@ def test_field_kind_follows_model_annotation(
 
 @pytest.mark.parametrize(
     ("key", "restart"),
-    [("misskey_url", True), ("ai_base_url", True), ("bot.model", False)],
+    [("misskey_instance_url", True), ("ai_base_url", True), ("bot.model", False)],
 )
 def test_restart_flag_marks_connection_fields(
     specs: dict[str, Spec], key: str, restart: bool

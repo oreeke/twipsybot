@@ -62,14 +62,16 @@ class Neuro:
         shared = SharedSession()
         self.fetcher = PublicFetcher(system.allow_nets)
         self.misskey = MisskeyAPI(
-            connect.misskey_url,
-            connect.misskey_token,
+            connect.misskey_instance_url,
+            connect.misskey_access_token,
             shared=shared,
-            fetcher=PublicFetcher(system.allow_nets, origin=connect.misskey_url),
+            fetcher=PublicFetcher(
+                system.allow_nets, origin=connect.misskey_instance_url
+            ),
         )
         self.streaming = StreamingClient(
-            connect.misskey_url,
-            connect.misskey_token,
+            connect.misskey_instance_url,
+            connect.misskey_access_token,
             log_dump_events=system.dump_events,
             shared=shared,
         )

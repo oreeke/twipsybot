@@ -31,11 +31,10 @@ docker compose up -d
 docker compose exec twipsybot twipsybot cfg
 ```
 
-首次启动缺少连接信息，在 `connect` 中填写：
+首次启动缺少连接信息，在 TUI 中填写：
 
-`misskey url`、`misskey token`、`ai base url`、`ai api key`
-
-`bot` 中修改 `model`
+- `connect`：`misskey instance url`、`misskey access token`、`ai base url`、`ai api key`
+- `bot`：修改 `model`
 
 `Ctrl+S` 保存，约 2 秒后自动启动。按需修改 compose 中的 `TZ`。
 

@@ -11,8 +11,8 @@ description: TwipsyBot 全部配置字段、默认值与生效方式。
 
 | 键 | 环境变量 | 说明 |
 | --- | --- | --- |
-| `misskey_url` | `MISSKEY_INSTANCE_URL` | 实例根地址，如 `https://misskey.example.com` |
-| `misskey_token` | `MISSKEY_ACCESS_TOKEN` | 机器人访问令牌 |
+| `misskey_instance_url` | `MISSKEY_INSTANCE_URL` | 实例根地址，如 `https://misskey.example.com` |
+| `misskey_access_token` | `MISSKEY_ACCESS_TOKEN` | 机器人访问令牌 |
 | `ai_base_url` | `AI_BASE_URL` | 留空使用 OpenAI 官方端点 |
 | `ai_api_key` | `AI_API_KEY` | API 密钥 |
 

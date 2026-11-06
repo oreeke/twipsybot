@@ -23,7 +23,9 @@ uv lock --check
 2. 同步 `uv.lock` 并通过全部检查。
 3. 合并到 `main`，工作流自动创建 `v<version>` 标签。
 
+::: warning
 不要手工创建其他格式的标签，也不要复用已有版本。
+:::
 
 ## Docker 镜像
 
@@ -34,7 +36,11 @@ docker build -t twipsybot:dev .
 docker run --rm twipsybot:dev --help
 ```
 
-多阶段构建：builder 生成 wheel，运行阶段以非 root 的 `appuser` 运行。新增运行时文件时确认已复制进镜像且权限正确。
+多阶段构建：builder 生成 wheel，运行阶段以非 root 的 `appuser` 运行。
+
+::: tip
+新增运行时文件时，确认已复制进镜像且权限正确。
+:::
 
 ## 兼容性
 

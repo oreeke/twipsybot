@@ -58,7 +58,12 @@ reply:
 
 以下环境变量（或工作目录中的 `.env`）优先于文件，被覆盖字段在 TUI 中标为 `env` 且只读：
 
-`MISSKEY_INSTANCE_URL` · `MISSKEY_ACCESS_TOKEN` · `AI_BASE_URL` · `AI_API_KEY`
+| 环境变量 | 字段 |
+| --- | --- |
+| `MISSKEY_INSTANCE_URL` | `connect.misskey_instance_url` |
+| `MISSKEY_ACCESS_TOKEN` | `connect.misskey_access_token` |
+| `AI_BASE_URL` | `connect.ai_base_url` |
+| `AI_API_KEY` | `connect.ai_api_key` |
 
 ## 模型
 

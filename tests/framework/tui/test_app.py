@@ -62,14 +62,14 @@ async def test_connect_secrets_are_saved_and_env_values_are_locked(
         assert ui.field("ai_api_key").disabled
         assert ui.field("ai_api_key").value == "from-env"
 
-        await ui.edit("misskey_url", "https://m.example")
-        await ui.edit("misskey_token", "tok")
+        await ui.edit("misskey_instance_url", "https://m.example")
+        await ui.edit("misskey_access_token", "tok")
         assert "m.example" in ui.text("#env")
         await ui.save()
 
     assert read_settings(config.secrets_path) == {
-        "misskey_url": "https://m.example",
-        "misskey_token": "tok",
+        "misskey_instance_url": "https://m.example",
+        "misskey_access_token": "tok",
     }
     assert not config.settings_path.exists()
 
@@ -110,7 +110,10 @@ async def test_plugin_secrets_are_saved_to_secrets_file(config, open_app) -> Non
     )
     write_settings(
         config.secrets_path,
-        {"misskey_url": "https://m.example", "plugins": {"other": {"token": "keep"}}},
+        {
+            "misskey_instance_url": "https://m.example",
+            "plugins": {"other": {"token": "keep"}},
+        },
     )
     async with open_app(config) as ui:
         assert ui.field("plugins.demo.token").value == ""
@@ -123,7 +126,7 @@ async def test_plugin_secrets_are_saved_to_secrets_file(config, open_app) -> Non
         "plugins": {"demo": {"limit": 5, "greeting": "yo"}}
     }
     assert read_settings(config.secrets_path) == {
-        "misskey_url": "https://m.example",
+        "misskey_instance_url": "https://m.example",
         "plugins": {"other": {"token": "keep"}, "demo": {"token": "s3cret"}},
     }
 
@@ -165,7 +168,7 @@ async def test_unknown_connect_keys_are_dropped_on_save(config, open_app) -> Non
     write_settings(
         config.secrets_path,
         {
-            "misskey_url": "https://m.example",
+            "misskey_instance_url": "https://m.example",
             "openai_api_key": "old",
             "plugins": {"other": {"token": "keep"}},
         },
@@ -177,7 +180,7 @@ async def test_unknown_connect_keys_are_dropped_on_save(config, open_app) -> Non
         assert "unknown" not in ui.status
 
     assert read_settings(config.secrets_path) == {
-        "misskey_url": "https://m.example",
+        "misskey_instance_url": "https://m.example",
         "ai_api_key": "new",
         "plugins": {"other": {"token": "keep"}},
     }

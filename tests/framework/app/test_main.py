@@ -65,8 +65,8 @@ async def test_startup_waits_for_settings_then_retries(
     write_settings(
         config.secrets_path,
         {
-            "misskey_url": "https://m.example",
-            "misskey_token": "t",
+            "misskey_instance_url": "https://m.example",
+            "misskey_access_token": "t",
             "ai_api_key": "k",
         },
     )

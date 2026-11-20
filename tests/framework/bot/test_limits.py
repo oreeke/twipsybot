@@ -84,6 +84,24 @@ async def test_permanent_turn_limit_uses_manageable_blacklist(
     assert replies[0]["text"] == replies[2]["text"] == DEFAULT_AI_REPLY
 
 
+async def test_turn_limit_notice_is_sent_once_until_release(
+    make_bot: MakeBot,
+    write_config: WriteConfig,
+    misskey_server: FakeMisskeyServer,
+    openai_server: FakeOpenAIServer,
+) -> None:
+    bot = await make_bot(
+        write_config(reply={"max_turns": 1, "max_turns_msg": "到上限了"})
+    )
+
+    for index in range(4):
+        await bot.chat.handle(message({**CHAT_MESSAGE, "id": f"msg-{index}"}))
+
+    assert len(openai_server.calls) == 1
+    replies = misskey_server.calls["chat/messages/create-to-user"]
+    assert [reply["text"] for reply in replies] == [DEFAULT_AI_REPLY, "到上限了"]
+
+
 @pytest.mark.parametrize(
     ("limit_msg", "expected"),
     [("请稍后再试", [DEFAULT_AI_REPLY, "请稍后再试"]), ("", [DEFAULT_AI_REPLY])],
@@ -103,6 +121,7 @@ async def test_rate_limit_blocks_second_ai_call(
 
     await bot.chat.handle(message(dict(CHAT_MESSAGE)))
     await bot.chat.handle(message({**CHAT_MESSAGE, "id": "msg-2"}))
+    await bot.chat.handle(message({**CHAT_MESSAGE, "id": "msg-3"}))
 
     assert len(openai_server.calls) == 1
     replies = misskey_server.calls["chat/messages/create-to-user"]

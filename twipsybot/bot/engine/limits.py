@@ -29,6 +29,7 @@ class ResponseLimiter:
         self._db = db
         self._instance_url = instance_url
         self._blacklist_user = blacklist_user
+        self._rate_notified: set[str] = set()
 
     def canonical_handle(self, username: str) -> str | None:
         host = urlparse(self._instance_url).hostname
@@ -94,14 +95,18 @@ class ResponseLimiter:
             state.blocked_until_ts = None
             await self._save_response_limit_state(user_id, state)
         if state.blocked_until_ts is not None and now < state.blocked_until_ts:
-            return True, reply.max_turns_msg
+            return True, ""
         interval = reply.rate_limit
         if (
             interval > 0
             and state.last_reply_ts is not None
             and now - state.last_reply_ts < interval
         ):
+            if user_id in self._rate_notified:
+                return True, ""
+            self._rate_notified.add(user_id)
             return True, reply.rate_limit_msg
+        self._rate_notified.discard(user_id)
         if self._turns_limited() and state.turns >= reply.max_turns:
             release = reply.turns_release
             if release < 0:
